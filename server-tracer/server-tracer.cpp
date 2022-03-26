@@ -1,75 +1,108 @@
 /*
- * Copyright (C) 2004-2021 Intel Corporation.
- * SPDX-License-Identifier: MIT
- */
+* Copyright (C) 2006-2021 Intel Corporation.
+* SPDX-License-Identifier: MIT
+*/
 
-#include <iostream>
-#include <fstream>
+//  Replace an original function with a custom function defined in the tool using
+//  probes.  The replacement function has a different signature from that of the
+//  original replaced function.
+
 #include "pin.H"
-using std::cerr;
-using std::endl;
-using std::ios;
-using std::ofstream;
-using std::string;
+#include "stdio.h"
+#include <sys/types.h>
+#include <sys/socket.h>
 
-ofstream OutFile;
+FILE* trace;
 
-// The running count of instructions is kept here
-// make it static to help the compiler optimize docount
-static UINT64 icount = 0;
+ssize_t NewTCPActivity(AFUNPTR orgFuncptr, CONTEXT* ctx, const char* functionName, int sockfd, void *buf, size_t len, int flags) {
+    ssize_t ret;
 
-// This function is called before every instruction is executed
-VOID docount() { icount++; }
+    PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
+                                CALLINGSTD_DEFAULT, orgFuncptr,
+                                NULL,
+                                PIN_PARG(ssize_t), &ret,
+                                PIN_PARG(int), sockfd,
+                                PIN_PARG(void*), buf,
+                                PIN_PARG(size_t), len,
+                                PIN_PARG(int), flags,
+                                PIN_PARG_END());
 
-// Pin calls this function every time a new instruction is encountered
-VOID Instruction(INS ins, VOID* v)
-{
-    // Insert a call to docount before every instruction, no arguments are passed
-    INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)docount, IARG_END);
+    fprintf(trace, "%s (%ld/%ld): {\n\t", functionName, ret, len);
+
+    for (int i = 0; i < ret; i++) {
+        fprintf(trace, "%02x", ((char* )buf)[i]);
+    }
+    fprintf(trace, ",\n\t\"");
+    for (int i = 0; i < ret; i++) {
+        fprintf(trace, "%c", ((char* )buf)[i]);
+    }
+    fprintf(trace, "\"\n}\n");
+
+    return ret;
 }
 
-KNOB< string > KnobOutputFile(KNOB_MODE_WRITEONCE, "pintool", "o", "trace.log", "specify output file name");
+VOID ReplaceTCPActivity(IMG img, RTN rtn, const char* functionName) {
+    PROTO proto_tcp_activity = PROTO_Allocate(PIN_PARG(ssize_t), CALLINGSTD_DEFAULT,
+                                        NULL,
+                                        PIN_PARG(int),      // sockfd
+                                        PIN_PARG(void*),    // buf
+                                        PIN_PARG(size_t),   // len
+                                        PIN_PARG(int),      // flags
+                                        PIN_PARG_END());
 
-// This function is called when the application exits
-VOID Fini(INT32 code, VOID* v)
-{
-    // Write to a file since cout and cerr maybe closed by the application
-    OutFile.setf(ios::showbase);
-    OutFile << "Count " << icount << endl;
-    OutFile.close();
+    RTN_ReplaceSignature(rtn, AFUNPTR(NewTCPActivity),
+                                IARG_PROTOTYPE, proto_tcp_activity,
+                                IARG_ORIG_FUNCPTR,
+                                IARG_CONTEXT,
+                                IARG_PTR, functionName,
+                                IARG_FUNCARG_ENTRYPOINT_VALUE, 0,
+                                IARG_FUNCARG_ENTRYPOINT_VALUE, 1,
+                                IARG_FUNCARG_ENTRYPOINT_VALUE, 2,
+                                IARG_FUNCARG_ENTRYPOINT_VALUE, 3,
+                                IARG_END);
+
+    PROTO_Free(proto_tcp_activity);
+
+    printf("[*] server-tracer: INFO: %s replaced\t: %s\n", functionName, IMG_Name(img).c_str());
 }
 
-/* ===================================================================== */
-/* Print Help Message                                                    */
-/* ===================================================================== */
+VOID ImageLoad(IMG img, VOID* v) {
+    RTN rtn;
+    printf("[*] server-tracer: INFO: Module loaded\t: %s\n", IMG_Name(img).c_str());
 
-INT32 Usage()
-{
-    cerr << "This tool counts the number of dynamic instructions executed" << endl;
-    cerr << endl << KNOB_BASE::StringKnobSummary() << endl;
-    return -1;
+    rtn = RTN_FindByName(img, "recv");
+    if (RTN_Valid(rtn)) {
+        ReplaceTCPActivity(img, rtn, "recv");
+    }
+
+    rtn = RTN_FindByName(img, "send");
+    if (RTN_Valid(rtn)) {
+        ReplaceTCPActivity(img, rtn, "send");
+    }
 }
 
-/* ===================================================================== */
-/* Main                                                                  */
-/* ===================================================================== */
-/*   argc, argv are the entire command line: pin -t <toolname> -- ...    */
-/* ===================================================================== */
+VOID Fini(INT32 code, VOID* v) {
+    puts("[*] server-tracer: INFO: Shutting down...");
+    fclose(trace);
+    puts("[*] server-tracer: INFO: Bye!");
+}
 
-int main(int argc, char* argv[])
-{
-    // Initialize pin
-    if (PIN_Init(argc, argv)) return Usage();
+int main(int argc, char* argv[]) {
+    puts("[*] server-tracer: INFO: Initializating analysis...");
+    /* Symbol processing */
+    PIN_InitSymbols();
 
-    OutFile.open(KnobOutputFile.Value().c_str());
+    PIN_Init(argc, argv);
 
-    // Register Instruction to be called to instrument instructions
-    INS_AddInstrumentFunction(Instruction, 0);
+    trace = fopen("trace.log", "a");
+    puts("[*] server-tracer: INFO: Logging to trace.log");
 
-    // Register Fini to be called when the application exits
+    /* Replace calls on image load */
+    IMG_AddInstrumentFunction(ImageLoad, 0);
+
+    /* Function called on server exit */
     PIN_AddFiniFunction(Fini, 0);
 
-    // Start the program, never returns
     PIN_StartProgram();
 
     return 0;
