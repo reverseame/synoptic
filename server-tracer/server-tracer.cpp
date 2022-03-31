@@ -7,22 +7,10 @@
 #include <sys/socket.h>
 #include <list>
 
-struct tainted_address {
-    void *address;
-    ssize_t size;
-};
+FILE* trace;        // Output file
 
-FILE* trace;                // Output file
-int module_count = 0;       // Keep track of nº module loads
-std::list<tainted_address> tainted_addresses;
-
-/* This function is called before every instruction is executed */
-void TraceInstruction() {
-    /* Return inmediatly if there are no buffers of interest */
-    if (tainted_addresses.empty()) {
-        return;
-    }
-}
+/* Keep tainted address by thread */
+std::map<pid_t,std::list<UINT64>> threadTaintedAddresses;
 
 int NewAccept(AFUNPTR orgFuncptr, CONTEXT *ctx, int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
     int ret;
@@ -123,14 +111,16 @@ ssize_t NewTCPActivity(AFUNPTR orgFuncptr, CONTEXT *ctx, const char *functionNam
     fprintf(trace, "\n");
 
     if (strcmp("recv", functionName) == 0) {
-        tainted_address tainted;
-        tainted.address = &buf;
-        tainted.size = ret;
-        tainted_addresses.push_back(tainted);
-        fprintf(trace, "Thread: %d ; Tainted ; Function: %s ; Buffer Address: %p ; Buffer size: %ld\n", gettid(), functionName, tainted.address, tainted.size);
+        std::list<UINT64> taintedAdderess;
+        pid_t tid = gettid();
+        for (int i = 0; i < ret ; i++) {
+            taintedAdderess.push_back((UINT64) *&buf + i);
+        }
+        threadTaintedAddresses.insert(std::make_pair(tid, taintedAdderess));
+        fprintf(trace, "Thread: %d ; Function: %s ; [Tainted]  %p-0x%08lx\n", tid, functionName, *&buf, (UINT64) *&buf+ret-1);
     } else if (strcmp("send", functionName) == 0) {
         /* We only want to keep track of server model */
-        tainted_addresses.clear();
+        threadTaintedAddresses.erase(gettid());
     }
 
     return ret;
@@ -166,9 +156,8 @@ VOID ImageLoad(IMG img, VOID *v) {
     printf("[*] server-tracer: INFO: Module loaded\t\t: %s\n", IMG_Name(img).c_str());
 
     /* Avoid to hook first module loaded a.k.a main executable */
-    if (module_count == 0) {
+    if (IMG_IsMainExecutable(img)) {
         printf("[*] server-tracer: INFO: Main module not hooked\t: %s\n", IMG_Name(img).c_str());
-        module_count++;
         return;
     }
 
@@ -193,12 +182,80 @@ VOID ImageLoad(IMG img, VOID *v) {
     }
 }
 
-VOID Instruction(INS ins, VOID *v) {
-    /* Insert a call before every instruction */
-    INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)TraceInstruction, IARG_END);
+void TraceMem(const char* mode, UINT64 insAddr, UINT64 memOp, char* routine, std::string insDis) {
+    if (threadTaintedAddresses.empty()) {
+        return;
+    }
+
+    pid_t pid = gettid();
+    std::list<UINT64> taintedAdderess = threadTaintedAddresses.find(pid)->second;
+    std::list<UINT64>::iterator i;
+
+    for (i=taintedAdderess.begin(); i!=taintedAdderess.end(); i++) {
+        if (*i == memOp) {
+            fprintf(trace, "Thread: %d ; Routine: %s ; [%p %s] ; @%p: %s\n", pid, routine, (void*)memOp, mode, (void*)insAddr, insDis.c_str());
+            return;
+        }
+    }
+
+    fprintf(trace, "Thread: %d ; Routine: %s ; @%p: %s\n", gettid(), routine, (void*) insAddr, insDis.c_str());
 }
 
-VOID Fini(INT32 code, VOID *v) {
+void Instruction(INS ins, void *v) {
+    /* Return inmediatly if there are no buffers of interest */
+    if (threadTaintedAddresses.empty()) {
+        return;
+    }
+
+    const char* routine = "unknown";
+    if(RTN_Valid(INS_Rtn(ins))) {
+        routine = RTN_Name(INS_Rtn(ins)).c_str();
+    }
+    IMG img = IMG_FindByAddress(INS_Address(ins));
+
+    /* Just analyze the main executable */
+    if (IMG_Valid(img) && IMG_IsMainExecutable(img)) {
+        if (INS_IsCall(ins)) {
+            if (INS_IsDirectControlFlow(ins)) {
+                ADDRINT target = INS_DirectControlFlowTargetAddress(ins);
+                fprintf(trace, "Thread: %d ; Routine: %s ; Call: %s; @%p: %s\n", gettid(), routine, RTN_FindNameByAddress(target).c_str(), (void*) INS_Address(ins), INS_Disassemble(ins).c_str());
+            } else {
+                /* Target address is provided through memory or through a register */
+                fprintf(trace, "Thread: %d ; Routine: %s ; Indirect call ; @%p: %s\n", gettid(), routine, (void*) INS_Address(ins), INS_Disassemble(ins).c_str());
+            }
+        } else if (INS_IsMemoryRead(ins) || INS_IsMemoryWrite(ins)) {
+            std::string insDis = INS_Disassemble(ins);
+            UINT32 memOperands = INS_MemoryOperandCount(ins);
+            for (UINT32 memOp = 0; memOp < memOperands; memOp++) {
+                if (INS_MemoryOperandIsRead(ins, memOp)) {
+                    INS_InsertCall(
+                        ins, IPOINT_BEFORE, (AFUNPTR)TraceMem,
+                        IARG_PTR, "read",
+                        IARG_INST_PTR,
+                        IARG_MEMORYOP_EA, memOp,
+                        IARG_PTR, routine,
+                        IARG_PTR, new std::string(insDis),
+                        IARG_END);
+                }
+                /* for example, movsb instruction reads and writes to memomy */
+                if (INS_MemoryOperandIsWritten(ins, memOp)) {
+                    INS_InsertCall(
+                        ins, IPOINT_BEFORE, (AFUNPTR)TraceMem,
+                        IARG_PTR, "written",
+                        IARG_INST_PTR,
+                        IARG_MEMORYOP_EA, memOp,
+                        IARG_PTR, routine,
+                        IARG_PTR, new std::string(insDis),
+                        IARG_END);
+                }
+            }
+        } else {
+            fprintf(trace, "Thread: %d ; Routine: %s ; @%p: %s\n", gettid(), routine, (void*) INS_Address(ins), INS_Disassemble(ins).c_str());
+        }
+    }
+}
+
+void Fini(INT32 code, void *v) {
     puts("[*] server-tracer: INFO: Shutting down...");
     fprintf(trace, "-----END TRACE-----\n");
     fclose(trace);
@@ -215,6 +272,8 @@ int main(int argc, char* argv[]) {
     trace = fopen("trace.log", "a");
     puts("[*] server-tracer: INFO: Logging to trace.log");
     fprintf(trace, "-----BEGIN TRACE-----\n");
+
+    PIN_SetSyntaxIntel();
 
     /* Replace calls on image load */
     IMG_AddInstrumentFunction(ImageLoad, 0);

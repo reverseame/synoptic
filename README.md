@@ -10,7 +10,7 @@ This project aims to infer the protocol message format and protocol finite state
 
 `server-tracer`: Pin tool that generate execution traces
 
-`trace-analyzer`: script to analyze the execution trace and generate the protocol model
+`trace-analyzer`: script to analyze the execution trace and generate the protocol model (protocol FSM and message format)
 
 `message-replayer`: script to send messages based on the protocol model
 
@@ -31,7 +31,7 @@ This project aims to infer the protocol message format and protocol finite state
 
 # TODO
 
-1. Obtain an execution trace on how tainted buffers (from recv/send functions) are parsed
+1. Keep track of all memory writes during server session (don't delete written tainted address after send)
 2. Analyze the execution trace to identify messages and message exchanges
 3. Create the protocol model
 
