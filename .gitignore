@@ -5,3 +5,6 @@ obj-intel64/
 *.o
 *.so
 *.log
+__pycache__/
+*.pyc
+venv/

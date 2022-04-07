@@ -13,6 +13,8 @@ FILE* trace;
 std::map<pid_t,std::list<UINT64>> threadTaintedAddresses;
 /* Keep track of tainted registers by thread */
 std::map<pid_t,std::list<REG>> threadTaintedRegs;
+/* Keep track of session info by thread */
+std::map<pid_t,std::list<UINT64>> threadSessionChanges;
 
 bool checkAlreadyRegTainted(REG reg) {
     if (threadTaintedRegs.empty()) {
@@ -31,9 +33,13 @@ bool checkAlreadyRegTainted(REG reg) {
 }
 
 bool taintReg(REG reg) {
+    if (threadTaintedRegs.empty()) {
+        return false;
+    }
+
     pid_t tid = gettid();
 
-    if (checkAlreadyRegTainted(reg) == true) {
+    if (checkAlreadyRegTainted(reg)) {
         fprintf(trace, "Thread: %d ; [Taint] ; %s is already tainted\n", tid, REG_StringShort(reg).c_str());
         return false;
     }
@@ -69,16 +75,76 @@ bool taintReg(REG reg) {
         case REG_DL:   taintedRegs.push_front(REG_DL); 
             break;
 
+        case REG_RSI:  taintedRegs.push_front(REG_RSI); 
+        case REG_ESI:  taintedRegs.push_front(REG_ESI); 
+        case REG_SI:   taintedRegs.push_front(REG_SI); 
+        case REG_SIL:  taintedRegs.push_front(REG_SIL); 
+            break;
+
         case REG_RDI:  taintedRegs.push_front(REG_RDI); 
         case REG_EDI:  taintedRegs.push_front(REG_EDI); 
         case REG_DI:   taintedRegs.push_front(REG_DI); 
         case REG_DIL:  taintedRegs.push_front(REG_DIL); 
             break;
 
-        case REG_RSI:  taintedRegs.push_front(REG_RSI); 
-        case REG_ESI:  taintedRegs.push_front(REG_ESI); 
-        case REG_SI:   taintedRegs.push_front(REG_SI); 
-        case REG_SIL:  taintedRegs.push_front(REG_SIL); 
+        case REG_RBP:  taintedRegs.push_front(REG_RBP); 
+        case REG_EBP:  taintedRegs.push_front(REG_EBP); 
+        case REG_BP:   taintedRegs.push_front(REG_BP); 
+        case REG_BPL:  taintedRegs.push_front(REG_BPL); 
+            break;
+
+        case REG_RSP:  taintedRegs.push_front(REG_RSP); 
+        case REG_ESP:  taintedRegs.push_front(REG_ESP); 
+        case REG_SP:   taintedRegs.push_front(REG_SP); 
+        case REG_SPL:  taintedRegs.push_front(REG_SPL); 
+            break;
+
+        case REG_R8:   taintedRegs.push_front(REG_R8); 
+        case REG_R8D:  taintedRegs.push_front(REG_R8D); 
+        case REG_R8W:  taintedRegs.push_front(REG_R8W); 
+        case REG_R8B:  taintedRegs.push_front(REG_R8B); 
+            break;
+
+        case REG_R9:   taintedRegs.push_front(REG_R9); 
+        case REG_R9D:  taintedRegs.push_front(REG_R9D); 
+        case REG_R9W:  taintedRegs.push_front(REG_R9W); 
+        case REG_R9B:  taintedRegs.push_front(REG_R9B); 
+            break;
+
+        case REG_R10:   taintedRegs.push_front(REG_R10); 
+        case REG_R10D:  taintedRegs.push_front(REG_R10D); 
+        case REG_R10W:  taintedRegs.push_front(REG_R10W); 
+        case REG_R10B:  taintedRegs.push_front(REG_R10B); 
+            break;
+
+        case REG_R11:   taintedRegs.push_front(REG_R11); 
+        case REG_R11D:  taintedRegs.push_front(REG_R11D); 
+        case REG_R11W:  taintedRegs.push_front(REG_R11W); 
+        case REG_R11B:  taintedRegs.push_front(REG_R11B); 
+            break;
+
+        case REG_R12:   taintedRegs.push_front(REG_R12); 
+        case REG_R12D:  taintedRegs.push_front(REG_R12D); 
+        case REG_R12W:  taintedRegs.push_front(REG_R12W); 
+        case REG_R12B:  taintedRegs.push_front(REG_R12B); 
+            break;
+
+        case REG_R13:  taintedRegs.push_front(REG_R13); 
+        case REG_R13D: taintedRegs.push_front(REG_R13D); 
+        case REG_R13W: taintedRegs.push_front(REG_R13W); 
+        case REG_R13B: taintedRegs.push_front(REG_R13B); 
+            break;
+
+        case REG_R14:   taintedRegs.push_front(REG_R14); 
+        case REG_R14D:  taintedRegs.push_front(REG_R14D); 
+        case REG_R14W:  taintedRegs.push_front(REG_R14W); 
+        case REG_R14B:  taintedRegs.push_front(REG_R14B); 
+            break;
+
+        case REG_R15:   taintedRegs.push_front(REG_R15); 
+        case REG_R15D:  taintedRegs.push_front(REG_R15D); 
+        case REG_R15W:  taintedRegs.push_front(REG_R15W); 
+        case REG_R15B:  taintedRegs.push_front(REG_R15B); 
             break;
 
         default:
@@ -86,11 +152,16 @@ bool taintReg(REG reg) {
             return false;
     }
 
+    threadTaintedRegs[tid] = taintedRegs;
     fprintf(trace, "Thread: %d ; [Taint] ; %s is now tainted\n", tid, REG_StringShort(reg).c_str());
     return true;
 }
 
 bool removeRegTainted(REG reg) {
+    if (threadTaintedRegs.empty()) {
+        return false;
+    }
+
     pid_t tid = gettid();
     std::list<REG> taintedRegs = threadTaintedRegs.find(tid)->second;
     switch(reg){
@@ -122,36 +193,108 @@ bool removeRegTainted(REG reg) {
         case REG_DL:   taintedRegs.remove(REG_DL); 
             break;
 
-        case REG_RDI:  taintedRegs.remove(REG_RDI); 
-        case REG_EDI:  taintedRegs.remove(REG_EDI); 
-        case REG_DI:   taintedRegs.remove(REG_DI); 
-        case REG_DIL:  taintedRegs.remove(REG_DIL); 
-            break;
-
         case REG_RSI:  taintedRegs.remove(REG_RSI); 
         case REG_ESI:  taintedRegs.remove(REG_ESI); 
         case REG_SI:   taintedRegs.remove(REG_SI); 
         case REG_SIL:  taintedRegs.remove(REG_SIL); 
             break;
 
+        case REG_RDI:  taintedRegs.remove(REG_RDI); 
+        case REG_EDI:  taintedRegs.remove(REG_EDI); 
+        case REG_DI:   taintedRegs.remove(REG_DI); 
+        case REG_DIL:  taintedRegs.remove(REG_DIL); 
+            break;
+
+        case REG_RBP:  taintedRegs.remove(REG_RBP); 
+        case REG_EBP:  taintedRegs.remove(REG_EBP); 
+        case REG_BP:   taintedRegs.remove(REG_BP); 
+        case REG_BPL:  taintedRegs.remove(REG_BPL); 
+            break;
+
+        case REG_RSP:  taintedRegs.remove(REG_RSP); 
+        case REG_ESP:  taintedRegs.remove(REG_ESP); 
+        case REG_SP:   taintedRegs.remove(REG_SP); 
+        case REG_SPL:  taintedRegs.remove(REG_SPL); 
+            break;
+
+        case REG_R8:   taintedRegs.remove(REG_R8); 
+        case REG_R8D:  taintedRegs.remove(REG_R8D); 
+        case REG_R8W:  taintedRegs.remove(REG_R8W); 
+        case REG_R8B:  taintedRegs.remove(REG_R8B); 
+            break;
+
+        case REG_R9:   taintedRegs.remove(REG_R9); 
+        case REG_R9D:  taintedRegs.remove(REG_R9D); 
+        case REG_R9W:  taintedRegs.remove(REG_R9W); 
+        case REG_R9B:  taintedRegs.remove(REG_R9B); 
+            break;
+
+        case REG_R10:   taintedRegs.remove(REG_R10); 
+        case REG_R10D:  taintedRegs.remove(REG_R10D); 
+        case REG_R10W:  taintedRegs.remove(REG_R10W); 
+        case REG_R10B:  taintedRegs.remove(REG_R10B); 
+            break;
+
+        case REG_R11:   taintedRegs.remove(REG_R11); 
+        case REG_R11D:  taintedRegs.remove(REG_R11D); 
+        case REG_R11W:  taintedRegs.remove(REG_R11W); 
+        case REG_R11B:  taintedRegs.remove(REG_R11B); 
+            break;
+
+        case REG_R12:   taintedRegs.remove(REG_R12); 
+        case REG_R12D:  taintedRegs.remove(REG_R12D); 
+        case REG_R12W:  taintedRegs.remove(REG_R12W); 
+        case REG_R12B:  taintedRegs.remove(REG_R12B); 
+            break;
+
+        case REG_R13:  taintedRegs.remove(REG_R13); 
+        case REG_R13D: taintedRegs.remove(REG_R13D); 
+        case REG_R13W: taintedRegs.remove(REG_R13W); 
+        case REG_R13B: taintedRegs.remove(REG_R13B); 
+            break;
+
+        case REG_R14:   taintedRegs.remove(REG_R14); 
+        case REG_R14D:  taintedRegs.remove(REG_R14D); 
+        case REG_R14W:  taintedRegs.remove(REG_R14W); 
+        case REG_R14B:  taintedRegs.remove(REG_R14B); 
+            break;
+
+        case REG_R15:   taintedRegs.remove(REG_R15); 
+        case REG_R15D:  taintedRegs.remove(REG_R15D); 
+        case REG_R15W:  taintedRegs.remove(REG_R15W); 
+        case REG_R15B:  taintedRegs.remove(REG_R15B); 
+            break;
+
         default:
             return false;
     }
+
+    threadTaintedRegs[tid] = taintedRegs;
     fprintf(trace, "Thread: %d ; [Taint] ; %s is now freed\n", tid, REG_StringShort(reg).c_str());
     return true;
 }
 
 void removeMemTainted(UINT64 addr) {
+    if (threadTaintedAddresses.empty()) {
+        return;
+    }
+
     pid_t tid = gettid();
     std::list<UINT64> taintedAddresses = threadTaintedAddresses.find(tid)->second;
     taintedAddresses.remove(addr);
+    threadTaintedAddresses[tid] = taintedAddresses;
     fprintf(trace, "Thread: %d ; [Taint] ; %p is now freed\n", tid, (void*)addr);
 }
 
 void addMemTainted(UINT64 addr) {
+    if (threadTaintedAddresses.empty()) {
+        return;
+    }
+
     pid_t tid = gettid();
     std::list<UINT64> taintedAddresses = threadTaintedAddresses.find(tid)->second;
     taintedAddresses.push_back(addr);
+    threadTaintedAddresses[tid] = taintedAddresses;
     fprintf(trace, "Thread: %d ; [Taint] ; %p is now tainted\n", tid, (void*)addr);
 }
 
@@ -306,6 +449,9 @@ void ImageLoad(IMG img, VOID *v) {
 
     /* Avoid to hook first module loaded a.k.a main executable */
     if (IMG_IsMainExecutable(img)) {
+        ADDRINT imageBase = IMG_LowAddress(img);
+        printf("[*] server-tracer: INFO: Main module mapped to %p\n", (void*)imageBase);
+        fprintf(trace, "Main executable Image Base: %p\n", (void*)imageBase);
         printf("[*] server-tracer: INFO: Main module not hooked\t: %s\n", IMG_Name(img).c_str());
         return;
     }
@@ -331,41 +477,50 @@ void ImageLoad(IMG img, VOID *v) {
     }
 }
 
-void TraceMem(const char* mode, UINT64 insAddr, UINT64 memOp, char* routine, std::string insDis) {
+void TraceMem(UINT64 insAdd, std::string insDis, USIZE insSize, UINT64 memOp, char* routine, char* mode) {
+    if (threadTaintedAddresses.empty()) {
+        return;
+    }
     pid_t tid = gettid();
     std::list<UINT64> taintedAdderess = threadTaintedAddresses.find(tid)->second;
     std::list<UINT64>::iterator i;
 
     for (i=taintedAdderess.begin(); i!=taintedAdderess.end(); i++) {
         if (*i == memOp) {
-            fprintf(trace, "Thread: %d ; Routine: %s ; [%p %s] ; @%p: %s\n", tid, routine, (void*)memOp, mode, (void*)insAddr, insDis.c_str());
+            void* buf[15];
+            PIN_SafeCopy(buf, (void*) insAdd, insSize);
+            fprintf(trace, "Thread: %d ; Routine: %s ; [Taint] ; [%p %s] ; @%p: %s ; Instruction bytes: ", tid, routine, (void*)memOp, mode, (void*)insAdd, insDis.c_str());
+            for (uint i = 0; i < insSize; i++) {
+                fprintf(trace, "%02x", ((unsigned char*) buf)[i]);
+            }
+            fprintf(trace, "\n");
             return;
         }
     }
 
-    fprintf(trace, "Thread: %d ; Routine: %s ; @%p: %s\n", tid, routine, (void*) insAddr, insDis.c_str());
+    fprintf(trace, "Thread: %d ; Routine: %s ; @%p: %s\n", tid, routine, (void*)insAdd, insDis.c_str());
 }
 
-void ReadMem(INS ins, UINT64 memOp, char* routine, REG reg_r) {
+void ReadMem(UINT64 insAdd, std::string insDis, UINT64 memOp, char* routine, REG reg_r) {
     pid_t tid = gettid();
     std::list<UINT64> taintedAdderess = threadTaintedAddresses.find(tid)->second;
     std::list<UINT64>::iterator i;
 
     for(i = taintedAdderess.begin(); i != taintedAdderess.end(); i++) {
         if (*i == memOp) {
-            fprintf(trace, "Thread: %d ; Routine: %s ; [Taint] ; [%p read] ; @%p: %s\n", tid, routine, (void*)memOp, (void*)INS_Address(ins), INS_Disassemble(ins).c_str());
+            fprintf(trace, "Thread: %d ; Routine: %s ; [Taint] ; [%p read] ; @%p: %s\n", tid, routine, (void*)memOp, (void*)insAdd, insDis.c_str());
             taintReg(reg_r);
             return;
         }
     }
     /* if mem != tained and reg == taint => free the reg */
     if (checkAlreadyRegTainted(reg_r)) {
-        fprintf(trace, "Thread: %d ; Routine: %s ; [Taint] ; [%p read] ; @%p: %s\n", tid, routine, (void*)memOp, (void*)INS_Address(ins), INS_Disassemble(ins).c_str());
+        fprintf(trace, "Thread: %d ; Routine: %s ; [Taint] ; [%p read] ; @%p: %s\n", tid, routine, (void*)memOp, (void*)insAdd, insDis.c_str());
         removeRegTainted(reg_r);
     }
 }
 
-void WriteMem(INS ins, UINT64 memOp, char* routine, REG reg_r) {
+void WriteMem(UINT64 insAdd, std::string insDis, UINT64 memOp, char* routine, REG reg_r) {
     if (threadTaintedAddresses.empty()) {
         return;
     }
@@ -375,7 +530,7 @@ void WriteMem(INS ins, UINT64 memOp, char* routine, REG reg_r) {
 
     for(i = taintedAdderess.begin(); i != taintedAdderess.end(); i++) {
         if (*i == memOp) {
-            fprintf(trace, "Thread: %d ; Routine: %s ; [Taint] ; [%p written] ; @%p: %s\n", tid, routine, (void*)memOp, (void*)INS_Address(ins), INS_Disassemble(ins).c_str());
+            fprintf(trace, "Thread: %d ; Routine: %s ; [Taint] ; [%p written] ; @%p: %s\n", tid, routine, (void*)memOp, (void*)insAdd, insDis.c_str());
             if (!REG_valid(reg_r) || !checkAlreadyRegTainted(reg_r)) {
                 removeMemTainted(memOp);
             }
@@ -383,34 +538,34 @@ void WriteMem(INS ins, UINT64 memOp, char* routine, REG reg_r) {
         }
     }
     if (checkAlreadyRegTainted(reg_r)) {
-        fprintf(trace, "Thread: %d ; Routine: %s ; [Taint] ; [%p written] ; @%p: %s\n", tid, routine, (void*)memOp, (void*)INS_Address(ins), INS_Disassemble(ins).c_str());
+        fprintf(trace, "Thread: %d ; Routine: %s ; [Taint] ; [%p written] ; @%p: %s\n", tid, routine, (void*)memOp, (void*)insAdd, insDis.c_str());
         addMemTainted(memOp);
     }
 }
 
-void spreadRegTaint(INS ins, char* routine, REG reg_r, REG reg_w) {
+void spreadRegTaint(UINT64 insAdd, std::string insDis, char* routine, REG reg_r, REG reg_w) {
     pid_t tid = gettid();
 
     if (REG_valid(reg_w)) {
         if (checkAlreadyRegTainted(reg_w) && (!REG_valid(reg_r) || !checkAlreadyRegTainted(reg_r))) {
-            fprintf(trace, "Thread: %d ; Routine: %s ; [Taint] ; Spread ; @%p: %s\n", tid, routine, (void*) INS_Address(ins), INS_Disassemble(ins).c_str());
+            fprintf(trace, "Thread: %d ; Routine: %s ; [Taint] ; Spread ; @%p: %s\n", tid, routine, (void*)insAdd, insDis.c_str());
             fprintf(trace, "Thread: %d ; Routine: %s ; [Taint] ; Output: %s ; Input: %s", tid, routine, REG_StringShort(reg_w).c_str(), (REG_valid(reg_r) ? REG_StringShort(reg_r).c_str() : "constant"));
             removeRegTainted(reg_w);
         } else if (!checkAlreadyRegTainted(reg_w) && checkAlreadyRegTainted(reg_r)) {
-            fprintf(trace, "Thread: %d ; Routine: %s ; [Taint] ; Spread ; @%p: %s\n", tid, routine, (void*) INS_Address(ins), INS_Disassemble(ins).c_str());
+            fprintf(trace, "Thread: %d ; Routine: %s ; [Taint] ; Spread ; @%p: %s\n", tid, routine, (void*)insAdd, insDis.c_str());
             fprintf(trace, "Thread: %d ; Routine: %s ; [Taint] ; Output: %s ; Input: %s", tid, routine, REG_StringShort(reg_w).c_str(), REG_StringShort(reg_r).c_str());
             taintReg(reg_w);
         }
     }
 }
 
-VOID followData(INS ins, char* routine, REG reg) {
+VOID followData(UINT64 insAdd, std::string insDis, char* routine, REG reg) {
     if (!REG_valid(reg)) {
         return;
     }
 
     if (checkAlreadyRegTainted(reg)){
-        fprintf(trace, "Thread: %d ; Routine: %s ; Follow data ; Indirect call ; @%p: %s\n", gettid(), routine, (void*) INS_Address(ins), INS_Disassemble(ins).c_str());
+        fprintf(trace, "Thread: %d ; Routine: %s ; [Taint] ; Follow data ; @%p: %s\n", gettid(), routine, (void*) insAdd, insDis.c_str());
     }
 }
 
@@ -440,34 +595,64 @@ void Instruction(INS ins, void *v) {
             if (INS_OperandCount(ins) == 2 && INS_MemoryOperandIsRead(ins, 0) && INS_OperandIsReg(ins, 0)) {
                 INS_InsertCall(
                     ins, IPOINT_BEFORE, (AFUNPTR)ReadMem,
-                    IARG_PTR, ins,
+                    IARG_INST_PTR,
+                    IARG_PTR, new std::string(INS_Disassemble(ins)),
                     IARG_MEMORYOP_EA, 0,
                     IARG_PTR, routine,
                     IARG_UINT32, INS_OperandReg(ins, 0),
                     IARG_END);
-            } else if (INS_OperandCount(ins) == 2 && INS_MemoryOperandIsWritten(ins, 0)){
+            } else if (INS_OperandCount(ins) == 2 && INS_MemoryOperandIsWritten(ins, 0)) {
                 INS_InsertCall(
                     ins, IPOINT_BEFORE, (AFUNPTR)WriteMem,
-                    IARG_PTR, ins,
+                    IARG_INST_PTR,
+                    IARG_PTR, new std::string(INS_Disassemble(ins)),
                     IARG_MEMORYOP_EA, 0,
                     IARG_PTR, routine,
                     IARG_UINT32, INS_OperandReg(ins, 1),
                     IARG_END);
-            } else if (INS_OperandCount(ins) == 2 && INS_OperandIsReg(ins, 0)){
+            } else if (INS_OperandCount(ins) == 2 && INS_OperandIsReg(ins, 0)) {
                 INS_InsertCall(
                     ins, IPOINT_BEFORE, (AFUNPTR)spreadRegTaint,
-                    IARG_PTR, ins,
+                    IARG_INST_PTR,
+                    IARG_PTR, new std::string(INS_Disassemble(ins)),
                     IARG_PTR, routine,
                     IARG_UINT32, INS_RegR(ins, 0),
                     IARG_UINT32, INS_RegW(ins, 0),
                     IARG_END);
-            } else {
-                fprintf(trace, "Thread: %d ; Routine: %s ; @%p: %s (Memory operand count: %d)\n", gettid(), routine, (void*) INS_Address(ins), INS_Disassemble(ins).c_str(), INS_MemoryOperandCount(ins));
+            } else if (INS_MemoryOperandCount(ins) > 0) {
+                UINT32 memOperands = INS_MemoryOperandCount(ins);
+                for (UINT32 memOp = 0; memOp < memOperands; memOp++) {
+                    if (INS_MemoryOperandIsRead(ins, memOp)) {
+                        INS_InsertCall(
+                            ins, IPOINT_BEFORE, (AFUNPTR)TraceMem,
+                            IARG_INST_PTR,
+                            IARG_PTR, new std::string(INS_Disassemble(ins)),
+                            IARG_ADDRINT, INS_Size(ins),
+                            IARG_MEMORYOP_EA, memOp,
+                            IARG_PTR, routine,
+                            IARG_PTR, "read",
+                            IARG_END);
+                    }
+                    /* for example, movsb instruction reads and writes to memomy */
+                    if (INS_MemoryOperandIsWritten(ins, memOp)) {
+                        INS_InsertCall(
+                            ins, IPOINT_BEFORE, (AFUNPTR)TraceMem,
+                            IARG_INST_PTR,
+                            IARG_PTR, new std::string(INS_Disassemble(ins)),
+                            IARG_PTR, ins,
+                            IARG_MEMORYOP_EA, memOp,
+                            IARG_PTR, routine,
+                            IARG_PTR, "written",
+                            IARG_END);
+                    }
+                }
             }
+
             if (INS_OperandCount(ins) > 1 && INS_OperandIsReg(ins, 0)){
                 INS_InsertCall(
                     ins, IPOINT_BEFORE, (AFUNPTR)followData,
-                    IARG_PTR, ins,
+                    IARG_INST_PTR,
+                    IARG_PTR, new std::string(INS_Disassemble(ins)),
                     IARG_PTR, routine,
                     IARG_UINT32, INS_RegR(ins, 0),
                     IARG_END);
