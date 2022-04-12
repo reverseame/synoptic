@@ -9,6 +9,7 @@ class ArgumentParser:
         self.argparser = argparse.ArgumentParser(description=description)
         self.argparser.add_argument('-v', '--version',  action='store_true', help=f'display version and exit')
         self.argparser.add_argument('trace', type=str, metavar='<log>', help='specify the server execution trace')
+        self.argparser.add_argument('-t32', action='store_true', help='trace of a 32-bit program')
 
     def parse_args(self, arguments):
         args = self.argparser.parse_args(arguments)

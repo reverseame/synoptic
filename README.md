@@ -2,17 +2,19 @@
 
 This project aims to infer the protocol message format and protocol finite state machine of an unknown protocol. This project relies on PIN Dynamic Binary Instrumentation to dynamically analize the server implementing the target protocol during its normal execution.
 
-# Requisites
-
-- Pin 3.22
 
 # Structure
 
-`server-tracer`: Pin tool that generate execution traces
+- `server-tracer`: Pin tool that generate execution traces
 
-`trace-analyzer`: script to analyze the execution trace and generate the protocol model (protocol FSM and message format)
+- `trace-analyzer`: script to analyze the execution trace and generate the protocol model (protocol FSM and message format)
 
-`message-replayer`: script to send messages based on the protocol model
+- `message-replayer`: script to send messages based on the protocol model
+
+# Requisites
+
+- `server-tracer`: Pin 3.22
+- `trace-analyzer`: Capstone
 
 # Compilation and Usage
 
