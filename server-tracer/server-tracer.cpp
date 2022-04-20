@@ -46,7 +46,7 @@ bool taintReg(REG reg) {
 
     std::list<REG> tainted_regs = thread_tainted_regs.find(tid)->second;
 
-    switch(reg){
+    switch(reg) {
         case REG_RAX:  tainted_regs.push_front(REG_RAX);
         case REG_EAX:  tainted_regs.push_front(REG_EAX); 
         case REG_AX:   tainted_regs.push_front(REG_AX); 
@@ -164,7 +164,7 @@ bool removeRegTainted(REG reg) {
 
     pid_t tid = gettid();
     std::list<REG> tainted_regs = thread_tainted_regs.find(tid)->second;
-    switch(reg){
+    switch(reg) {
         case REG_RAX:  tainted_regs.remove(REG_RAX);
         case REG_EAX:  tainted_regs.remove(REG_EAX);
         case REG_AX:   tainted_regs.remove(REG_AX);
@@ -400,20 +400,22 @@ ssize_t newTCPActivity(AFUNPTR orgFuncPtr, CONTEXT *ctx, const char *functionNam
 
         thread_tainted_addresses.insert(std::make_pair(tid, tainted_addresses));
         thread_tainted_regs.insert(std::make_pair(tid, tainted_regs));
-        fprintf(trace, "level=taint thread=%d action=%s buffer-address=%p buffer-size=%ld content-size=%ld buffer-content=", gettid(), functionName, (void*) &buf, len, ret);
+        fprintf(trace, "level=taint thread=%d action=%s buffer-address=%p buffer-size=%ld content-size=%ld buffer-content=", gettid(), functionName, (void*) *&buf, len, ret);
         for (int i = 0; i < ret; i++) {
             fprintf(trace, "%02x", ((char* )buf)[i]);
         }
-        fprintf(trace, " range=%p-0x%08lx\n", *&buf, (UINT64) *&buf+ret-1);
+        fprintf(trace, " range-start=%p range-end=0x%08lx\n", *&buf, (UINT64) *&buf+ret-1);
     } else if (strcmp("send", functionName) == 0) {
         /* We only want to keep track of server model */
         thread_tainted_addresses.erase(gettid());
         thread_tainted_regs.erase(gettid());
-        fprintf(trace, "level=taint thread=%d action=%s buffer-address=%p buffer-size=%ld content-size=%ld buffer-content=", gettid(), functionName, (void*) &buf, len, ret);
+        fprintf(trace, "level=taint thread=%d action=%s buffer-address=%p buffer-size=%ld content-size=%ld buffer-content=", gettid(), functionName, (void*) *&buf, len, ret);
         for (int i = 0; i < ret; i++) {
             fprintf(trace, "%02x", ((char* )buf)[i]);
         }
         fprintf(trace, " message=\"All tainted information deleted\"\n");
+        /* Flush all information */
+        fflush(trace);
     }
 
     return ret;
@@ -478,6 +480,19 @@ void imageLoad(IMG img, VOID *v) {
     }
 }
 
+void printInsHexBytes(UINT64 insAdd, USIZE insSize) {
+    /*
+    * Intel® 64 and IA-32 Architectures Software Developer’s Manual Volume 2A: Instruction Set Reference, A-L
+    * The maximum length of an Intel 64 and IA-32 instruction remains 15 bytes
+    */
+    void* buf[15];
+    PIN_SafeCopy(buf, (void*) insAdd, insSize);
+
+    for (uint i = 0; i < insSize; i++) {
+        fprintf(trace, "%02x", ((unsigned char*) buf)[i]);
+    }
+}
+
 void traceMem(UINT64 insAdd, std::string insDis, USIZE insSize, UINT64 memOp, char* routine, char* mode) {
     if (thread_tainted_addresses.empty()) {
         return;
@@ -488,12 +503,8 @@ void traceMem(UINT64 insAdd, std::string insDis, USIZE insSize, UINT64 memOp, ch
 
     for (i=tainted_adderess.begin(); i!=tainted_adderess.end(); i++) {
         if (*i == memOp) {
-            void* buf[15];
-            PIN_SafeCopy(buf, (void*) insAdd, insSize);
             fprintf(trace, "level=taint thread=%d routine=%s action=%s mem-addr=%p ins-addr=%p ins-dis=\"%s\" ins-bytes=", tid, routine, mode, (void*)memOp, (void*)insAdd, insDis.c_str());
-            for (uint i = 0; i < insSize; i++) {
-                fprintf(trace, "%02x", ((unsigned char*) buf)[i]);
-            }
+            printInsHexBytes(insAdd, insSize);
             fprintf(trace, "\n");
             return;
         }
@@ -502,26 +513,30 @@ void traceMem(UINT64 insAdd, std::string insDis, USIZE insSize, UINT64 memOp, ch
     fprintf(trace, "level=info thread=%d routine=%s action=log ins-addr=%p ins-dis=\"%s\"\n", tid, routine, (void*)insAdd, insDis.c_str());
 }
 
-void readMem(UINT64 insAdd, std::string insDis, UINT64 memOp, char* routine, REG reg_r) {
+void readMem(UINT64 insAdd, std::string insDis, USIZE insSize, UINT64 memOp, char* routine, REG reg_r) {
     pid_t tid = gettid();
     std::list<UINT64> tainted_adderess = thread_tainted_addresses.find(tid)->second;
     std::list<UINT64>::iterator i;
 
     for(i = tainted_adderess.begin(); i != tainted_adderess.end(); i++) {
         if (*i == memOp) {
-            fprintf(trace, "level=taint thread=%d routine=%s action=read mem-addr=%p ins-addr=%p ins-dis=\"%s\"\n", tid, routine, (void*)memOp, (void*)insAdd, insDis.c_str());
+            fprintf(trace, "level=taint thread=%d routine=%s action=mem-read mem-addr=%p ins-addr=%p ins-dis=\"%s\" ins-bytes=", tid, routine, (void*)memOp, (void*)insAdd, insDis.c_str());
+            printInsHexBytes(insAdd, insSize);
+            fprintf(trace, "\n");
             taintReg(reg_r);
             return;
         }
     }
     /* if mem != tained and reg == taint => free the reg */
     if (checkAlreadyRegTainted(reg_r)) {
-        fprintf(trace, "level=taint thread=%d routine=%s action=read mem-addr=%p ins-addr=%p ins-dis=\"%s\"\n", tid, routine, (void*)memOp, (void*)insAdd, insDis.c_str());
+        fprintf(trace, "level=taint thread=%d routine=%s action=mem-read mem-addr=%p ins-addr=%p ins-dis=\"%s\" ins-bytes=", tid, routine, (void*)memOp, (void*)insAdd, insDis.c_str());
+        printInsHexBytes(insAdd, insSize);
+        fprintf(trace, "\n");
         removeRegTainted(reg_r);
     }
 }
 
-void writeMem(UINT64 insAdd, std::string insDis, UINT64 memOp, char* routine, REG reg_r) {
+void writeMem(UINT64 insAdd, std::string insDis, USIZE insSize, UINT64 memOp, char* routine, REG reg_r) {
     if (thread_tainted_addresses.empty()) {
         return;
     }
@@ -531,7 +546,9 @@ void writeMem(UINT64 insAdd, std::string insDis, UINT64 memOp, char* routine, RE
 
     for(i = tainted_adderess.begin(); i != tainted_adderess.end(); i++) {
         if (*i == memOp) {
-            fprintf(trace, "level=taint thread=%d routine=%s action=written mem-addr=%p ins-addr=%p ins-dis=\"%s\"\n", tid, routine, (void*)memOp, (void*)insAdd, insDis.c_str());
+            fprintf(trace, "level=taint thread=%d routine=%s action=mem-write mem-addr=%p ins-addr=%p ins-dis=\"%s\" ins-bytes=", tid, routine, (void*)memOp, (void*)insAdd, insDis.c_str());
+            printInsHexBytes(insAdd, insSize);
+            fprintf(trace, "\n");
             if (!REG_valid(reg_r) || !checkAlreadyRegTainted(reg_r)) {
                 removeMemTainted(memOp);
             }
@@ -539,7 +556,9 @@ void writeMem(UINT64 insAdd, std::string insDis, UINT64 memOp, char* routine, RE
         }
     }
     if (checkAlreadyRegTainted(reg_r)) {
-        fprintf(trace, "level=taint thread=%d routine=%s action=written mem-addr=%p ins-addr=%p ins-dis=\"%s\"\n", tid, routine, (void*)memOp, (void*)insAdd, insDis.c_str());
+        fprintf(trace, "level=taint thread=%d routine=%s action=mem-write mem-addr=%p ins-addr=%p ins-dis=\"%s\" ins-bytes=", tid, routine, (void*)memOp, (void*)insAdd, insDis.c_str());
+        printInsHexBytes(insAdd, insSize);
+        fprintf(trace, "\n");
         addMemTainted(memOp);
     }
 }
@@ -631,10 +650,10 @@ void instruction(INS ins, void *v) {
                             IARG_ADDRINT, INS_Size(ins),
                             IARG_MEMORYOP_EA, mem_op,
                             IARG_PTR, routine,
-                            IARG_PTR, "read",
+                            IARG_PTR, "mem-read",
                             IARG_END);
                     }
-                    /* for example, movsb instruction reads and writes to memomy */
+                    /* Check for both reads and writes to memory (for example, movsb) */
                     if (INS_MemoryOperandIsWritten(ins, mem_op)) {
                         INS_InsertCall(
                             ins, IPOINT_BEFORE, (AFUNPTR)traceMem,
@@ -643,7 +662,7 @@ void instruction(INS ins, void *v) {
                             IARG_PTR, ins,
                             IARG_MEMORYOP_EA, mem_op,
                             IARG_PTR, routine,
-                            IARG_PTR, "written",
+                            IARG_PTR, "mem-write",
                             IARG_END);
                     }
                 }

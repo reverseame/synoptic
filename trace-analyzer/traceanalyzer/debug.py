@@ -1,9 +1,9 @@
 import sys
 import logging
 
-logger = logging.getLogger("trace-analyzer")
+logger = logging.getLogger('trace-analyzer')
 
-''' Log format '''
+""" Log format """
 logging.basicConfig(level=logging.DEBUG, format='%(name)s: %(levelname)s: %(message)s')
 
 def debug(msg):
@@ -24,5 +24,5 @@ def critical(msg):
     sys.exit(-1)
 
 def log(loglevel, msg):
-    ''' Show debug message '''
+    """ Show debug message """
     logger.log(loglevel, msg)

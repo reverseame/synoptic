@@ -10,11 +10,19 @@ START_TRACE = '-----BEGIN TRACE-----'
 END_TRACE = '-----END TRACE-----'
 
 class Analyzer:
-    def __init__(self, trace, arch_mode=capstone.CS_MODE_64):
+    def __init__(self, trace, output, arch_mode=capstone.CS_MODE_64):
         self.tracefile = os.path.abspath(trace)
+        self.ouput = self.create_output(output)
         self.traces = self.read_traces()
         self.md = capstone.Cs(capstone.CS_ARCH_X86, arch_mode)
         self.md.detail = True
+
+    def create_output(self, output):
+        filepath = os.path.abspath(output)
+        try:
+            return open(filepath, 'w')
+        except OSError:
+            debug.error(f'{filepath}: Unable to create output file')
 
     def read_traces(self):
         ret = []
@@ -30,12 +38,14 @@ class Analyzer:
         except ValueError:
             pass
 
+        ret = self.trace_to_dict(ret)
+
         if ret:
             debug.info(f'{self.tracefile}: {len(ret)} trace/s imported')
         else:
-            debug.warning(f'{self.tracefile}: Not trace found')
+            debug.warning(f'{self.tracefile}: No trace found')
 
-        return self.trace_to_dict(ret)
+        return ret
 
     def read_file(self):
         with open(self.tracefile, 'r') as f:
@@ -57,50 +67,62 @@ class Analyzer:
         return ret
 
     def analyze(self):
-        for (i, trace) in enumerate(self.traces, start=1):
-            print(f'*** Trace: {i} ***')
-            net_traces = self.split_network_activity(trace)
-            for (i, net_trace) in enumerate(net_traces, start=1):
-                print(f'\nNetwork activity {i}')
-                self.analyze_net_trace(net_trace)
-            print()
+        try:
+            for (i, trace) in enumerate(self.traces, start=1):
+                self.ouput.write('=' * 80 + '\n')
+                self.ouput.write(f'Trace: {i}\n')
+                self.ouput.write('=' * 80)
+                net_traces = self.split_network_activity(trace)
+                for (i, net_trace) in enumerate(net_traces, start=1):
+                    self.ouput.write('\n' + '-' * 20 + '\n')
+                    self.ouput.write(f'Network activity {i}\n')
+                    self.ouput.write('-' * 20 + '\n')
+                    self.analyze_net_trace(net_trace)
+                self.ouput.write('\n')
+        finally:
+            self.ouput.close()
 
     def split_network_activity(self, trace):
+        """
+        Split traces based in recv calls
+
+        :param trace: list of traces
+        :returns: a new list of traces from a recv call until the next
+        """
         ret = []
-        start = 0
+        last = 0
 
         for (i, line) in enumerate(trace):
             if line['action'] == 'recv':
-                start = i
-            elif line['action'] == 'send':
-                """ Avoid if buffer is still not received """
-                if start:
-                    ret.append(trace[start:i])
+                ret.append(trace[last:i])
+                last = i
 
         return ret
 
     def analyze_net_trace(self, net_trace):
-        buffer_content = net_trace[0]['buffer-content']
-        buffer_bytes = binascii.unhexlify(buffer_content)
-        buffer_base_address = int(net_trace[0]['range'].split('-')[0], 16)
-
-        print(f'\tMessage received: {buffer_content} ({buffer_bytes})')
-        for trace in net_trace[1:]:
-            if trace['level'] == 'taint':
-                if trace['action'] == 'read':
-                    try:
-                        mem_read = int(trace['mem-addr'], 16)
-                        ins_bytes = binascii.unhexlify(trace['ins-bytes'])
-                        ins_addr = int(trace['ins-addr'], 16)
-                        ins = next(self.md.disasm(ins_bytes, ins_addr))     # Just one instruction
-                        self.analyze_ins(ins, mem_read, buffer_base_address, buffer_bytes)
-                    except KeyError:
-                        pass
+        for trace in net_trace:
+            if trace['action'] == 'recv':
+                buffer_content = trace['buffer-content']
+                buffer_bytes = binascii.unhexlify(buffer_content)
+                buffer_base_address = int(trace['range-start'], 16)
+                self.ouput.write(f'recv: {buffer_content} ({buffer_bytes})\n')
+            elif trace['action'] == 'send':
+                self.ouput.write(f'send: {trace["buffer-content"]} ({binascii.unhexlify(trace["buffer-content"])})\n')
+            elif trace['level'] == 'taint':
+                if trace['action'] == 'mem-read':
+                    mem_read = int(trace['mem-addr'], 16)
+                    ins_bytes = binascii.unhexlify(trace['ins-bytes'])
+                    ins_addr = int(trace['ins-addr'], 16)
+                    ins = next(self.md.disasm(ins_bytes, ins_addr))     # Just one instruction
+                    self.analyze_ins(ins, mem_read, buffer_base_address, buffer_bytes)
+                else:
+                    self.ouput.write(f'NotImplementedError: {trace}\n')
+                    raise NotImplementedError
 
     def analyze_ins(self, ins, mem_read, buffer_base_address, buffer_bytes):
         if ins.id == capstone.x86.X86_INS_CMP:
             for i in ins.operands:
                 if i.type == capstone.x86.X86_OP_IMM:
                     where = mem_read - buffer_base_address
-                    print(f'\t\t{ins.mnemonic} {ins.op_str}:')
-                    print(f'\t\t\t{where}th byte: {hex(buffer_bytes[where])} compared to {hex(i.value.imm)}')
+                    self.ouput.write(f'\t{ins.mnemonic} {ins.op_str}:\n')
+                    self.ouput.write(f'\t\t{where}th byte: {hex(buffer_bytes[where])} compared to {hex(i.value.imm)}\n')
