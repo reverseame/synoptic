@@ -454,7 +454,7 @@ void imageLoad(IMG img, VOID *v) {
     if (IMG_IsMainExecutable(img)) {
         ADDRINT image_base = IMG_LowAddress(img);
         printf("[*] server-tracer: INFO: Main module mapped to %p\n", (void*)image_base);
-        fprintf(trace, "level=info action=relocate image-base=%p\n", (void*)image_base);
+        fprintf(trace, "level=info thread=%d action=relocate image-base=%p\n", gettid(), (void*)image_base);
         printf("[*] server-tracer: INFO: Main module not hooked\t: %s\n", IMG_Name(img).c_str());
         return;
     }

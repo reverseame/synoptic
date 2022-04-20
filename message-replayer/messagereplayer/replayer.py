@@ -1,7 +1,9 @@
+import binascii
 import io
 import time
 import socket
 
+import messagereplayer.model
 import messagereplayer.debug as debug
 
 BUF_SIZE = 4096
@@ -29,22 +31,15 @@ class Replayer:
 
         return sock
 
-    def replay(self, model, delay=0.5):
-        debug.info(f'Sending messages...')
-
+    def replay(self, modelfile, delay=0.5):
         try:
-            messages = self.generate_messages(model)
+            model = self.generate_messages(modelfile)
 
-            messages = [
-                b'USER anonymous\r\n',
-                b'PASS *\r\n',
-                b'SIZE test.log\r\n',
-                b'QUIT\r\n'
-            ]
+            debug.info(f'Sending {len(model)} messages...')
 
-            for message in messages:
+            for message in model:
                 self.recv()
-                self.send(message)
+                self.send(binascii.unhexlify(message.bytes))
                 time.sleep(delay)
 
             self.recv()
@@ -52,8 +47,13 @@ class Replayer:
             if self.tcp: self.socket.close()
             debug.info(f'Done! Bye!')
 
-    def generate_messages(self, model):
-        return self.read_file(model)
+    def generate_messages(self, modelfile):
+        content =  self.read_file(modelfile)
+
+        model = messagereplayer.model.Model()
+        model.load(content)
+
+        return model
 
     def read_file(self, file):
         with open(file, 'r') as f:
