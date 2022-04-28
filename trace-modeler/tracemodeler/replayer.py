@@ -3,8 +3,8 @@ import io
 import time
 import socket
 
-import messagereplayer.model
-import messagereplayer.debug as debug
+import tracemodeler.model
+import tracemodeler.debug as debug
 
 BUF_SIZE = 4096
 
@@ -31,10 +31,8 @@ class Replayer:
 
         return sock
 
-    def replay(self, modelfile, delay=0.5):
+    def replay(self, model, delay=0.5):
         try:
-            model = self.generate_messages(modelfile)
-
             debug.info(f'Sending {len(model)} messages...')
 
             for message in model:
@@ -46,14 +44,6 @@ class Replayer:
         finally:
             if self.tcp: self.socket.close()
             debug.info(f'Done! Bye!')
-
-    def generate_messages(self, modelfile):
-        content =  self.read_file(modelfile)
-
-        model = messagereplayer.model.Model()
-        model.load(content)
-
-        return model
 
     def read_file(self, file):
         with open(file, 'r') as f:

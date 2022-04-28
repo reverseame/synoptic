@@ -1,6 +1,21 @@
+import shlex
+
 class Model:
     def __init__(self):
         self.states = []
+
+    def load(self, string):
+        lines = string.splitlines()
+
+        for line in lines:
+            splitted = shlex.split(line)
+            for (key, value) in [item.split('=') for item in splitted]:
+                if key == 'content':
+                    message = Message(value)
+                elif key == 'format':
+                    (where, byte) = value.split(',')
+                    message.constrain(where, byte)
+            self.states.append(message)
 
     def update(self, message):
         self.states.append(message)
@@ -15,6 +30,13 @@ class Model:
             ret += f'state={i+1} below={i} {state.dump()}\n'
 
         return ret
+
+    def __len__(self):
+        return len(self.states)
+
+    def __iter__(self):
+        for state in self.states:
+            yield state
 
 class Message:
     def __init__(self, bytes):

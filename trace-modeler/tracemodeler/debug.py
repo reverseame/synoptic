@@ -1,7 +1,7 @@
 import sys
 import logging
 
-logger = logging.getLogger('trace-analyzer')
+logger = logging.getLogger('trace-modeler')
 
 """ Log format """
 logging.basicConfig(level=logging.DEBUG, format='%(name)s: %(levelname)s: %(message)s')

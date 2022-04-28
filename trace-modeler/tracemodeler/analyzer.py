@@ -4,20 +4,19 @@ import binascii
 import capstone
 import capstone.x86
 
-import traceanalyzer.model
-import traceanalyzer.debug as debug
+import tracemodeler.model
+import tracemodeler.debug as debug
 
 START_TRACE = '-----BEGIN TRACE-----'
 END_TRACE = '-----END TRACE-----'
 
 class Analyzer:
-    def __init__(self, trace, output, arch_mode=capstone.CS_MODE_64):
+    def __init__(self, trace, arch_mode=capstone.CS_MODE_64):
         self.tracefile = os.path.abspath(trace)
-        self.output = output
         self.traces = self.read_traces()
         self.md = capstone.Cs(capstone.CS_ARCH_X86, arch_mode)
         self.md.detail = True
-        self.model = traceanalyzer.model.Model()
+        self.model = tracemodeler.model.Model()
 
     def read_traces(self):
         ret = []
@@ -71,8 +70,7 @@ class Analyzer:
                 for net_trace in net_traces:
                     self.analyze_net_trace(net_trace)
         finally:
-            with open(self.output, 'w') as f:
-                f.write(self.model.dump())
+            return self.model
 
     def split_network_activity(self, trace):
         """
@@ -98,7 +96,7 @@ class Analyzer:
             if trace['action'] == 'recv':
                 buffer_content = trace['buffer-content']
                 buffer_base_address = int(trace['range-start'], 16)
-                message = traceanalyzer.model.Message(buffer_content)
+                message = tracemodeler.model.Message(buffer_content)
             elif trace['action'] == 'send':
                 continue
             elif trace['level'] == 'taint':
