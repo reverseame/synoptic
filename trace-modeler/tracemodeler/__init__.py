@@ -17,6 +17,7 @@ def main():
 
     arch_mode = capstone.CS_MODE_32 if args.m32 else capstone.CS_MODE_64
 
+    """ Either load a model file or generate a new one based in a trace file """
     if args.model:
         model = tracemodeler.model.Model()
         with open(args.model, 'r') as f:
@@ -27,9 +28,12 @@ def main():
         model = analyzer.Analyzer(args.trace, arch_mode=arch_mode).analyze()
         debug.info(f'{len(model)} messages infered in the model')
 
+    """ Export model """
     if args.output:
         with open(args.output, 'w') as f:
             f.write(model.dump())
         debug.info(f'{args.output}: Model exported')
-    elif args.replay:
+
+    """ Replay model to a target server """
+    if args.replay:
         replayer.Replayer(args.host, args.port, tcp=not args.udp).replay(model, delay=args.delay)

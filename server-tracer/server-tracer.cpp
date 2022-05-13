@@ -1,11 +1,11 @@
 #include "pin.H"
+#include <list>
 #include <stdio.h>
 #include <unistd.h>
 #include <pthread.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/socket.h>
-#include <list>
 
 /* Output file */
 FILE* trace;
@@ -32,7 +32,7 @@ bool checkAlreadyRegTainted(REG reg) {
     return false;
 }
 
-bool taintReg(REG reg) {
+bool taintReg(std::string insDis, REG reg, char* routine) {
     if (thread_tainted_regs.empty()) {
         return false;
     }
@@ -40,7 +40,7 @@ bool taintReg(REG reg) {
     pid_t tid = gettid();
 
     if (checkAlreadyRegTainted(reg)) {
-        fprintf(trace, "level=taint thread=%d action=reg message=\"%s is already tainted\"\n", tid, REG_StringShort(reg).c_str());
+        fprintf(trace, "level=taint-debug thread=%d routine=%s action=reg ins-dis=\"%s\" message=\"%s is already tainted\"\n", tid, routine, insDis.c_str(), REG_StringShort(reg).c_str());
         return false;
     }
 
@@ -85,18 +85,6 @@ bool taintReg(REG reg) {
         case REG_EDI:  tainted_regs.push_front(REG_EDI); 
         case REG_DI:   tainted_regs.push_front(REG_DI); 
         case REG_DIL:  tainted_regs.push_front(REG_DIL); 
-            break;
-
-        case REG_RBP:  tainted_regs.push_front(REG_RBP); 
-        case REG_EBP:  tainted_regs.push_front(REG_EBP); 
-        case REG_BP:   tainted_regs.push_front(REG_BP); 
-        case REG_BPL:  tainted_regs.push_front(REG_BPL); 
-            break;
-
-        case REG_RSP:  tainted_regs.push_front(REG_RSP); 
-        case REG_ESP:  tainted_regs.push_front(REG_ESP); 
-        case REG_SP:   tainted_regs.push_front(REG_SP); 
-        case REG_SPL:  tainted_regs.push_front(REG_SPL); 
             break;
 
         case REG_R8:   tainted_regs.push_front(REG_R8); 
@@ -148,16 +136,16 @@ bool taintReg(REG reg) {
             break;
 
         default:
-            fprintf(trace, "level=taint thread=%d message=\"%s can't be tainted\"\n", tid, REG_StringShort(reg).c_str());
+            fprintf(trace, "level=debug thread=%d routine=%s ins-dis=\"%s\" message=\"%s can't be tainted\"\n", tid, routine, insDis.c_str(),REG_StringShort(reg).c_str());
             return false;
     }
 
     thread_tainted_regs[tid] = tainted_regs;
-    fprintf(trace, "level=taint thread=%d action=reg message=\"%s is now tainted\"\n", tid, REG_StringShort(reg).c_str());
+    fprintf(trace, "level=taint-debug thread=%d routine=%s, action=reg-tainted ins-dis=\"%s\" reg-name=%s\n", tid, routine, insDis.c_str(), REG_StringShort(reg).c_str());
     return true;
 }
 
-bool removeRegTainted(REG reg) {
+bool removeRegTainted(std::string insDis, REG reg, char* routine) {
     if (thread_tainted_regs.empty()) {
         return false;
     }
@@ -203,18 +191,6 @@ bool removeRegTainted(REG reg) {
         case REG_EDI:  tainted_regs.remove(REG_EDI); 
         case REG_DI:   tainted_regs.remove(REG_DI); 
         case REG_DIL:  tainted_regs.remove(REG_DIL); 
-            break;
-
-        case REG_RBP:  tainted_regs.remove(REG_RBP); 
-        case REG_EBP:  tainted_regs.remove(REG_EBP); 
-        case REG_BP:   tainted_regs.remove(REG_BP); 
-        case REG_BPL:  tainted_regs.remove(REG_BPL); 
-            break;
-
-        case REG_RSP:  tainted_regs.remove(REG_RSP); 
-        case REG_ESP:  tainted_regs.remove(REG_ESP); 
-        case REG_SP:   tainted_regs.remove(REG_SP); 
-        case REG_SPL:  tainted_regs.remove(REG_SPL); 
             break;
 
         case REG_R8:   tainted_regs.remove(REG_R8); 
@@ -270,11 +246,11 @@ bool removeRegTainted(REG reg) {
     }
 
     thread_tainted_regs[tid] = tainted_regs;
-    fprintf(trace, "level=taint thread=%d action=reg message=\"%s is now freed\"\n", tid, REG_StringShort(reg).c_str());
+    fprintf(trace, "level=taint-debug thread=%d routine=%s action=reg-free ins-dis=\"%s\" reg-name=%s\n", tid, routine, insDis.c_str(),REG_StringShort(reg).c_str());
     return true;
 }
 
-void removeMemTainted(UINT64 addr) {
+void removeMemTainted(std::string insDis, UINT64 addr, char* routine) {
     if (thread_tainted_addresses.empty()) {
         return;
     }
@@ -283,10 +259,10 @@ void removeMemTainted(UINT64 addr) {
     std::list<UINT64> tainted_addresses = thread_tainted_addresses.find(tid)->second;
     tainted_addresses.remove(addr);
     thread_tainted_addresses[tid] = tainted_addresses;
-    fprintf(trace, "level=taint thread=%d action=mem message=\"%p is now freed\"\n", tid, (void*)addr);
+    fprintf(trace, "level=taint-debug thread=%d routine=%s action=mem-free ins-dis=\"%s\" mem-addr=%p\n", tid, routine, insDis.c_str(), (void*)addr);
 }
 
-void addMemTainted(UINT64 addr) {
+void addMemTainted(std::string insDis, UINT64 addr, char* routine) {
     if (thread_tainted_addresses.empty()) {
         return;
     }
@@ -295,7 +271,7 @@ void addMemTainted(UINT64 addr) {
     std::list<UINT64> tainted_addresses = thread_tainted_addresses.find(tid)->second;
     tainted_addresses.push_back(addr);
     thread_tainted_addresses[tid] = tainted_addresses;
-    fprintf(trace, "level=taint thread=%d action=mem message=\"%p is now tainted\"\n", tid, (void*)addr);
+    fprintf(trace, "level=taint thread=%d routine=%s, action=mem-taint ins-dis=\"%s\" mem-add=%p\n", tid, routine, insDis.c_str(), (void*)addr);
 }
 
 int newAccept(AFUNPTR orgFuncPtr, CONTEXT *ctx, int sockfd, struct sockaddr *addr, socklen_t *addrLen) {
@@ -389,10 +365,11 @@ ssize_t newTCPActivity(AFUNPTR orgFuncPtr, CONTEXT *ctx, const char *functionNam
                                 PIN_PARG(int), flags,
                                 PIN_PARG_END());
 
+    pid_t tid = gettid();
+
     if (strcmp("recv", functionName) == 0) {
         std::list<UINT64> tainted_addresses;
         std::list<REG> tainted_regs;
-        pid_t tid = gettid();
 
         for (int i = 0; i < ret ; i++) {
             tainted_addresses.push_back((UINT64) *&buf + i);
@@ -407,13 +384,13 @@ ssize_t newTCPActivity(AFUNPTR orgFuncPtr, CONTEXT *ctx, const char *functionNam
         fprintf(trace, " range-start=%p range-end=0x%08lx\n", *&buf, (UINT64) *&buf+ret-1);
     } else if (strcmp("send", functionName) == 0) {
         /* We only want to keep track of server model */
-        thread_tainted_addresses.erase(gettid());
-        thread_tainted_regs.erase(gettid());
+        thread_tainted_addresses.erase(tid);
+        thread_tainted_regs.erase(tid);
         fprintf(trace, "level=taint thread=%d action=%s buffer-address=%p buffer-size=%ld content-size=%ld buffer-content=", gettid(), functionName, (void*) *&buf, len, ret);
         for (int i = 0; i < ret; i++) {
             fprintf(trace, "%02x", ((char* )buf)[i]);
         }
-        fprintf(trace, " message=\"All tainted information deleted\"\n");
+        fprintf(trace, "\n");
         /* Flush all information */
         fflush(trace);
     }
@@ -448,12 +425,12 @@ void replaceTCPActivity(IMG img, RTN rtn, const char *functionName) {
 
 void imageLoad(IMG img, VOID *v) {
     RTN rtn;
-    printf("[*] server-tracer: INFO: Module loaded\t\t: %s\n", IMG_Name(img).c_str());
 
-    /* Avoid to hook first module loaded a.k.a main executable */
+    ADDRINT image_base = IMG_LowAddress(img);
+    printf("[*] server-tracer: INFO: Module loaded\t\t: %p: %s\n", (void*)image_base, IMG_Name(img).c_str());
+
+    /* Avoid to hook the main executable */
     if (IMG_IsMainExecutable(img)) {
-        ADDRINT image_base = IMG_LowAddress(img);
-        printf("[*] server-tracer: INFO: Main module mapped to %p\n", (void*)image_base);
         fprintf(trace, "level=info thread=%d action=relocate image-base=%p\n", gettid(), (void*)image_base);
         printf("[*] server-tracer: INFO: Main module not hooked\t: %s\n", IMG_Name(img).c_str());
         return;
@@ -493,27 +470,11 @@ void printInsHexBytes(UINT64 insAdd, USIZE insSize) {
     }
 }
 
-void traceMem(UINT64 insAdd, std::string insDis, USIZE insSize, UINT64 memOp, char* routine, char* mode) {
+void readMem(UINT64 insAdd, std::string insDis, USIZE insSize, UINT64 memOp, char* routine, REG reg_r) {
     if (thread_tainted_addresses.empty()) {
         return;
     }
-    pid_t tid = gettid();
-    std::list<UINT64> tainted_adderess = thread_tainted_addresses.find(tid)->second;
-    std::list<UINT64>::iterator i;
 
-    for (i=tainted_adderess.begin(); i!=tainted_adderess.end(); i++) {
-        if (*i == memOp) {
-            fprintf(trace, "level=taint thread=%d routine=%s action=%s mem-addr=%p ins-addr=%p ins-dis=\"%s\" ins-bytes=", tid, routine, mode, (void*)memOp, (void*)insAdd, insDis.c_str());
-            printInsHexBytes(insAdd, insSize);
-            fprintf(trace, "\n");
-            return;
-        }
-    }
-
-    fprintf(trace, "level=info thread=%d routine=%s action=log ins-addr=%p ins-dis=\"%s\"\n", tid, routine, (void*)insAdd, insDis.c_str());
-}
-
-void readMem(UINT64 insAdd, std::string insDis, USIZE insSize, UINT64 memOp, char* routine, REG reg_r) {
     pid_t tid = gettid();
     std::list<UINT64> tainted_adderess = thread_tainted_addresses.find(tid)->second;
     std::list<UINT64>::iterator i;
@@ -523,20 +484,20 @@ void readMem(UINT64 insAdd, std::string insDis, USIZE insSize, UINT64 memOp, cha
             fprintf(trace, "level=taint thread=%d routine=%s action=mem-read mem-addr=%p ins-addr=%p ins-dis=\"%s\" ins-bytes=", tid, routine, (void*)memOp, (void*)insAdd, insDis.c_str());
             printInsHexBytes(insAdd, insSize);
             fprintf(trace, "\n");
-            taintReg(reg_r);
+            taintReg(insDis, reg_r, routine);
             return;
         }
     }
+
+    fprintf(trace, "level=info thread=%d routine=%s action=log ins-addr=%p ins-dis=\"%s\"\n", tid, routine, (void*)insAdd, insDis.c_str());
+
     /* if mem != tained and reg == taint => free the reg */
     if (checkAlreadyRegTainted(reg_r)) {
-        fprintf(trace, "level=taint thread=%d routine=%s action=mem-read mem-addr=%p ins-addr=%p ins-dis=\"%s\" ins-bytes=", tid, routine, (void*)memOp, (void*)insAdd, insDis.c_str());
-        printInsHexBytes(insAdd, insSize);
-        fprintf(trace, "\n");
-        removeRegTainted(reg_r);
+        removeRegTainted(insDis, reg_r, routine);
     }
 }
 
-void writeMem(UINT64 insAdd, std::string insDis, USIZE insSize, UINT64 memOp, char* routine, REG reg_r) {
+void writeImmToMem(UINT64 insAdd, std::string insDis, USIZE insSize, UINT64 memOp, char* routine, REG reg_w, UINT64 imm) {
     if (thread_tainted_addresses.empty()) {
         return;
     }
@@ -546,47 +507,72 @@ void writeMem(UINT64 insAdd, std::string insDis, USIZE insSize, UINT64 memOp, ch
 
     for(i = tainted_adderess.begin(); i != tainted_adderess.end(); i++) {
         if (*i == memOp) {
-            fprintf(trace, "level=taint thread=%d routine=%s action=mem-write mem-addr=%p ins-addr=%p ins-dis=\"%s\" ins-bytes=", tid, routine, (void*)memOp, (void*)insAdd, insDis.c_str());
+            fprintf(trace, "level=taint thread=%d routine=%s action=mem-write mem-addr=%p value=0x%lx ins-addr=%p ins-dis=\"%s\" ins-bytes=", tid, routine, (void*)memOp, imm, (void*)insAdd, insDis.c_str());
             printInsHexBytes(insAdd, insSize);
             fprintf(trace, "\n");
-            if (!REG_valid(reg_r) || !checkAlreadyRegTainted(reg_r)) {
-                removeMemTainted(memOp);
-            }
+            removeMemTainted(insDis, memOp, routine);
             return;
         }
     }
-    if (checkAlreadyRegTainted(reg_r)) {
-        fprintf(trace, "level=taint thread=%d routine=%s action=mem-write mem-addr=%p ins-addr=%p ins-dis=\"%s\" ins-bytes=", tid, routine, (void*)memOp, (void*)insAdd, insDis.c_str());
-        printInsHexBytes(insAdd, insSize);
-        fprintf(trace, "\n");
-        addMemTainted(memOp);
-    }
+
+    fprintf(trace, "level=info thread=%d routine=%s action=log ins-addr=%p ins-dis=\"%s\"\n", gettid(), routine, (void*) insAdd, insDis.c_str());
 }
 
-void spreadRegTaint(UINT64 insAdd, std::string insDis, char* routine, REG reg_r, REG reg_w) {
+void writeRegToMem(UINT64 insAdd, std::string insDis, USIZE insSize, UINT64 memOp, char* routine, REG reg_w, ADDRINT regValue) {
+    //writeImmToMem(insAdd, insDis, insSize, memOp, routine, reg_w, regValue);
+
+    if (checkAlreadyRegTainted(reg_w)) {
+        addMemTainted(insDis, memOp, routine);
+        return;
+    }
+
+    fprintf(trace, "level=info thread=%d routine=%s action=log ins-addr=%p ins-dis=\"%s\"\n", gettid(), routine, (void*) insAdd, insDis.c_str());
+}
+
+void spreadRegTaint(UINT64 insAdd, std::string insDis, USIZE insSize, char* routine, REG reg_r, REG reg_w) {
     pid_t tid = gettid();
 
     if (REG_valid(reg_w)) {
         if (checkAlreadyRegTainted(reg_w) && (!REG_valid(reg_r) || !checkAlreadyRegTainted(reg_r))) {
-            fprintf(trace, "level=taint thread=%d routine=%s action=spread ins-addr=%p ins-dis=\"%s\"\n", tid, routine, (void*)insAdd, insDis.c_str());
-            fprintf(trace, "level=taint thread=%d routine=%s actino=spread output=%s input=%s", tid, routine, REG_StringShort(reg_w).c_str(), (REG_valid(reg_r) ? REG_StringShort(reg_r).c_str() : "constant"));
-            removeRegTainted(reg_w);
+            removeRegTainted(insDis, reg_w, routine);
         } else if (!checkAlreadyRegTainted(reg_w) && checkAlreadyRegTainted(reg_r)) {
-            fprintf(trace, "level=taint thread=%d routine=%s action=spread ins-addr=%p ins-dis=\"%s\"\n", tid, routine, (void*)insAdd, insDis.c_str());
-            fprintf(trace, "level=taint thread=%d routine=%s action=spread output=%s input=%s", tid, routine, REG_StringShort(reg_w).c_str(), REG_StringShort(reg_r).c_str());
-            taintReg(reg_w);
+            bool tainted = taintReg(insDis, reg_w, routine);
+            if (tainted) {
+                fprintf(trace, "level=taint thread=%d routine=%s action=spread ins-addr=%p ins-dis=\"%s\" output=%s input=%s, ins-bytes=", tid, routine, (void*)insAdd, insDis.c_str(), REG_StringShort(reg_w).c_str(), REG_StringShort(reg_r).c_str());
+                printInsHexBytes(insAdd, insSize);
+                fprintf(trace, "\n");
+            }
         }
     }
 }
 
-VOID followData(UINT64 insAdd, std::string insDis, char* routine, REG reg) {
-    if (!REG_valid(reg)) {
-        return;
+void traceIns(UINT64 insAdd, std::string insDis, USIZE insSize, char* routine) {
+    fprintf(trace, "level=info thread=%d routine=%s action=log ins-addr=%p ins-dis=\"%s\"\n", gettid(), routine, (void*) insAdd, insDis.c_str());
+}
+
+void indirectCall(UINT64 insAdd, std::string insDis, ADDRINT targetAdd, char* routine) {
+    std::string target = RTN_FindNameByAddress(targetAdd);
+
+    if (target.empty()) {
+        target = "unknown";
     }
 
-    if (checkAlreadyRegTainted(reg)){
-        fprintf(trace, "level=taint thread=%d routine=%s action=follow-data ins-addr=%p ins-dis=\"%s\"\n", gettid(), routine, (void*) insAdd, insDis.c_str());
+    fprintf(trace, "level=info thread=%d routine=%s action=indirect-call target=%s ins-addr=%p ins-dis=\"%s\"\n", gettid(), routine, target.c_str(), (void*) insAdd, insDis.c_str());
+}
+
+int operandCount(INS ins) {
+    // Ignores all implicit related operands. For example, "ret" has 0 operands
+    // instead of 4 as returned by INS_OperandCount()
+    int count = 0;
+
+    for (UINT32 op = 0; op < INS_OperandCount(ins); op++) {
+        if (INS_OperandIsImplicit(ins, op)) {
+            return count;
+        }
+        count++;
     }
+
+    return count;
 }
 
 void instruction(INS ins, void *v) {
@@ -596,9 +582,10 @@ void instruction(INS ins, void *v) {
     }
 
     const char* routine = "unknown";
-    if(RTN_Valid(INS_Rtn(ins))) {
+    if (RTN_Valid(INS_Rtn(ins))) {
         routine = RTN_Name(INS_Rtn(ins)).c_str();
     }
+
     IMG img = IMG_FindByAddress(INS_Address(ins));
 
     /* Just analyze the main executable */
@@ -607,79 +594,84 @@ void instruction(INS ins, void *v) {
             if (INS_IsDirectControlFlow(ins)) {
                 ADDRINT target = INS_DirectControlFlowTargetAddress(ins);
                 fprintf(trace, "level=info thread=%d routine=%s action=call target=%s ins-addr=%p ins-dis=\"%s\"\n", gettid(), routine, RTN_FindNameByAddress(target).c_str(), (void*) INS_Address(ins), INS_Disassemble(ins).c_str());
+                return;
             } else {
                 /* Target address is provided through memory or through a register */
-                fprintf(trace, "level=info thread=%d routine=%s action=indirect-call ins-addr=%p ins-dis=\"%s\"\n", gettid(), routine, (void*) INS_Address(ins), INS_Disassemble(ins).c_str());
+                INS_InsertCall(
+                    ins, IPOINT_BEFORE, (AFUNPTR)indirectCall,
+                    IARG_INST_PTR,
+                    IARG_PTR, new std::string(INS_Disassemble(ins)),
+                    IARG_BRANCH_TARGET_ADDR,
+                    IARG_PTR, routine,
+                    IARG_END);
+                return;
             }
-        } else if (INS_IsMemoryRead(ins) || INS_IsMemoryWrite(ins)) {
-            if (INS_OperandCount(ins) == 2 && INS_MemoryOperandIsRead(ins, 0) && INS_OperandIsReg(ins, 0)) {
+        } else if (operandCount(ins) == 2) {
+            if (INS_IsMemoryRead(ins) && INS_OperandIsMemory(ins, 0) && (INS_OperandMemoryBaseReg(ins, 0) != REG_INVALID())) {
                 INS_InsertCall(
                     ins, IPOINT_BEFORE, (AFUNPTR)readMem,
                     IARG_INST_PTR,
                     IARG_PTR, new std::string(INS_Disassemble(ins)),
+                    IARG_ADDRINT, INS_Size(ins),
+                    IARG_MEMORYOP_EA, 0,
+                    IARG_PTR, routine,
+                    IARG_UINT32, INS_OperandMemoryBaseReg(ins, 0),
+                    IARG_END);
+            } else if (INS_IsMemoryWrite(ins) && INS_OperandIsMemory(ins, 0)) {
+                if ((INS_OperandMemoryBaseReg(ins, 0) != REG_INVALID()) && INS_OperandIsImmediate(ins, 1)) {
+                    INS_InsertCall(
+                        ins, IPOINT_BEFORE, (AFUNPTR)writeImmToMem,
+                        IARG_INST_PTR,
+                        IARG_PTR, new std::string(INS_Disassemble(ins)),
+                        IARG_ADDRINT, INS_Size(ins),
+                        IARG_MEMORYOP_EA, 0,
+                        IARG_PTR, routine,
+                        IARG_UINT32, INS_OperandMemoryBaseReg(ins, 0),
+                        IARG_UINT64, INS_OperandImmediate(ins, 1),
+                        IARG_END);
+                } else if (INS_OperandIsReg(ins, 1)) {
+                    if (!REG_is_xmm_ymm_zmm(INS_OperandReg(ins, 1))) {
+                        INS_InsertCall(
+                            ins, IPOINT_BEFORE, (AFUNPTR)writeRegToMem,
+                            IARG_INST_PTR,
+                            IARG_PTR, new std::string(INS_Disassemble(ins)),
+                            IARG_ADDRINT, INS_Size(ins),
+                            IARG_MEMORYOP_EA, 0,
+                            IARG_PTR, routine,
+                            IARG_UINT32, INS_OperandReg(ins, 1),
+                            IARG_REG_VALUE, INS_OperandReg(ins, 1),
+                            IARG_END);      
+                    }
+                }
+            } else if (INS_IsMemoryRead(ins) && INS_OperandIsReg(ins, 0) && INS_OperandIsMemory(ins, 1)) {
+                INS_InsertCall(
+                    ins, IPOINT_BEFORE, (AFUNPTR)readMem,
+                    IARG_INST_PTR,
+                    IARG_PTR, new std::string(INS_Disassemble(ins)),
+                    IARG_ADDRINT, INS_Size(ins),
                     IARG_MEMORYOP_EA, 0,
                     IARG_PTR, routine,
                     IARG_UINT32, INS_OperandReg(ins, 0),
                     IARG_END);
-            } else if (INS_OperandCount(ins) == 2 && INS_MemoryOperandIsWritten(ins, 0)) {
-                INS_InsertCall(
-                    ins, IPOINT_BEFORE, (AFUNPTR)writeMem,
-                    IARG_INST_PTR,
-                    IARG_PTR, new std::string(INS_Disassemble(ins)),
-                    IARG_MEMORYOP_EA, 0,
-                    IARG_PTR, routine,
-                    IARG_UINT32, INS_OperandReg(ins, 1),
-                    IARG_END);
-            } else if (INS_OperandCount(ins) == 2 && INS_OperandIsReg(ins, 0)) {
+            } else if (INS_OperandIsReg(ins, 0)) {
                 INS_InsertCall(
                     ins, IPOINT_BEFORE, (AFUNPTR)spreadRegTaint,
                     IARG_INST_PTR,
                     IARG_PTR, new std::string(INS_Disassemble(ins)),
+                    IARG_ADDRINT, INS_Size(ins),
                     IARG_PTR, routine,
                     IARG_UINT32, INS_RegR(ins, 0),
                     IARG_UINT32, INS_RegW(ins, 0),
                     IARG_END);
-            } else if (INS_MemoryOperandCount(ins) > 0) {
-                UINT32 mem_operands = INS_MemoryOperandCount(ins);
-                for (UINT32 mem_op = 0; mem_op < mem_operands; mem_op++) {
-                    if (INS_MemoryOperandIsRead(ins, mem_op)) {
-                        INS_InsertCall(
-                            ins, IPOINT_BEFORE, (AFUNPTR)traceMem,
-                            IARG_INST_PTR,
-                            IARG_PTR, new std::string(INS_Disassemble(ins)),
-                            IARG_ADDRINT, INS_Size(ins),
-                            IARG_MEMORYOP_EA, mem_op,
-                            IARG_PTR, routine,
-                            IARG_PTR, "mem-read",
-                            IARG_END);
-                    }
-                    /* Check for both reads and writes to memory (for example, movsb) */
-                    if (INS_MemoryOperandIsWritten(ins, mem_op)) {
-                        INS_InsertCall(
-                            ins, IPOINT_BEFORE, (AFUNPTR)traceMem,
-                            IARG_INST_PTR,
-                            IARG_PTR, new std::string(INS_Disassemble(ins)),
-                            IARG_PTR, ins,
-                            IARG_MEMORYOP_EA, mem_op,
-                            IARG_PTR, routine,
-                            IARG_PTR, "mem-write",
-                            IARG_END);
-                    }
-                }
             }
-
-            if (INS_OperandCount(ins) > 1 && INS_OperandIsReg(ins, 0)){
-                INS_InsertCall(
-                    ins, IPOINT_BEFORE, (AFUNPTR)followData,
-                    IARG_INST_PTR,
-                    IARG_PTR, new std::string(INS_Disassemble(ins)),
-                    IARG_PTR, routine,
-                    IARG_UINT32, INS_RegR(ins, 0),
-                    IARG_END);
-            }
-        } else {
-            fprintf(trace, "level=info thread=%d routine=%s action=log ins-addr=%p ins-dis=\"%s\"\n", gettid(), routine, (void*) INS_Address(ins), INS_Disassemble(ins).c_str());
         }
+        INS_InsertCall(
+            ins, IPOINT_BEFORE, (AFUNPTR)traceIns,
+            IARG_INST_PTR,
+            IARG_PTR, new std::string(INS_Disassemble(ins)),
+            IARG_ADDRINT, INS_Size(ins),
+            IARG_PTR, routine,
+            IARG_END);
     }
 }
 

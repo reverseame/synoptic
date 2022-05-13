@@ -1,3 +1,4 @@
+from csv import excel_tab
 import os
 import shlex
 import binascii
@@ -66,9 +67,17 @@ class Analyzer:
     def analyze(self):
         try:
             for trace in self.traces:
+                for item in trace:
+                    if 'image-base' in item:
+                        image_base = item['image-base']
+                        break
+                trace = [item for item in trace if item['level'] == 'taint']    # Only use taint information
                 net_traces = self.split_network_activity(trace)
                 for net_trace in net_traces:
                     self.analyze_net_trace(net_trace)
+                self.identify_parsing_function(image_base, net_traces)
+        except Exception as e:
+            debug.error(str(e))
         finally:
             return self.model
 
@@ -83,7 +92,7 @@ class Analyzer:
         last = 0
 
         for (i, line) in enumerate(trace):
-            if line['action'] == 'recv':
+            if ('action' in line) and (line['action'] == 'recv'):
                 ret.append(trace[last:i])
                 last = i
 
@@ -91,23 +100,27 @@ class Analyzer:
 
     def analyze_net_trace(self, net_trace):
         message = None
+        start = 0
 
-        for trace in net_trace:
-            if trace['action'] == 'recv':
-                buffer_content = trace['buffer-content']
-                buffer_base_address = int(trace['range-start'], 16)
-                message = tracemodeler.model.Message(buffer_content)
-            elif trace['action'] == 'send':
-                continue
-            elif trace['level'] == 'taint':
+        for (i, trace) in enumerate(net_trace):
+            if trace['level'] == 'taint':
+                if trace['action'] == 'recv':
+                    buffer_content = trace['buffer-content']
+                    buffer_base_address = int(trace['range-start'], 16)
+                    message = tracemodeler.model.Message(buffer_content)
+                    start = i + 1
+                    break
+
+        for trace in net_trace[start:]:
+            if trace['level'] == 'taint':
+                if trace['action'] == 'send':
+                    continue
                 if trace['action'] == 'mem-read':
                     mem_read = int(trace['mem-addr'], 16)
                     ins_bytes = binascii.unhexlify(trace['ins-bytes'])
                     ins_addr = int(trace['ins-addr'], 16)
                     ins = next(self.md.disasm(ins_bytes, ins_addr))     # Just one instruction
                     message = self.analyze_ins(message, ins, mem_read, buffer_base_address)
-                else:
-                    debug.error(f'Not implemented: {trace}\n')
 
         if message: self.model.update(message)
 
@@ -119,3 +132,17 @@ class Analyzer:
                     message.constrain(where, i.value.imm)
 
         return message
+
+    def identify_parsing_function(self, image_base, net_traces):
+        for trace in net_traces:
+            for (i, ins) in enumerate(trace[::-1]):
+                if ins['action'] == 'spread':
+                    ins_bytes = binascii.unhexlify(ins['ins-bytes'])
+                    ins_addr = int(ins['ins-addr'], 16)
+                    ins_dis = next(self.md.disasm(ins_bytes, ins_addr))     # Just one instruction
+                    if ins_dis.id == capstone.x86.X86_INS_CMP:
+                        index = len(trace) - i
+                        import pprint
+                        print('*** Parsing function ***')
+                        pprint.pprint(ins)
+                        break
