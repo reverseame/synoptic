@@ -21,14 +21,12 @@ This project aims to infer the protocol message format and protocol finite state
 $ export PIN_ROOT="/path/to/pin-3.22"
 ```
 
-(Optional) Pin 3.22 in Linux gives a compilation error: you have to rename `extras/components/include/atomic/intel64/ops-impl-intel6` file to `ops-impl-intel64-asm.hpp`.
-
 1. `make` will create the Pin's `server-tracer.so` tool under `obj-intel64` folder
 
 2. You can now run the following command to obtain execution `trace.log`:
 
 ```console
-$ pin -t obj-intel64/server-tracer.so -- server-executable [args]
+$ /path/to/pin -t obj-intel64/server-tracer.so -- server-executable [args]
 ```
 
 ## BINSEC
@@ -167,7 +165,57 @@ Warning: run r2 with -e bin.cache=true to fix relocations in disassembly
        │    0x55555555d0d3      4c89ea         mov rdx, r13
 ```
 
-### 
+### Use of BINSEC
+
+First, we need to activate OCaml toolchain:
+
+```console
+$ eval $(opam env)
+```
+
+And then, we can use BINSEC with the following options:
+
+```console
+$ binsec -sse -sse-script crackme.ini core.snapshot -sse-alternative-engine
+[...]
+[sse:result] Ascii stream token : "PORT"
+[sse:result] Ascii stream token : "PASV"
+[sse:result] Ascii stream token : "PASS"
+[sse:result] Ascii stream token : "TYPE"
+[sse:result] Ascii stream token : "LIST"
+[sse:result] Ascii stream token : "CDUP"
+[sse:result] Ascii stream token : "RETR"
+[sse:result] Ascii stream token : "REST"
+[sse:result] Ascii stream token : "ABOR"
+[sse:result] Ascii stream token : "DELE"
+
+[sse:info] Empty path worklist: halting ...
+[sse:info] SMT queries
+             Preprocessing simplifications
+               total          23301
+               sat            448
+               unsat          18382
+               constant enum  4471
+             
+             Satisfiability queries
+               total          6893
+               sat            296
+               unsat          6597
+               unknown        0
+               time           39.64
+               average        0.01
+             
+           Exploration
+             total paths                      289
+             completed/cut paths              57
+             pending paths                    232
+             stale paths                      0
+             failed assertions                0
+             branching points                 30069
+             max path depth                   1050
+             visited instructions (unrolled)  130844
+             visited instructions (static)    152
+```
 
 # TODO
 
