@@ -221,6 +221,15 @@ void traceIns(UINT64 insAddr, std::string insDis, const char *routine) {
     fprintf(trace, "level=info thread=%d routine=\"%s\" ins-addr=0x%08lx ins-dis=\"%s\"\n", gettid(), routine, insAddr, insDis.c_str());
 }
 
+void retIns(UINT64 insAddr, std::string insDis, const char *routine) {
+    if (isRegTaint(REG_RAX)) {
+        freeTaintReg(REG_RAX);
+        fprintf(trace, "level=taint thread=%d routine=\"%s\" ins-addr=0x%08lx ins-dis=\"%s\" action=reg-free output=%s\n", gettid(), routine, insAddr, insDis.c_str(), REG_StringShort(REG_RAX).c_str());
+    } else {
+        fprintf(trace, "level=info thread=%d routine=\"%s\" ins-addr=0x%08lx ins-dis=\"%s\"\n", gettid(), routine, insAddr, insDis.c_str());
+    }
+}
+
 void branchIns(UINT64 insAddr, std::string insDis, const char *routine, bool branchTaken) {
     //fprintf(trace, "level=info thread=%d routine=\"%s\" ins-addr=0x%08lx ins-dis=\"%s\" action=branch taken=%d\n", gettid(), routine, insAddr, insDis.c_str(), branchTaken);
     fprintf(trace, "level=info thread=%d routine=\"%s\" ins-addr=0x%08lx ins-dis=\"%s\"\n", gettid(), routine, insAddr, insDis.c_str());
@@ -228,7 +237,7 @@ void branchIns(UINT64 insAddr, std::string insDis, const char *routine, bool bra
 
 void compareRegToReg(UINT64 insAddr, std::string insDis, const char *routine, REG reg1, ADDRINT regValue1, REG reg2, ADDRINT regValue2) {
     if (isRegTaint(reg1) || isRegTaint(reg2)) {
-        fprintf(trace, "level=taint thread=%d routine=\"%s\" ins-addr=0x%08lx ins-dis=\"%s\" action=cmp-reg-reg reg1=%s reg1-value=0x%08lx reg2=%s reg2-value=0x%08lx\n", gettid(), routine, insAddr, insDis.c_str(), REG_StringShort(reg1).c_str(), regValue1, REG_StringShort(reg2).c_str(), regValue2);
+        fprintf(trace, "level=taint thread=%d routine=\"%s\" ins-addr=0x%08lx ins-dis=\"%s\" action=cmp-reg reg1=%s reg1-value=0x%08lx reg2=%s reg2-value=0x%08lx\n", gettid(), routine, insAddr, insDis.c_str(), REG_StringShort(reg1).c_str(), regValue1, REG_StringShort(reg2).c_str(), regValue2);
     } else {
         fprintf(trace, "level=info thread=%d routine=\"%s\" ins-addr=0x%08lx ins-dis=\"%s\"\n", gettid(), routine, insAddr, insDis.c_str());
     }
@@ -311,7 +320,7 @@ void readMemToReg(UINT64 insAddr, std::string insDis, const char *routine, UINT6
         fprintf(trace, " reg=%s", REG_StringShort(reg).c_str());
         if (REG_valid(memReg)) {
             taintReg(memReg);
-            fprintf(trace, " reg=%s", REG_StringShort(memReg).c_str());
+            fprintf(trace, " reg-mem-base=%s", REG_StringShort(memReg).c_str());
         }
         fprintf(trace, "\n");
     } else {
@@ -479,6 +488,16 @@ void instructionExec(INS ins, void *v) {
                         IARG_PTR, new std::string(INS_Disassemble(ins)),
                         IARG_PTR, routine,
                         IARG_UINT32, INS_OperandIsReg(ins, 0),
+                        IARG_END);
+                    return;
+                }
+            } else {
+                if ((INS_Opcode(ins) == XED_ICLASS_RET_NEAR) || (INS_Opcode(ins) == XED_ICLASS_RET_FAR)) {
+                    INS_InsertCall(
+                        ins, IPOINT_BEFORE, (AFUNPTR)retIns,
+                        IARG_INST_PTR,
+                        IARG_PTR, new std::string(INS_Disassemble(ins)),
+                        IARG_PTR, routine,
                         IARG_END);
                     return;
                 }

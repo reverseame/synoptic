@@ -1,0 +1,15 @@
+digraph code {
+    graph [bgcolor=white fontsize=8 fontname="Courier" splines="ortho"];
+    node [shape=box fontname="Courier"];
+    edge [arrowhead="normal"];
+    "0x000090b3" [URL="sym.ftp_client_thread/0x000090b3", label="; CODE XREF from sym.ftp_client_thread @ 0x9248(x)\l0x000090b3      lea r14, obj.ftpprocs                                  ; 0xebc0 ; \"v\\xb4\"\l0x000090ba      xor ebp, ebp\l0x000090bc      jmp 0x90d0\l"]
+    "0x000090c0" [URL="sym.ftp_client_thread/0x000090c0", label="; CODE XREF from sym.ftp_client_thread @ 0x90e0(x)\l0x000090c0      add ebp, 1\l0x000090c3      add r14, 0x10\l0x000090c7      cmp ebp, 0x20                                          ; \"@\"\l0x000090ca      je 0x9270\l"]
+    "0x000090d0" [URL="sym.ftp_client_thread/0x000090d0", label="; CODE XREF from sym.ftp_client_thread @ 0x90bc(x)\l0x000090d0      mov rsi, qword [r14]                                   ; const char *s2\l0x000090d3      mov rdx, r13                                           ; size_t n\l0x000090d6      mov rdi, rbx                                           ; const char *s1\l0x000090d9      call sym.imp.strncasecmp                               ; int strncasecmp(const char *s1, const char *s2, size_t n)\l0x000090de      test eax, eax\l0x000090e0      jne 0x90c0\l"]
+    "0x000090e2" [URL="sym.ftp_client_thread/0x000090e2", label="0x000090e2      movsxd rax, ebp\l0x000090e5      lea rcx, obj.ftpprocs                                  ; 0xebc0 ; \"v\\xb4\"\l0x000090ec      mov rsi, qword [var_10h]\l0x000090f1      mov rdi, r15\l0x000090f4      shl rax, 4\l0x000090f8      call qword [rcx + rax + 8]\l0x000090fc      mov ebx, eax\l0x000090fe      cmp ebp, 0xd\l0x00009101      jne 0x9250\l"]
+    "0x00009270" [URL="sym.ftp_client_thread/0x00009270", label="; CODE XREF from sym.ftp_client_thread @ 0x90ca(x)\l0x00009270      mov rdi, r15                                           ; int64_t arg1\l0x00009273      mov rdx, r12                                           ; int64_t arg3\l0x00009276      lea rsi, str.____CMD:_                                 ; 0xb3d6 ; \" @@ CMD: \" ; int64_t arg2\l0x0000927d      call sym.writelogentry\l0x00009282      mov rdi, qword [rsp + 0x60b8]\l0x0000928a      test rdi, rdi\l0x0000928d      je 0x92a5\l"]
+    "0x000090b3" -> "0x000090d0" [color="#3a96dd"];
+    "0x000090c0" -> "0x00009270" [color="#13a10e"];
+    "0x000090c0" -> "0x000090d0" [color="#c50f1f"];
+    "0x000090d0" -> "0x000090c0" [color="#13a10e"];
+    "0x000090d0" -> "0x000090e2" [color="#c50f1f"];
+}
