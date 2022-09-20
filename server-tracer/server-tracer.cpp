@@ -217,7 +217,8 @@ int operandCount(INS ins) {
 }
 
 void traceIns(UINT64 insAddr, std::string insDis, const char *routine) {
-    fprintf(trace, "level=info thread=%d routine=\"%s\" ins-addr=0x%08lx ins-dis=\"%s\" traceIns\n", gettid(), routine, insAddr, insDis.c_str());
+    // fprintf(trace, "level=info thread=%d routine=\"%s\" ins-addr=0x%08lx ins-dis=\"%s\" traceIns\n", gettid(), routine, insAddr, insDis.c_str());
+    fprintf(trace, "level=info thread=%d routine=\"%s\" ins-addr=0x%08lx ins-dis=\"%s\"\n", gettid(), routine, insAddr, insDis.c_str());
 }
 
 void branchIns(UINT64 insAddr, std::string insDis, const char *routine, bool branchTaken) {

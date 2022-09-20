@@ -59,7 +59,7 @@ class Analyzer:
                         new_dict[key] = value
                     list_dict.append(new_dict)
                 except ValueError as e:
-                    debug.error(f'Parsing error: {str(e)}: {line}')
+                    debug.error(f'Parsing error: {str(e)}: "{line}"')
             ret.append(list_dict)
 
         return ret

@@ -2,7 +2,6 @@
 
 This project aims to infer the protocol message format and protocol finite state machine of an unknown protocol. This project relies on PIN Dynamic Binary Instrumentation to dynamically analize the server implementing the target protocol during its normal execution.
 
-
 # Structure
 
 - `server-tracer`: Pin tool that generate execution traces
@@ -20,7 +19,7 @@ This project aims to infer the protocol message format and protocol finite state
     ```Bash
     export PIN_ROOT="/path/to/pin-3.22"
     ```
-(Optional) Pin 3.22 in Linux gives a compilation error: you have to rename `extras/components/include/atomic/intel64/ops-impl-intel6` file to `ops-impl-intel64-asm.hpp`.
+(Optional) Pin 3.22 in Linux gives a compilation error: you have to rename `/path/to/pin-3.22/extras/components/include/atomic/private/intel64/ops-impl-intel6` file to `ops-impl-intel64-asm.hpp`.
 
 2. `make` will create the Pin's `server-tracer.so` tool under `obj-intel64` folder
 

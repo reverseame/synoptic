@@ -8,3 +8,4 @@ obj-intel64/
 __pycache__/
 *.pyc
 venv/
+samples/
