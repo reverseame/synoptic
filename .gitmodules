@@ -1,0 +1,3 @@
+[submodule "samples/LightFTP"]
+	path = samples/LightFTP
+	url = https://github.com/hfiref0x/LightFTP.git

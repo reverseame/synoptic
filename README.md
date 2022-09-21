@@ -20,15 +20,10 @@ This project aims to infer the protocol message format and protocol finite state
     ```Bash
     export PIN_ROOT="/path/to/pin-3.22"
     ```
-(Optional) Pin 3.22 in Linux gives a compilation error: you have to rename `/path/to/pin-3.22/extras/components/include/atomic/private/intel64/ops-impl-intel6` file to `ops-impl-intel64-asm.hpp`.
 
-```console
-$ export PIN_ROOT="/path/to/pin-3.22"
-```
+2. `make` will create the Pin's `server-tracer.so` tool under `obj-intel64` folder
 
-1. `make` will create the Pin's `server-tracer.so` tool under `obj-intel64` folder
-
-2. You can now run the following command to obtain execution `trace.log`:
+3. You can now run the following command to obtain execution `trace.log`:
 
 ```console
 $ /path/to/pin -t obj-intel64/server-tracer.so -- server-executable [args]
