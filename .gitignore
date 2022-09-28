@@ -1,6 +1,5 @@
 .vscode/
 .git/
-pin-3.22/
 obj-intel64/
 *.o
 *.so
@@ -8,4 +7,3 @@ obj-intel64/
 __pycache__/
 *.pyc
 venv/
-test/
