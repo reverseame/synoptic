@@ -4,16 +4,33 @@ import ipaddress
 
 import tracemodeler.debug as debug
 
+description = 'This tool analyze a server execution trace to model a server protocol and generate new messages based in this model'
+
+usage_examples = '''usage examples:
+    Print generated model:
+        $ python trace-modeler/modeler.py --trace /path/to/trace.log
+
+    Export a model to an output file:
+        $ python trace-modeler/modeler.py --trace /path/to/trace.log --output /path/to/model.txt
+
+    Replay messages to a host based on a model generated from a trace file:
+        $ python trace-modeler/modeler.py --trace /path/to/trace.log --replay --host 127.0.0.1 --port 21
+
+    Replay messages to a host based on an already generated model:
+        $ python trace-modeler/modeler.py --model /path/to/model.txt --replay --host 127.0.0.1 --port 21
+
+    Export a model and also replay messages to a host:
+        $ python trace-modeler/modeler.py --trace /path/to/trace.log --output /path/to/model.txt --replay --host 127.0.0.1 --port 21'''
+
 class ArgumentParser:
     def __init__(self):
-        description = 'This tool analyze a server execution trace to model a server protocol and generate new messages based in this model'
-        self.argparser = argparse.ArgumentParser(description=description)
+        self.argparser = argparse.ArgumentParser(description=description, epilog=usage_examples, formatter_class=argparse.RawDescriptionHelpFormatter)
         self.argparser.add_argument('-v', '--version',  action='store_true', help=f'display version and exit')
         self.argparser.add_argument('--trace', type=str, metavar='<log>', help='specify the server execution trace')
         self.argparser.add_argument('--m32', action='store_true', help='trace of a 32-bit program (64-bit by default)')
         self.argparser.add_argument('--output', type=str, metavar='<file>', help='output protocol model file')
         self.argparser.add_argument('--replay', action='store_true', help='replay messages based in a model')
-        self.argparser.add_argument('--model', type=str, metavar='<file>', help='specify the protocol model')
+        self.argparser.add_argument('--fsm', type=str, metavar='<file>', help='specify the protocol FSM')
         self.argparser.add_argument('--host', type=str, metavar='<ip>', help='server IP')
         self.argparser.add_argument('--port', type=int, metavar='<port>', help='server listening port')
         self.argparser.add_argument('--udp', action='store_true', help='UDP transport protocol (TCP by default)')
@@ -49,21 +66,17 @@ class ArgumentParser:
             if (args.delay < 0):
                 debug.error(f'{args.delay}: Delay must be positive (--help)')
 
-        if args.model:
-            if not os.path.isfile(args.model):
-                debug.error(f'{os.path.abspath(args.model)}: Unable to locate file')
+        if args.fsm:
+            if not os.path.isfile(args.fsm):
+                debug.error(f'{os.path.abspath(args.fsm)}: Unable to locate file')
 
         if args.replay:
-            if (args.trace and args.model) or (not args.trace and not args.model):
-                debug.error('You need to provide either a trace (--trace) or a model (--model)')
+            if (args.trace and args.fsm) or (not args.trace and not args.fsm):
+                debug.error('You need to provide either a trace (--trace) or a model (--fsm)')
 
         if args.output:
             if not args.trace:
                 debug.error('You need to provide a trace to create an model output file (--trace or --help)')
-
-        if args.trace:
-            if not args.output and not args.replay:
-                debug.error('You need to provide either a output file (--output) or replay messages (--replay)')
 
         if not args.trace and not args.replay and not args.version:
             debug.error('You need to either analyze a trace to create a model (--trace) or replay messages (--replay)')

@@ -1,4 +1,3 @@
-from csv import excel_tab
 import os
 import shlex
 import binascii
@@ -17,7 +16,7 @@ class Analyzer:
         self.traces = self.read_traces()
         self.md = capstone.Cs(capstone.CS_ARCH_X86, arch_mode)
         self.md.detail = True
-        self.model = tracemodeler.model.Model()
+        self.fsm = tracemodeler.model.ProtocolFSM()
 
     def read_traces(self):
         ret = []
@@ -79,7 +78,7 @@ class Analyzer:
         except Exception as e:
             debug.error(str(e))
         finally:
-            return self.model
+            return self.fsm
 
     def split_network_activity(self, trace):
         """
@@ -122,7 +121,7 @@ class Analyzer:
                     ins = next(self.md.disasm(ins_bytes, ins_addr))     # Just one instruction
                     message = self.analyze_ins(message, ins, mem_read, buffer_base_address)
 
-        if message: self.model.update(message)
+        if message: self.fsm.append(message)
 
     def analyze_ins(self, message, ins, mem_read, buffer_base_address):
         if ins.id == capstone.x86.X86_INS_CMP:

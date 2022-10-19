@@ -18,22 +18,28 @@ def main():
     arch_mode = capstone.CS_MODE_32 if args.m32 else capstone.CS_MODE_64
 
     """ Either load a model file or generate a new one based in a trace file """
-    if args.model:
-        model = tracemodeler.model.Model()
-        with open(args.model, 'r') as f:
+    if args.fsm:
+        protocol_fsm = tracemodeler.model.ProtocolFSM()
+        with open(args.fsm, 'r') as f:
             content = f.read()
-        model.load(content)
-        debug.info(f'{os.path.abspath(args.model)}: {len(model)} model messages imported')
+        protocol_fsm.loads(content)
+        debug.info(f'{os.path.abspath(args.fsm)}: {len(protocol_fsm)} model messages imported')
     else:
-        model = analyzer.Analyzer(args.trace, arch_mode=arch_mode).analyze()
-        debug.info(f'{len(model)} messages infered in the model')
-
-    """ Export model """
-    if args.output:
-        with open(args.output, 'w') as f:
-            f.write(model.dump())
-        debug.info(f'{args.output}: Model exported')
+        protocol_fsm = analyzer.Analyzer(args.trace, arch_mode=arch_mode).analyze()
+        debug.info(f'{len(protocol_fsm)} messages infered in the model')
 
     """ Replay model to a target server """
     if args.replay:
-        replayer.Replayer(args.host, args.port, tcp=not args.udp).replay(model, delay=args.delay)
+        replayer.Replayer(args.host, args.port, tcp=not args.udp).replay(protocol_fsm, delay=args.delay)
+    else:
+        string_protocol_fsm = protocol_fsm.dumps()
+        if args.output:
+            """ Export model """
+            try:
+                with open(args.output, 'w') as f:
+                    f.write(string_protocol_fsm)
+                debug.info(f'{args.output}: Model exported')
+            except FileNotFoundError:
+                debug.error(f'{args.output}: Unable to export model to file')
+        else:
+            print(string_protocol_fsm)

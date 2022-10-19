@@ -1,9 +1,7 @@
-import binascii
 import io
 import time
 import socket
 
-import tracemodeler.model
 import tracemodeler.debug as debug
 
 BUF_SIZE = 4096
@@ -31,13 +29,13 @@ class Replayer:
 
         return sock
 
-    def replay(self, model, delay=0.5):
+    def replay(self, fsm, delay=0.5):
         try:
-            debug.info(f'Sending {len(model)} messages...')
+            debug.info(f'Sending {len(fsm)} messages...')
 
-            for message in model:
+            for state in fsm:
                 self.recv()
-                self.send(binascii.unhexlify(message.bytes))
+                self.send(state.generate_message())
                 time.sleep(delay)
 
             self.recv()
