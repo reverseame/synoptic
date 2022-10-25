@@ -32,12 +32,12 @@ class Analyzer:
         except ValueError:
             pass
 
-        ret = self.trace_to_dict(ret)
-
         if ret:
             debug.info(f'{self.tracefile}: {len(ret)} trace/s imported')
         else:
             debug.warning(f'{self.tracefile}: No trace found')
+
+        ret = self.trace_to_dict(ret)
 
         return ret
 
@@ -50,7 +50,7 @@ class Analyzer:
 
         for trace in traces:
             list_dict = []
-            for line in trace:
+            for (i, line) in enumerate(trace, start=1):
                 try:
                     new_dict = {}
                     splitted = shlex.split(line)
@@ -58,27 +58,24 @@ class Analyzer:
                         new_dict[key] = value
                     list_dict.append(new_dict)
                 except ValueError as e:
-                    debug.error(f'Parsing error: {str(e)}: "{line}"')
+                    debug.error(f'Parsing error: {str(e)}: line {i}: "{line}"')
             ret.append(list_dict)
 
         return ret
 
     def analyze(self):
-        try:
-            for trace in self.traces:
-                for item in trace:
-                    if 'image-base' in item:
-                        image_base = item['image-base']
-                        break
-                trace = [item for item in trace if item['level'] == 'taint']    # Only use taint information
-                net_traces = self.split_network_activity(trace)
-                for net_trace in net_traces:
-                    self.analyze_net_trace(net_trace)
-                self.identify_parsing_function(image_base, net_traces)
-        except Exception as e:
-            debug.error(str(e))
-        finally:
-            return self.fsm
+        for trace in self.traces:
+            for item in trace:
+                if 'image-base' in item:
+                    image_base = item['image-base']
+                    break
+            trace = [item for item in trace if item['level'] == 'taint']    # Only use taint information
+            net_traces = self.split_network_activity(trace)
+            for net_trace in net_traces:
+                self.analyze_net_trace(net_trace)
+            self.identify_parsing_function(image_base, net_traces)
+
+        return self.fsm
 
     def split_network_activity(self, trace):
         """

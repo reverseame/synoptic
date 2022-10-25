@@ -26,20 +26,26 @@ def main():
         debug.info(f'{os.path.abspath(args.fsm)}: {len(protocol_fsm)} model messages imported')
     else:
         protocol_fsm = analyzer.Analyzer(args.trace, arch_mode=arch_mode).analyze()
-        debug.info(f'{len(protocol_fsm)} messages infered in the model')
+        if len(protocol_fsm) > 0:
+            debug.info(f'{len(protocol_fsm)} messages infered in the model')
 
-    """ Replay model to a target server """
-    if args.replay:
-        replayer.Replayer(args.host, args.port, tcp=not args.udp).replay(protocol_fsm, delay=args.delay)
-    else:
-        string_protocol_fsm = protocol_fsm.dumps()
-        if args.output:
-            """ Export model """
-            try:
-                with open(args.output, 'w') as f:
-                    f.write(string_protocol_fsm)
-                debug.info(f'{args.output}: Model exported')
-            except FileNotFoundError:
-                debug.error(f'{args.output}: Unable to export model to file')
-        else:
-            print(string_protocol_fsm)
+            """ Replay model to a target server """
+            if args.replay:
+                replayer.Replayer(args.host, args.port, tcp=not args.udp).replay(protocol_fsm, delay=args.delay)
+            else:
+                str_protocol_fsm = protocol_fsm.dumps()
+                if args.output:
+                    """ Export model """
+                    try:
+                        with open(args.output, 'w') as f:
+                            f.write(str_protocol_fsm)
+                        debug.info(f'{args.output}: Model exported')
+                    except FileNotFoundError:
+                        debug.error(f'{args.output}: Unable to export model to file')
+                else:
+                    print(str_protocol_fsm)
+
+            if args.export:
+                protocol_fsm.export_graph(args.export)
+                debug.info(f'{args.export}.gv: Graphviz file exported')
+                debug.info(f'{args.export}.gv.pdf: PDF exported')

@@ -11,16 +11,16 @@ usage_examples = '''usage examples:
         $ python trace-modeler/modeler.py --trace /path/to/trace.log
 
     Export a model to an output file:
-        $ python trace-modeler/modeler.py --trace /path/to/trace.log --output /path/to/model.txt
+        $ python trace-modeler/modeler.py --trace /path/to/trace.log --output /path/to/model.json
 
     Replay messages to a host based on a model generated from a trace file:
         $ python trace-modeler/modeler.py --trace /path/to/trace.log --replay --host 127.0.0.1 --port 21
 
     Replay messages to a host based on an already generated model:
-        $ python trace-modeler/modeler.py --model /path/to/model.txt --replay --host 127.0.0.1 --port 21
+        $ python trace-modeler/modeler.py --model /path/to/model.json --replay --host 127.0.0.1 --port 21
 
     Export a model and also replay messages to a host:
-        $ python trace-modeler/modeler.py --trace /path/to/trace.log --output /path/to/model.txt --replay --host 127.0.0.1 --port 21'''
+        $ python trace-modeler/modeler.py --trace /path/to/trace.log --output /path/to/model.json --replay --host 127.0.0.1 --port 21'''
 
 class ArgumentParser:
     def __init__(self):
@@ -31,6 +31,7 @@ class ArgumentParser:
         self.argparser.add_argument('--output', type=str, metavar='<file>', help='output protocol model file')
         self.argparser.add_argument('--replay', action='store_true', help='replay messages based in a model')
         self.argparser.add_argument('--fsm', type=str, metavar='<file>', help='specify the protocol FSM')
+        self.argparser.add_argument('--export', type=str, metavar='<file>', help='export Graphviz file (.gv) representing the protocol FSM')
         self.argparser.add_argument('--host', type=str, metavar='<ip>', help='server IP')
         self.argparser.add_argument('--port', type=int, metavar='<port>', help='server listening port')
         self.argparser.add_argument('--udp', action='store_true', help='UDP transport protocol (TCP by default)')
@@ -69,6 +70,8 @@ class ArgumentParser:
         if args.fsm:
             if not os.path.isfile(args.fsm):
                 debug.error(f'{os.path.abspath(args.fsm)}: Unable to locate file')
+            if args.trace:
+                debug.error(f'You need to provide either a trace (--trace) or a model (--fsm)')
 
         if args.replay:
             if (args.trace and args.fsm) or (not args.trace and not args.fsm):
@@ -79,4 +82,7 @@ class ArgumentParser:
                 debug.error('You need to provide a trace to create an model output file (--trace or --help)')
 
         if not args.trace and not args.replay and not args.version:
-            debug.error('You need to either analyze a trace to create a model (--trace) or replay messages (--replay)')
+            if args.fsm:
+                debug.error('You need to specify a host to replay messages (--replay)')
+            else:
+                debug.error('You need to either analyze a trace to create a model (--trace) or replay messages (--replay)')
