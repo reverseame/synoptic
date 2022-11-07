@@ -1,6 +1,5 @@
 import os
 import shlex
-import binascii
 import capstone
 import capstone.x86
 
@@ -23,14 +22,11 @@ class Analyzer:
 
         content = self.read_file()
 
-        try:
-            while True:
-                start = content.index(START_TRACE) + 1
-                end = content.index(END_TRACE)
-                ret.append(content[start:end])
-                content = content[end+1:]
-        except ValueError:
-            pass
+        while content:
+            start = content.index(START_TRACE) + 1
+            end = content.index(END_TRACE)
+            ret.append(content[start:end])
+            content = content[end+1:]
 
         if ret:
             debug.info(f'{self.tracefile}: {len(ret)} trace/s imported')
@@ -65,15 +61,11 @@ class Analyzer:
 
     def analyze(self):
         for trace in self.traces:
-            for item in trace:
-                if 'image-base' in item:
-                    image_base = item['image-base']
-                    break
             trace = [item for item in trace if item['level'] == 'taint']    # Only use taint information
+
             net_traces = self.split_network_activity(trace)
             for net_trace in net_traces:
                 self.analyze_net_trace(net_trace)
-            self.identify_parsing_function(image_base, net_traces)
 
         return self.fsm
 
@@ -87,58 +79,31 @@ class Analyzer:
         ret = []
         last = 0
 
-        for (i, line) in enumerate(trace):
-            if ('action' in line) and (line['action'] == 'recv'):
+        for (i, item) in enumerate(trace):
+            if ('action' in item) and (item['action'] == 'recv'):
                 ret.append(trace[last:i])
                 last = i
 
+        # Include remaining trace
+        ret.append(trace[last:i])
+
         return ret
 
+    def create_message(self, net_trace):
+        trace = net_trace[0]    # recv trace should be in first position
+
+        if trace['level'] == 'taint':
+            if trace['action'] == 'recv':
+                buffer_content = trace['buffer-content']
+                #buffer_base_address = int(trace['range-start'], 16)
+                message = tracemodeler.model.Message(buffer_content)
+                return message
+
+        return None
+
     def analyze_net_trace(self, net_trace):
-        message = None
-        start = 0
+        """ Create message of recv data """
+        message = self.create_message(net_trace)
 
-        for (i, trace) in enumerate(net_trace):
-            if trace['level'] == 'taint':
-                if trace['action'] == 'recv':
-                    buffer_content = trace['buffer-content']
-                    buffer_base_address = int(trace['range-start'], 16)
-                    message = tracemodeler.model.Message(buffer_content)
-                    start = i + 1
-                    break
-
-        for trace in net_trace[start:]:
-            if trace['level'] == 'taint':
-                if trace['action'] == 'send':
-                    continue
-                if trace['action'] == 'mem-read':
-                    mem_read = int(trace['mem-addr'], 16)
-                    ins_bytes = binascii.unhexlify(trace['ins-bytes'])
-                    ins_addr = int(trace['ins-addr'], 16)
-                    ins = next(self.md.disasm(ins_bytes, ins_addr))     # Just one instruction
-                    message = self.analyze_ins(message, ins, mem_read, buffer_base_address)
-
-        if message: self.fsm.append(message)
-
-    def analyze_ins(self, message, ins, mem_read, buffer_base_address):
-        if ins.id == capstone.x86.X86_INS_CMP:
-            for i in ins.operands:
-                if i.type == capstone.x86.X86_OP_IMM:
-                    where = mem_read - buffer_base_address
-                    message.constrain(where, i.value.imm)
-
-        return message
-
-    def identify_parsing_function(self, image_base, net_traces):
-        for trace in net_traces:
-            for (i, ins) in enumerate(trace[::-1]):
-                if ins['action'] == 'spread':
-                    ins_bytes = binascii.unhexlify(ins['ins-bytes'])
-                    ins_addr = int(ins['ins-addr'], 16)
-                    ins_dis = next(self.md.disasm(ins_bytes, ins_addr))     # Just one instruction
-                    if ins_dis.id == capstone.x86.X86_INS_CMP:
-                        index = len(trace) - i
-                        import pprint
-                        print('*** Parsing function ***')
-                        pprint.pprint(ins)
-                        break
+        if message is not None:
+            self.fsm.append(message)
