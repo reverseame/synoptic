@@ -33,9 +33,9 @@ class Replayer:
         try:
             debug.info(f'Sending {len(fsm)} messages...')
 
-            for state in fsm:
+            for message in fsm:
                 self.recv()
-                self.send(state.generate_message())
+                self.send(message.generate_message())
                 time.sleep(delay)
 
             self.recv()

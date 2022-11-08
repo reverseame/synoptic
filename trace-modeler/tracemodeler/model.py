@@ -10,21 +10,9 @@ class ProtocolFSM:
     def __init__(self):
         self.size = 0
         self.initial = None
-        self.final = None
+        self.last = None
         self.index = None
-        self.states = {}
-
-    def initial_state(self):
-        if self.initial is not None:
-            return self.states[self.initial]
-
-    def final_state(self):
-        if self.final is not None:
-            return self.states[self.final]
-
-    def index_state(self):
-        if self.index is not None:
-            return self.states[self.index]
+        self.states = []
 
     def is_empty(self):
         return self.initial is None
@@ -37,7 +25,6 @@ class ProtocolFSM:
 
         self.size = dict_content['size']
         self.initial = dict_content['initial']
-        self.final = dict_content['final']
 
         for (state_id, state_content) in dict_content['states'].items():
             state = State(id=state_id)
@@ -45,82 +32,86 @@ class ProtocolFSM:
             self.states[state_id] = state
 
     def append(self, message):
-        if self.exists(message):
-            """ We are still contrusting the FSM and there are not backwards transitions """
-            if self.index == self.final:
-                for state in self.states.values():
-                    for trans in state:
-                        if trans.equals(message):
-                            new_state = State(id=self._generate_id())
-                            final_state = self.final_state()
-                            # TODO final state could have more than one transition?
-                            final_state.trans[0].next = new_state.id
-                            new_state.transition(message, next=trans.next)
-                            self.states[new_state.id] = new_state
-                            self.final = new_state.id
-                            self.index = trans.next
-                            self.size += 1
-                            return
+        """ Add first element """
+        if self.is_empty():
+            """ Create a new state """
+            new_state = State(id=self._generate_id())
+            new_state.transition(message)
+            self.states.append(new_state)
+            """ All pointers point to the new state """
+            self.initial = new_state
+            self.last = new_state
+            self.index = new_state
+            self.size += 1
+        else:
+            """ Check if an already defined states contains the message """
+            for state in self.states:
+                """
+                We go over all transitions to check if message is already in a state.
+                Index state needs to point to the a state containing reached with a transition for the same message
+                """
+                for trans in state:
+                    """ We found the transition """
+                    if trans.equals(message):
+                        """ We now check a final transition in our index """
+                        for index_trans in self.index:
+                            if index_trans.is_final():
+                                """ Create a new state to be pointed from index state transition """
+                                new_state = State(id=self._generate_id())
+                                new_state.transition(message)
+                                index_trans.next = new_state
+                                self.states.append(new_state)
+                                """ And this new state must point to the previous state reached from the same message """
+                                new_state.set_next(trans.next)
+                                """ And needs to be the new index """
+                                self.index = trans.next
+                                self.last = new_state
+                                self.size += 1
+                                return
+
+            """ This is only reached if the message is not contained in states """
+            """
+            If index and last are equal, we did not encounter a backwards transition yet. Create a new state at the end
+            of the FSM corresponding to a new message
+            """
+            if self.index == self.last:
+                for index_trans in self.index:
+                    if index_trans.is_final():
+                        """ Create a new state """
+                        new_state = State(id=self._generate_id())
+                        new_state.transition(message)
+                        """ Set transition from index to the new state """
+                        index_trans.next = new_state
+                        self.states.append(new_state)
+                        """ Change last and index to the new state """
+                        self.index = new_state
+                        self.last = new_state
+                        self.size += 1
             else:
-                """ We are in a backwards transition """
-                index_state = self.index_state()
-                for trans in index_state:
+                """ We are in a backwards transition, where index is different from the last added state """
+                """ Check if there is an already transition that matches the message """
+                for trans in self.index:
                     if trans.equals(message):
                         self.index = trans.next
                         return
-                
-                import pdb; pdb.set_trace()
-        else:
-            if self.is_empty():
-                new_state = State(id=self._generate_id())
-                new_state.transition(message)
-                self.initial = new_state.id
-                self.add_new_state(new_state)
-            else:
-                last_state = self.index_state()
-                """ Add state at the end """
-                if self.index == self.final:
-                    new_state = State(id=self._generate_id())
-                    new_state.transition(message)
-                    last_state.set_next(new_state.id)
-                    self.add_new_state(new_state)
-                else:
-                    """ Add transition to new state """
-                    if last_state.trans[-1].next is None:
-                        new_state = State(id=self._generate_id())
-                        new_state.transition(message)
-                        self.add_new_state(new_state)
-                        last_state.trans[-1].next = new_state.id
-                    else:
-                        """ Add new transition """
-                        last_state.transition(message)
 
-    def add_new_state(self, new_state):
-        self.final = new_state.id
-        self.index = new_state.id
-        self.size += 1
-        self.states[new_state.id] = new_state
+                """ Else, create a new transition to index """
+                self.index.transition(message)
+                self.last = self.index
+
 
     def exists(self, message):
-        if self.is_empty():
-            return False
-        
-        for state in self.states.values():
-            if state.contains(message):
-                return True
-
-        return False
+        return any([state.contains(message) for state in self.states])
 
     def dump(self):
         if self.is_empty():
             return {}
 
         ret = {'size': self.size}
-        ret['initial'] = self.initial
-        ret['final'] = self.final
+        ret['initial'] = self.initial.id
         states = {}
 
-        for state in self.states.values():
+        for state in self.states:
             dump_state = state.dump()
             states[state.id] = dump_state[state.id]
 
@@ -149,13 +140,13 @@ class ProtocolFSM:
         graph.attr('node', shape='circle')
 
         """ Model graph """
-        graph.edge('initial', self.initial)    # Initial transition
-        for state in self.states.values():
+        graph.edge('initial', self.initial.id)     # Initial transition
+        for state in self.states:
             for trans in state:
-                if trans.next is not None:
-                    graph.edge(state.id, trans.next, label=trans.message.keyword)
-                else:
+                if trans.next is None:
                     graph.edge(state.id, 'final', label=trans.message.keyword)
+                else:
+                    graph.edge(state.id, trans.next.id, label=trans.message.keyword)
 
         """ Generate Graphviz DOT file (.gv) """
         graph.render()
@@ -167,12 +158,30 @@ class ProtocolFSM:
         if self.is_empty():
             return
 
+        already_visited = set()
+        
         next = self.initial
+        """ Final state is represented with a next node with a None value """
         while next is not None:
-            current_state = self.states[next]
-            for trans in current_state:
+            state = self.states[next]
+
+            if state.has_multiple_transition():
+                for trans in state:
+                    """ We already consumed this transition """
+                    if (state.id, trans.next) in already_visited:
+                        continue
+                    else:
+                        next = trans.next
+                        already_visited.add((state.id, next))
+                        yield trans.message
+                        break
+            else:
+                trans = state.trans[0]
                 next = trans.next
-                yield current_state
+
+                already_visited.add((state.id, next))
+
+                yield trans.message
 
 class State:
     def __init__(self, id=None, trans=None):
@@ -227,6 +236,9 @@ class Transition:
         self.message = message
         self.next = next
 
+    def is_final(self):
+        return self.next is None
+
     def set_next(self, next):
         self.next = next
 
@@ -237,7 +249,7 @@ class Transition:
         ret = {}
 
         ret['message'] = self.message.dump()
-        ret['next'] = self.next
+        ret['next'] = None if self.next is None else self.next.id
 
         return ret
 
