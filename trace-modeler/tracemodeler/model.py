@@ -179,6 +179,8 @@ class ProtocolFSM:
                 """
                 Only delete current transition if next state hasn't several transitions. Otherwise,
                 we need to visit this transition again to consume the upcoming transitions
+
+                #FIXME What happen when multiple transition is not in the next state but in a state after the next?
                 """
                 if not trans.next.has_multiple_transition():
                     state.trans.remove(trans)
@@ -201,10 +203,6 @@ class State:
         trans = Transition(message, next)
         self.trans.append(trans)
     
-    def generate_message(self):
-        #TODO Generate message based in message transitions
-        return self.trans[0].message.generate_message()
-
     def contains(self, message):
         for trans in self.trans:
             if trans.equals(message):
