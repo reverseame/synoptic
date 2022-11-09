@@ -24,12 +24,19 @@ class ProtocolFSM:
         dict_content = json.loads(content)
 
         self.size = dict_content['size']
-        self.initial = dict_content['initial']
 
         for (state_id, state_content) in dict_content['states'].items():
             state = State(id=state_id)
             state.load(state_content)
-            self.states[state_id] = state
+            self.states.append(state)
+
+        """ Transform state id to state reference """
+        ids = [state.id for state in self.states]
+        self.initial = self.states[ids.index(dict_content['initial'])]
+        for state in self.states:
+            for trans in state:
+                if trans.next is not None:
+                    trans.next = self.states[ids.index(trans.next)]
 
     def append(self, message):
         """ Add first element """
@@ -163,24 +170,23 @@ class ProtocolFSM:
         next = self.initial
         """ Final state is represented with a next node with a None value """
         while next is not None:
-            state = self.states[next]
-
-            if state.has_multiple_transition():
-                for trans in state:
+            if next.has_multiple_transition():
+                for trans in next:
                     """ We already consumed this transition """
-                    if (state.id, trans.next) in already_visited:
+                    if (next.id, trans.next.id) in already_visited:
                         continue
                     else:
+                        already_visited.add((next.id, trans.next.id))
                         next = trans.next
-                        already_visited.add((state.id, next))
                         yield trans.message
                         break
             else:
-                trans = state.trans[0]
+                trans = next.trans[0]
+                """ Final transition """
+                if trans.next is not None:
+                    already_visited.add((next.id, trans.next.id))
+
                 next = trans.next
-
-                already_visited.add((state.id, next))
-
                 yield trans.message
 
 class State:
