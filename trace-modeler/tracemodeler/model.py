@@ -77,6 +77,13 @@ class ProtocolFSM:
                                 self.size += 1
                                 return
 
+                        """ We need to add a new transition from index to an already defined state with this message """
+                        if self.index != state:
+                            self.index.transition(message, next=trans.next)
+                        """ We need to consume the transition if it is already defined for this state """
+                        self.index = trans.next
+                        return
+
             """ This is only reached if the message is not contained in states """
             """
             If index and last are equal, we did not encounter a backwards transition yet. Create a new state at the end
@@ -201,7 +208,8 @@ class State:
 
     def transition(self, message, next=None):
         trans = Transition(message, next)
-        self.trans.append(trans)
+        if trans not in self.trans:
+            self.trans.append(trans)
     
     def contains(self, message):
         for trans in self.trans:
@@ -262,6 +270,12 @@ class Transition:
 
         self.message = msg
         self.next = transition['next']
+
+    def __eq__(self, other):
+        if isinstance(other, Transition):
+            return (id(self) == id(other)) or ((self.message == other.message) and (self.next == other.next))
+
+        return False
 
 class Message:
     def __init__(self, hexbytes=None, keyword=None, constraints={}):
