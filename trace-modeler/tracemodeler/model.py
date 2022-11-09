@@ -1,3 +1,4 @@
+import copy
 import json
 import binascii
 
@@ -106,7 +107,6 @@ class ProtocolFSM:
                 self.index.transition(message)
                 self.last = self.index
 
-
     def exists(self, message):
         return any([state.contains(message) for state in self.states])
 
@@ -165,29 +165,28 @@ class ProtocolFSM:
         if self.is_empty():
             return
 
-        already_visited = set()
-        
-        next = self.initial
-        """ Final state is represented with a next node with a None value """
-        while next is not None:
-            if next.has_multiple_transition():
-                for trans in next:
-                    """ We already consumed this transition """
-                    if (next.id, trans.next.id) in already_visited:
-                        continue
-                    else:
-                        already_visited.add((next.id, trans.next.id))
-                        next = trans.next
-                        yield trans.message
-                        break
-            else:
-                trans = next.trans[0]
-                """ Final transition """
-                if trans.next is not None:
-                    already_visited.add((next.id, trans.next.id))
+        fsm = copy.deepcopy(self)
+        yield from self._traverse(fsm.initial)
 
-                next = trans.next
+    def _traverse(self, state):
+        """ Final state """
+        if state is None:
+            return
+
+        if state.has_multiple_transition():
+            for trans in state:
                 yield trans.message
+                """
+                Only delete current transition if next state hasn't several transitions. Otherwise,
+                we need to visit this transition again to consume the upcoming transitions
+                """
+                if not trans.next.has_multiple_transition():
+                    state.trans.remove(trans)
+                yield from self._traverse(trans.next)
+        else:
+            yield state.trans[0].message
+            state = state.trans[0].next
+            yield from self._traverse(state)
 
 class State:
     def __init__(self, id=None, trans=None):
