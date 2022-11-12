@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 import capstone
 
 import tracemodeler.args
@@ -22,7 +23,10 @@ def main():
         protocol_fsm = tracemodeler.model.ProtocolFSM()
         with open(args.fsm, 'r') as f:
             content = f.read()
-        protocol_fsm.loads(content)
+        try:
+            protocol_fsm.loads(content)
+        except json.decoder.JSONDecodeError:
+            debug.error(f'{os.path.abspath(args.fsm)}: Unable to load FSM, are you sure it is a JSON file?')
         debug.info(f'{os.path.abspath(args.fsm)}: {len(protocol_fsm)} model messages imported')
     else:
         protocol_fsm = analyzer.Analyzer(args.trace, arch_mode=arch_mode).analyze()

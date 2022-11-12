@@ -7,6 +7,8 @@ import logging
 logging.getLogger('graphviz').setLevel(logging.WARNING)
 import graphviz
 
+import tracemodeler.debug as debug
+
 class ProtocolFSM:
     def __init__(self):
         self.size = 0
@@ -20,6 +22,10 @@ class ProtocolFSM:
 
     def _generate_id(self):
         return f'state{self.size}'
+
+    def initialize(self):
+        """ Initialize FSM construction setting the index to the initial state """
+        self.index = self.initial
 
     def loads(self, content):
         dict_content = json.loads(content)
@@ -52,6 +58,12 @@ class ProtocolFSM:
             self.index = new_state
             self.size += 1
         else:
+            """
+            A final state is already defining the message transition. This prevents to set a transition to itself
+            """
+            for trans in self.index:
+                if trans.equals(message) and trans.is_final():
+                    return
             """ Check if an already defined states contains the message """
             for state in self.states:
                 """
@@ -59,7 +71,7 @@ class ProtocolFSM:
                 Index state needs to point to the a state containing reached with a transition for the same message
                 """
                 for trans in state:
-                    """ We found the transition """
+                    """ Check if transition contains the message """
                     if trans.equals(message):
                         """ We now check a final transition in our index """
                         for index_trans in self.index:
@@ -85,6 +97,7 @@ class ProtocolFSM:
                         return
 
             """ This is only reached if the message is not contained in states """
+
             """
             If index and last are equal, we did not encounter a backwards transition yet. Create a new state at the end
             of the FSM corresponding to a new message
@@ -157,10 +170,12 @@ class ProtocolFSM:
         graph.edge('initial', self.initial.id)     # Initial transition
         for state in self.states:
             for trans in state:
+                """ Epsilon symbol if it is an empty keyword """
+                label = trans.message.keyword if trans.message.keyword else '\u03B5'
                 if trans.next is None:
-                    graph.edge(state.id, 'final', label=trans.message.keyword)
+                    graph.edge(state.id, 'final', label=label)
                 else:
-                    graph.edge(state.id, trans.next.id, label=trans.message.keyword)
+                    graph.edge(state.id, trans.next.id, label=label)
 
         """ Generate Graphviz DOT file (.gv) """
         graph.render()
@@ -184,17 +199,21 @@ class ProtocolFSM:
             for trans in state:
                 yield trans.message
                 """
-                Only delete current transition if next state hasn't several transitions. Otherwise,
-                we need to visit this transition again to consume the upcoming transitions
+                Two scenarios for deleting a transition:
 
-                #FIXME What happen when multiple transition is not in the next state but in a state after the next?
+                    1) If next state hasn't several transitions. Otherwise, we need to visit this transition
+                    again to consume the upcoming transitions.
+
+                    2) If its an inifinite loop to same state
                 """
-                if not trans.next.has_multiple_transition():
+                #FIXME What happen when multiple transition is not in the next state but in a state after the next?
+                if not trans.next.has_multiple_transition() or trans.is_transitition_to_state(state):
                     state.trans.remove(trans)
                 yield from self._traverse(trans.next)
         else:
-            yield state.trans[0].message
-            state = state.trans[0].next
+            trans = state.trans[0]
+            yield trans.message
+            state = trans.next
             yield from self._traverse(state)
 
 class State:
@@ -270,6 +289,9 @@ class Transition:
 
         self.message = msg
         self.next = transition['next']
+
+    def is_transitition_to_state(self, state):
+        return state == self.next
 
     def __eq__(self, other):
         if isinstance(other, Transition):

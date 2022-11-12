@@ -3,6 +3,10 @@ import shlex
 import capstone
 import capstone.x86
 
+""" Set auto local for user messages """
+import locale
+locale.setlocale(locale.LC_ALL, '')     # '' means auto
+
 import tracemodeler.model
 import tracemodeler.debug as debug
 
@@ -23,15 +27,26 @@ class Analyzer:
         content = self.read_file()
 
         while content:
-            start = content.index(START_TRACE) + 1
-            end = content.index(END_TRACE)
+            try:
+                start = content.index(START_TRACE) + 1
+                end = content.index(END_TRACE)
+            except ValueError as e:
+                cause = str(e).split('\'')[1]
+                debug.error(f'{self.tracefile}: Unable to parse file: Could not find \"{cause}\" marker')
+
             ret.append(content[start:end])
             content = content[end+1:]
 
         if ret:
-            debug.info(f'{self.tracefile}: {len(ret)} trace/s imported')
+            debug.info(f'{self.tracefile}: {len(ret)} execution trace/s imported')
         else:
             debug.warning(f'{self.tracefile}: No trace found')
+
+        count = 0
+        for trace in ret:
+            count += len(trace)
+
+        debug.info(f'Parsing {count:n} records...')
 
         ret = self.trace_to_dict(ret)
 
@@ -60,44 +75,83 @@ class Analyzer:
         return ret
 
     def analyze(self):
-        for trace in self.traces:
-            trace = [item for item in trace if item['level'] == 'taint']    # Only use taint information
+        """
+        Traces are divided by:
+            1. Execution trace: each time the program is executed under the server-tracer DBI module
+            2. Session trace: each client session delimited by accepting a new connection
+                                and closing its corresponding socket
+            3. Network trace: each recv and send action during a session trace
+        
+        We restart the FSM construction for every new session in an execution trace
+        """
+        for (i, execution_trace) in enumerate(self.traces, start=1):
+            sessions = self.split_sessions(execution_trace)
+            debug.info(f'{len(sessions)} session/s in execution trace no. {i}')
 
-            net_traces = self.split_network_activity(trace)
-            for net_trace in net_traces:
-                self.analyze_net_trace(net_trace)
+            for session in sessions:
+                """ Start construction of FSM by each session """
+                self.fsm.initialize()
+
+                """ Only use taint information """
+                session_trace = [item for item in session if item['level'] == 'taint']
+
+                for net_trace in self.split_network_activity(session_trace):
+                    self.analyze_net_trace(net_trace)
 
         return self.fsm
 
-    def split_network_activity(self, trace):
+    def split_sessions(self, execution_trace):
+        ret = []
+
+        """ Search for either accept new connection or close current ones """
+        fd_actions = [trace for trace in execution_trace if 'action' in trace and trace['action'] in ['accept', 'close']]
+        
+        accept = None
+        close = None
+
+        """ Asumme there will be always a close call matching the file descriptor of a connect call """
+        for fd_action in fd_actions:
+            if fd_action['action'] == 'accept':
+                accept = fd_action
+            elif fd_action['action'] == 'close':
+                close = fd_action
+
+            if (accept is not None) and (close is not None):        
+                if accept['file-descriptor'] == close['file-descriptor']:
+                    ret.append(execution_trace[execution_trace.index(accept):execution_trace.index(close)])
+
+        return ret
+
+    def split_network_activity(self, session):
         """
         Split traces based in recv calls
 
-        :param trace: list of traces
+        :param session: list of traces in a client session
         :returns: a new list of traces from a recv call until the next
         """
         ret = []
         last = 0
 
-        for (i, item) in enumerate(trace):
+        for (i, item) in enumerate(session):
             if ('action' in item) and (item['action'] == 'recv'):
-                ret.append(trace[last:i])
+                ret.append(session[last:i])
                 last = i
 
-        # Include remaining trace
-        ret.append(trace[last:i])
+        """ Include remaining trace """
+        ret.append(session[last:])
 
         return ret
 
     def create_message(self, net_trace):
-        trace = net_trace[0]    # recv trace should be in first position
+        trace = net_trace[0]    # Asumme recv trace is in first position
 
         if trace['level'] == 'taint':
             if trace['action'] == 'recv':
-                buffer_content = trace['buffer-content']
-                #buffer_base_address = int(trace['range-start'], 16)
-                message = tracemodeler.model.Message(buffer_content)
-                return message
+                if int(trace['content-size']) >= 0:
+                    buffer_content = trace['buffer-content']
+                    #buffer_base_address = int(trace['range-start'], 16)
+                    message = tracemodeler.model.Message(buffer_content)
+                    return message
 
         return None
 

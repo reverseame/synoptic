@@ -39,6 +39,8 @@ class Replayer:
                 time.sleep(delay)
 
             self.recv()
+        except KeyboardInterrupt:
+            debug.warning('User interrupt')
         finally:
             if self.tcp: self.socket.close()
             debug.info(f'Done! Bye!')
