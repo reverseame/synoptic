@@ -7,8 +7,6 @@ import logging
 logging.getLogger('graphviz').setLevel(logging.WARNING)
 import graphviz
 
-import tracemodeler.debug as debug
-
 class ProtocolFSM:
     def __init__(self):
         self.size = 0
@@ -91,7 +89,8 @@ class ProtocolFSM:
 
                         """ We need to add a new transition from index to an already defined state with this message """
                         if self.index != state:
-                            self.index.transition(message, next=trans.next)
+                            if not trans.is_final():
+                                self.index.transition(message, next=trans.next)
                         """ We need to consume the transition if it is already defined for this state """
                         self.index = trans.next
                         return
@@ -104,6 +103,7 @@ class ProtocolFSM:
             """
             if self.index == self.last:
                 for index_trans in self.index:
+                    """ Set from final transition to a new state """
                     if index_trans.is_final():
                         """ Create a new state """
                         new_state = State(id=self._generate_id())
@@ -115,6 +115,10 @@ class ProtocolFSM:
                         self.index = new_state
                         self.last = new_state
                         self.size += 1
+                        return
+
+                """ Create a new transition to the new state """
+                self.index.transition(message)
             else:
                 """ We are in a backwards transition, where index is different from the last added state """
                 """ Check if there is an already transition that matches the message """

@@ -109,7 +109,7 @@ class Analyzer:
         accept = None
         close = None
 
-        """ Asumme there will be always a close call matching the file descriptor of a connect call """
+        """ Asume there will be always a close call matching the file descriptor of a connect call """
         for fd_action in fd_actions:
             if fd_action['action'] == 'accept':
                 accept = fd_action

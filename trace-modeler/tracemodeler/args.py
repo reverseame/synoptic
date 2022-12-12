@@ -20,7 +20,11 @@ usage_examples = '''usage examples:
         $ python trace-modeler/modeler.py --model /path/to/model.json --replay --host 127.0.0.1 --port 21
 
     Export a model and also replay messages to a host:
-        $ python trace-modeler/modeler.py --trace /path/to/trace.log --output /path/to/model.json --replay --host 127.0.0.1 --port 21'''
+        $ python trace-modeler/modeler.py --trace /path/to/trace.log --output /path/to/model.json --replay --host 127.0.0.1 --port 21
+
+    Export graphviz .gv and .pdf files:
+        $ python trace-modeler/modeler.py --trace /path/to/trace.log --export /path/to/filename
+    '''
 
 class ArgumentParser:
     def __init__(self):
