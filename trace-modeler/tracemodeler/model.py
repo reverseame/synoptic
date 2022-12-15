@@ -9,7 +9,6 @@ import graphviz
 
 class ProtocolFSM:
     def __init__(self):
-        self.size = 0
         self.initial = None
         self.last = None
         self.index = None
@@ -19,7 +18,7 @@ class ProtocolFSM:
         return self.initial is None
 
     def _generate_id(self):
-        return f'state{self.size}'
+        return f'state{len(self.states)}'
 
     def initialize(self):
         """ Initialize FSM construction setting the index to the initial state """
@@ -27,8 +26,6 @@ class ProtocolFSM:
 
     def loads(self, content):
         dict_content = json.loads(content)
-
-        self.size = dict_content['size']
 
         for (state_id, state_content) in dict_content['states'].items():
             state = State(id=state_id)
@@ -54,7 +51,6 @@ class ProtocolFSM:
             self.initial = new_state
             self.last = new_state
             self.index = new_state
-            self.size += 1
         else:
             """
             A final state is already defining the message transition. This prevents to set a transition to itself
@@ -84,7 +80,6 @@ class ProtocolFSM:
                                 """ And needs to be the new index """
                                 self.index = trans.next
                                 self.last = new_state
-                                self.size += 1
                                 return
 
                         """ We need to add a new transition from index to an already defined state with this message """
@@ -114,7 +109,6 @@ class ProtocolFSM:
                         """ Change last and index to the new state """
                         self.index = new_state
                         self.last = new_state
-                        self.size += 1
                         return
 
                 """ Create a new transition to the new state """
@@ -138,8 +132,7 @@ class ProtocolFSM:
         if self.is_empty():
             return {}
 
-        ret = {'size': self.size}
-        ret['initial'] = self.initial.id
+        ret = {'initial': self.initial.id}
         states = {}
 
         for state in self.states:
@@ -162,30 +155,28 @@ class ProtocolFSM:
         """ Initial node """
         graph.attr('node', shape='point')
         graph.node('initial')
-
-        """ Final node """
-        graph.attr('node', shape='doublecircle')
-        graph.node('final')
-
-        """ Intermediate nodes """
         graph.attr('node', shape='circle')
+        graph.edge('initial', self.initial.id)      # Initial transition
 
-        """ Model graph """
-        graph.edge('initial', self.initial.id)     # Initial transition
         for state in self.states:
             for trans in state:
                 """ Epsilon symbol if it is an empty keyword """
                 label = trans.message.keyword if trans.message.keyword else '\u03B5'
                 if trans.next is None:
+                    """ Final node """
+                    graph.attr('node', shape='doublecircle')
+                    graph.node('final')
                     graph.edge(state.id, 'final', label=label)
                 else:
+                    """ Intermediate nodes """
+                    graph.attr('node', shape='circle')
                     graph.edge(state.id, trans.next.id, label=label)
 
         """ Generate Graphviz DOT file (.gv) """
         graph.render()
 
     def __len__(self):
-        return self.size
+        return len(self.states)
 
     def __iter__(self):
         if self.is_empty():
