@@ -1,4 +1,5 @@
 .vscode/
+.vs/
 .git/
 obj-intel64/
 *.o

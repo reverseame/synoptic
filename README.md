@@ -10,10 +10,14 @@ This project aims to infer the protocol message format and protocol finite state
 
 ## Requisites
 
-- `server-tracer`: Pin 3.22
-- `trace-analyzer`: Capstone
+- `server-tracer`:
+  - Linux: [Pin 3.22](https://www.intel.com/content/www/us/en/developer/articles/tool/pin-a-binary-instrumentation-tool-downloads.html)
+  - Windows: [Pin 3.22](https://www.intel.com/content/www/us/en/developer/articles/tool/pin-a-binary-instrumentation-tool-downloads.html), [Visual Studio Community](https://visualstudio.microsoft.com/es/vs/community/) (tested on version 2022) with C++ Desktop workload
+- `trace-analyzer`: [Python](https://www.python.org/)
 
 ## Compilation and Usage
+
+### Linux
 
 1. Export the following variable in your `.bashrc` file:
 
@@ -26,7 +30,18 @@ This project aims to infer the protocol message format and protocol finite state
 3. You can now run the following command to obtain execution `trace.log`:
 
 ```console
-$ /path/to/pin -t obj-intel64/server-tracer.so -- server-executable [args]
+$ $PIN_ROOT/pin -t obj-intel64/server-tracer.so -- server-executable [args]
+```
+
+### Windows
+
+1. Copy [server-tracer for Windows](server-tracer/windows/) to `%PIN_ROOT%\source\tools`
+2. Open [server-tracer.vcxproj](server-tracer/windows/server-tracer.vcxproj) with Vistual Studio
+3. Select _Release x86/x64_ option and build Pin tool with _Build_ > _Build Solution_. This will create DLLs in their corresponding folder
+4. Run Pin tool to obtain the `trace.log` with:
+
+```console
+> %PIN_ROOT%\pin.exe -t x64\Release\server-tracer.dll -- server-executable [args]
 ```
 
 ## BINSEC
