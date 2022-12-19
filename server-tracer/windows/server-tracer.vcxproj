@@ -254,10 +254,18 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClCompile Include="server-tracer.cpp" />
+    <None Include="..\README" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="..\README" />
+    <ClCompile Include="log.cpp" />
+    <ClCompile Include="moduleload.cpp" />
+    <ClCompile Include="server-tracer.cpp" />
+    <ClCompile Include="util.cpp" />
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="log.h" />
+    <ClInclude Include="moduleload.h" />
+    <ClInclude Include="util.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
