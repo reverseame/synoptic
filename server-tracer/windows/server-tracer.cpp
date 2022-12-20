@@ -2,10 +2,10 @@
 #include <iostream>
 
 #include "log.h"
-#include "moduleload.h"
+#include "moduleload_windows.h"
 
 void fini(INT32 code, void* v) {
-    Logger::getInstance()->log("-----END TRACE-----");
+    Logger::getInstance()->log("-----END TRACE-----\n");
     Logger::getInstance()->close();
     std::cout << "[*] server-tracer\t: INFO\t: Analysis finished" << std::endl;
 }
@@ -27,7 +27,7 @@ int main(int argc, char* argv[]) {
     }
 
     std::cout << "[*] server-tracer\t: INFO\t: Log file\t\t: " << Logger::getInstance()->getLogFileName() << std::endl;
-    Logger::getInstance()->log("-----BEGIN TRACE-----");
+    Logger::getInstance()->log("-----BEGIN TRACE-----\n");
 
     PIN_SetSyntaxIntel();
 
@@ -37,6 +37,7 @@ int main(int argc, char* argv[]) {
     /* Function called on program exit */
     PIN_AddFiniFunction(fini, 0);
 
+    /* Start program and never returns */
     PIN_StartProgram();
 
     return 0;

@@ -1,7 +1,5 @@
 #include "log.h"
 
-#include<string>
-
 /* Singleton */
 Logger* Logger::instance = nullptr;
 
@@ -14,25 +12,30 @@ Logger* Logger::getInstance() {
 }
 
 Logger::Logger(void) {
-	logFile.open(Logger::logFilename.c_str(), std::fstream::out | std::fstream::app);
+	trace = fopen(logFilename.c_str(), "a");
 }
 
 void Logger::close() {
-	logFile.close();
+	fclose(trace);
 }
 
 std::string Logger::getLogFileName() {
 	return logFilename;
 }
 
-void Logger::log(std::string str) {
-	logFile << str << std::endl;
+void Logger::log(char* str, ...) {
+	va_list args;
+	va_start(args, str);
+	vfprintf(trace, str, args);
+	va_end(args);
 }
 
-void Logger::logInfo(std::string str) {
-	logFile << "level=info " << str << std::endl;
+void Logger::logInfo(char* str, ...) {
+	fprintf(trace, "level=info ");
+	log(str);
 }
 
-void Logger::logTaint(std::string str) {
-	logFile << "level=taint " << str << std::endl;
+void Logger::logTaint(char* str, ...) {
+	fprintf(trace, "level=taint ");
+	log(str);
 }

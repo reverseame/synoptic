@@ -1,22 +1,21 @@
 #pragma once
 
+#include <stdio.h>
 #include <iostream>
-
-#include <fstream>
 
 /* Singleton */
 class Logger {
 	private:
-		Logger(void);
+		Logger(void);	// Constructor is private
 		static Logger* instance;
-		std::fstream logFile;
+		FILE* trace;
 		std::string logFilename = "trace.log";
 
 	public:
-		static Logger* getInstance();
+		static Logger* getInstance();	// Serves as constructor
 		std::string getLogFileName();
 		void close();
-		void log(std::string str);
-		void logInfo(std::string str);
-		void logTaint(std::string str);
+		void log(char* str, ...);
+		void logInfo(char* str, ...);
+		void logTaint(char* str, ...);
 };

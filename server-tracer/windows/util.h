@@ -2,4 +2,4 @@
 
 #include "pin.H"
 
-std::string hexily(ADDRINT addr);
+std::string hexaddr(ADDRINT addr);
