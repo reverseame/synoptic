@@ -1,21 +1,23 @@
 #pragma once
 
-#include <stdio.h>
 #include <iostream>
 
-/* Singleton */
-class Logger {
-	private:
-		Logger(void);	// Constructor is private
-		static Logger* instance;
-		FILE* trace;
-		std::string logFilename = "trace.log";
+#define LOG_RAW(fmt, ...) fprintf(Log::getInstance()->getLogFile(), fmt, __VA_ARGS__)
+#define LOG_INFO(fmt, ...) fprintf(Log::getInstance()->getLogFile(), "level=info "fmt"", __VA_ARGS__)
+#define LOG_TAINT(fmt, ...) fprintf(Log::getInstance()->getLogFile(), "level=taint "fmt"", __VA_ARGS__)
+#define CLOSELOG() Log::getInstance()->closeLogfile()
 
-	public:
-		static Logger* getInstance();	// Serves as constructor
-		std::string getLogFileName();
-		void close();
-		void log(char* str, ...);
-		void logInfo(char* str, ...);
-		void logTaint(char* str, ...);
+#define LOG_FILENAME "trace.log"
+
+/* Singleton */
+class Log {
+private:
+	Log();						// Constructor is private
+	static Log* instance;
+	FILE* logfile;
+
+public:
+	static Log* getInstance();	// Serves as constructor
+	void closeLogfile();
+	FILE* getLogFile();
 };

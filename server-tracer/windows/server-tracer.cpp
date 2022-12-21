@@ -1,12 +1,13 @@
 #include "pin.H"
-#include <iostream>
 
 #include "log.h"
+#include <iostream>
+
 #include "moduleload_windows.h"
 
 void fini(INT32 code, void* v) {
-    Logger::getInstance()->log("-----END TRACE-----\n");
-    Logger::getInstance()->close();
+    LOG_RAW("-----END TRACE-----\n");
+    CLOSELOG();
     std::cout << "[*] server-tracer\t: INFO\t: Analysis finished" << std::endl;
 }
 
@@ -26,8 +27,8 @@ int main(int argc, char* argv[]) {
         return usage();
     }
 
-    std::cout << "[*] server-tracer\t: INFO\t: Log file\t\t: " << Logger::getInstance()->getLogFileName() << std::endl;
-    Logger::getInstance()->log("-----BEGIN TRACE-----\n");
+    std::cout << "[*] server-tracer\t: INFO\t: log file\t\t: "<< LOG_FILENAME << std::endl;
+    LOG_RAW("-----BEGIN TRACE-----\n");
 
     PIN_SetSyntaxIntel();
 

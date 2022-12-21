@@ -6,33 +6,29 @@
 #include <string>
 #include <iostream>
 
-int WSAAPI newConnectFunction(AFUNPTR orgFuncPtr, CONTEXT* ctx, WINDOWS::SOCKET s, const WINDOWS::sockaddr* name, int namelen) {
-    int ret;
-
-    std::cout << "Before connect" << std::endl;
+WINDOWS::INT WSAAPI newConnectFunction(AFUNPTR orgFuncPtr, CONTEXT* ctx, WINDOWS::SOCKET s, const WINDOWS::sockaddr* name, WINDOWS::INT namelen) {
+    WINDOWS::INT ret;
 
     PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
         CALLINGSTD_DEFAULT, orgFuncPtr,
         NULL,
-        PIN_PARG(int), &ret,
+        PIN_PARG(WINDOWS::INT), &ret,
         PIN_PARG(WINDOWS::SOCKET), s,
         PIN_PARG(const WINDOWS::sockaddr*), name,
-        PIN_PARG(int), namelen,
+        PIN_PARG(WINDOWS::INT), namelen,
         PIN_PARG_END());
 
-    std::cout << "After connect" << std::endl;
-
-    Logger::getInstance()->logInfo("thread=%d action=connect file-descriptor=%ld\n", WINDOWS::GetCurrentThreadId(), &s);
+    LOG_INFO("thread=%u action=connect file-descriptor=%u\n", WINDOWS::GetCurrentThreadId(), s);
 
     return ret;
 }
 
 void replaceConnectFunction(IMG img, RTN rtn) {
-    PROTO proto_connect = PROTO_Allocate(PIN_PARG(int), CALLINGSTD_DEFAULT,
+    PROTO proto_connect = PROTO_Allocate(PIN_PARG(WINDOWS::INT), CALLINGSTD_DEFAULT,
         NULL,
         PIN_PARG(WINDOWS::SOCKET),          // s
         PIN_PARG(const WINDOWS::sockaddr*), // name
-        PIN_PARG(int),                      // namelen
+        PIN_PARG(WINDOWS::INT),             // namelen
         PIN_PARG_END());
 
     RTN_ReplaceSignature(rtn, AFUNPTR(newConnectFunction),
@@ -52,8 +48,6 @@ void replaceConnectFunction(IMG img, RTN rtn) {
 WINDOWS::SOCKET WSAAPI newAcceptFunction(AFUNPTR orgFuncPtr, CONTEXT* ctx, WINDOWS::SOCKET s, WINDOWS::sockaddr* addr, int* addrlen) {
     WINDOWS::SOCKET ret;
 
-    std::cout << "Before accept" << std::endl;
-
     PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
         CALLINGSTD_DEFAULT, orgFuncPtr,
         NULL,
@@ -63,9 +57,7 @@ WINDOWS::SOCKET WSAAPI newAcceptFunction(AFUNPTR orgFuncPtr, CONTEXT* ctx, WINDO
         PIN_PARG(int*), addrlen,
         PIN_PARG_END());
 
-    std::cout << "After accept" << std::endl;
-
-    Logger::getInstance()->logInfo("thread=%lu action=accept file-descriptor=%d\n", WINDOWS::GetCurrentThreadId(), ret);
+    LOG_INFO("thread=%u action=accept file-descriptor=%u\n", WINDOWS::GetCurrentThreadId(), s);
 
     return ret;
 }
@@ -95,8 +87,6 @@ void replaceAcceptFunction(IMG img, RTN rtn) {
 int WSAAPI newCloseSocketFunction(AFUNPTR orgFuncPtr, CONTEXT* ctx, WINDOWS::SOCKET s) {
     int ret;
 
-    std::cout << "Before closesocket" << std::endl;
-
     PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
         CALLINGSTD_DEFAULT, orgFuncPtr,
         NULL,
@@ -104,9 +94,7 @@ int WSAAPI newCloseSocketFunction(AFUNPTR orgFuncPtr, CONTEXT* ctx, WINDOWS::SOC
         PIN_PARG(WINDOWS::SOCKET), s,
         PIN_PARG_END());
 
-    std::cout << "After closesocket" << std::endl;
-
-    Logger::getInstance()->logInfo("thread=%lu action=close file-descriptor=%ld\n", WINDOWS::GetCurrentThreadId(), &s);
+    LOG_INFO("thread=%u action=close file-descriptor=%u\n", WINDOWS::GetCurrentThreadId(), s);
 
     return ret;
 }
@@ -132,8 +120,6 @@ void replaceCloseSocketFunction(IMG img, RTN rtn) {
 int WSAAPI newSend(AFUNPTR orgFuncPtr, CONTEXT* ctx, WINDOWS::SOCKET s, const char* buf, int len, int flags) {
     int ret;
 
-    std::cout << "Before send" << std::endl;
-
     PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
         CALLINGSTD_DEFAULT, orgFuncPtr,
         NULL,
@@ -144,9 +130,7 @@ int WSAAPI newSend(AFUNPTR orgFuncPtr, CONTEXT* ctx, WINDOWS::SOCKET s, const ch
         PIN_PARG(int), flags,
         PIN_PARG_END());
 
-    std::cout << "After send" << std::endl;
-
-    Logger::getInstance()->logTaint("thread=%lu action=send buffer-address=%p buffer-size=%d content-size=%d buffer-content=\n", WINDOWS::GetCurrentThreadId(), *&buf, len, ret);
+    LOG_TAINT("thread=%u action=send buffer-address=%p buffer-size=%d content-size=%d buffer-content=\n", WINDOWS::GetCurrentThreadId(), buf, len, ret);
 
     return ret;
 }
@@ -178,8 +162,6 @@ void replaceSend(IMG img, RTN rtn) {
 WINDOWS::INT WSAAPI newRecv(AFUNPTR orgFuncPtr, CONTEXT* ctx, WINDOWS::SOCKET s, WINDOWS::CHAR* buf, WINDOWS::INT len, WINDOWS::INT flags) {
     WINDOWS::INT ret;
 
-    std::cout << "Before recv" << std::endl;
-
     PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
         CALLINGSTD_DEFAULT, orgFuncPtr,
         NULL,
@@ -190,9 +172,12 @@ WINDOWS::INT WSAAPI newRecv(AFUNPTR orgFuncPtr, CONTEXT* ctx, WINDOWS::SOCKET s,
         PIN_PARG(WINDOWS::INT), flags,
         PIN_PARG_END());
 
-    std::cout << "After recv" << std::endl;
+    LOG_TAINT("thread=%u action=recv buffer-address=%p buffer-size=%d content-size=%d buffer-content=", WINDOWS::GetCurrentThreadId(), buf, len, ret);
 
-    Logger::getInstance()->logTaint("thread=%lu action=recv file-descriptor=%ld buffer-address=%p buffer-size=%d content-size=%d buffer-content=\n", WINDOWS::GetCurrentThreadId(), &s, *&buf, len, ret);
+    for (int i = 0; i < ret; i++) {
+        LOG_RAW("%02x", ((char*)buf)[i]);
+    }
+    LOG_RAW(" range-start=%p range-end=%p\n", buf, (UINT64) buf + ret - 1);
 
     return ret;
 }
@@ -229,7 +214,7 @@ VOID moduleLoad(IMG img, VOID* v) {
 
     /* Avoid to hook the main executable */
     if (IMG_IsMainExecutable(img)) {
-        Logger::getInstance()->logInfo("thread=%lu action=relocate image-base=0x%08lx\n", WINDOWS::GetCurrentThreadId(), image_base);
+        INFO("Main executable");
         return;
     }
 

@@ -1,41 +1,25 @@
 #include "log.h"
 
 /* Singleton */
-Logger* Logger::instance = nullptr;
+Log* Log::instance = nullptr;
 
-Logger* Logger::getInstance() {
+Log* Log::getInstance() {
 	if (instance == nullptr) {
-		instance = new Logger();
+		instance = new Log();
 	}
 
 	return instance;
 }
 
-Logger::Logger(void) {
-	trace = fopen(logFilename.c_str(), "a");
+Log::Log(void) {
+	logfile = fopen(LOG_FILENAME, "a");
 }
 
-void Logger::close() {
-	fclose(trace);
+void Log::closeLogfile() {
+	fflush(logfile);
+	fclose(logfile);
 }
 
-std::string Logger::getLogFileName() {
-	return logFilename;
-}
-
-void Logger::log(char* str, ...) {
-	va_list args;
-	va_start(args, str);
-	vfprintf(trace, str, args);
-	va_end(args);
-}
-
-void Logger::logInfo(char* str, ...) {
-	fprintf(trace, "level=info ");
-	log(str);
-}
-
-void Logger::logTaint(char* str, ...) {
-	fprintf(trace, "level=taint ");
-	log(str);
+FILE* Log::getLogFile() {
+	return logfile;
 }
