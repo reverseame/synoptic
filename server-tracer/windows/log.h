@@ -2,10 +2,10 @@
 
 #include <iostream>
 
-#define LOG_RAW(fmt, ...) fprintf(Log::getInstance()->getLogFile(), fmt, __VA_ARGS__)
-#define LOG_INFO(fmt, ...) fprintf(Log::getInstance()->getLogFile(), "level=info "fmt"", __VA_ARGS__)
-#define LOG_TAINT(fmt, ...) fprintf(Log::getInstance()->getLogFile(), "level=taint "fmt"", __VA_ARGS__)
-#define CLOSELOG() Log::getInstance()->closeLogfile()
+#define LOG_RAW(fmt, ...) do { fprintf(Log::getInstance()->getLogFile(), fmt, __VA_ARGS__); } while(0)
+#define LOG_INFO(fmt, ...) do { fprintf(Log::getInstance()->getLogFile(), "level=info "fmt"", __VA_ARGS__); } while(0)
+#define LOG_TAINT(fmt, ...) do { fprintf(Log::getInstance()->getLogFile(), "level=taint "fmt"", __VA_ARGS__); } while(0)
+#define CLOSELOG() do { Log::getInstance()->closeLogfile(); } while(0)
 
 #define LOG_FILENAME "trace.log"
 

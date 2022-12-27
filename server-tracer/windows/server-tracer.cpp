@@ -27,7 +27,7 @@ int main(int argc, char* argv[]) {
         return usage();
     }
 
-    std::cout << "[*] server-tracer\t: INFO\t: log file\t\t: "<< LOG_FILENAME << std::endl;
+    std::cout << "[*] server-tracer\t: INFO\t: log file\t\t\t: "<< LOG_FILENAME << std::endl;
     LOG_RAW("-----BEGIN TRACE-----\n");
 
     PIN_SetSyntaxIntel();
