@@ -8,7 +8,7 @@
 
 #if _WIN32 || _WIN64
 #include "moduleload_windows.h"
-#elif linux
+#elif __GNUC__
 #include "moduleload_linux.h"
 #endif
 

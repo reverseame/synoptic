@@ -1,8 +1,8 @@
 #include "util.h"
 
-#if linux
+#if __GNUC__
 #include <sys/types.h>
-#elif _WIN32 || __i386__
+#elif _WIN32 || _WIN64
 #include "windows_include.h"
 #endif
 
@@ -20,9 +20,9 @@ std::string hexaddr(ADDRINT addr) {
 
 std::string getTid() {
     std::stringstream ss;
-#if linux
+#if __GNUC__
     ss << gettid();
-#elif _WIN32 || __i386__
+#elif _WIN32 || _WIN64
     ss << WINDOWS::GetCurrentThreadId();
 #endif
     return ss.str();
