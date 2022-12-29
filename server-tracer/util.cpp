@@ -1,6 +1,7 @@
 #include "util.h"
+
 #if linux
-#include <unistd.h>
+#include <sys/types.h>
 #elif _WIN32 || __i386__
 #include "windows_include.h"
 #endif

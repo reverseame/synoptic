@@ -1,5 +1,4 @@
 #include "log.h"
-#include "util.h"
 #include "moduleload_windows.h"
 #include "windows_include.h"
 

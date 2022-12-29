@@ -1,11 +1,15 @@
 #include "pin.H"
 
-#include "log.h"
 #include <set>
 #include <iostream>
 
+#include "log.h"
+#include "util.h"
+
 #if _WIN32 || _WIN64
 #include "moduleload_windows.h"
+#elif linux
+#include "moduleload_linux.h"
 #endif
 
 /* Keep track of tainted addresses */
