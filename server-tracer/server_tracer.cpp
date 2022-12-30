@@ -18,27 +18,27 @@ std::set<ADDRINT> taintedAdddrs;
 bool taintedRegs[REG_LAST];
 
 void fini(INT32 code, void* v) {
-    //LOG_RAW("-----END TRACE-----\n");
-    //CLOSELOG();
+    LOG_RAW("-----END TRACE-----\n");
+    CLOSELOG();
     std::cout << "[*] server-tracer\t: INFO\t: Analysis finished" << std::endl;
 }
 
 void traceIns(ADDRINT insAddr, std::string *insDis, const char* routine) {
     std::cout << *insDis << std::endl;
-    //LOG_INFO("routine=\"%s\" ins-addr=%s ins-dis=\"%s\"\n", routine, hexaddr(insAddr).c_str(), insDis->c_str());
+    LOG_INFO("routine=\"%s\" ins-addr=%s ins-dis=\"%s\"\n", routine, hexaddr(insAddr).c_str(), insDis->c_str());
 }
 
 /* Register copied to memory */
 void regToAddr(ADDRINT insAddr, std::string *insDis, char* routine, ADDRINT reg_r, ADDRINT mem_w) {
     if (taintedRegs[reg_r]) {
-        //LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=taint-addr origin=reg addr=%s reg=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), hexaddr(mem_w).c_str(), REG_StringShort((REG)reg_r).c_str());
+        LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=taint-addr origin=reg addr=%s reg=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), hexaddr(mem_w).c_str(), REG_StringShort((REG)reg_r).c_str());
         taintedAdddrs.insert(mem_w);
     }
     else {
         /* reg not tainted --> mem not tainted */
         /* if mem is already not tainted nothing to do */
         if (taintedAdddrs.count(mem_w)) {
-            //LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=free-addr origin=reg addr=%s reg=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), hexaddr(mem_w).c_str(), REG_StringShort((REG)reg_r).c_str());
+            LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=free-addr origin=reg addr=%s reg=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), hexaddr(mem_w).c_str(), REG_StringShort((REG)reg_r).c_str());
             taintedAdddrs.erase(taintedAdddrs.find(mem_w));
         }
         else {
@@ -50,12 +50,12 @@ void regToAddr(ADDRINT insAddr, std::string *insDis, char* routine, ADDRINT reg_
 /* Memory copied to register */
 void addrToReg(ADDRINT insAddr, std::string *insDis, char* routine, ADDRINT mem_r, ADDRINT reg_w) {
     if (taintedAdddrs.count(mem_r)) {
-        //LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=taint-reg origin=addr reg=%s addr=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), REG_StringShort((REG)reg_w).c_str(), hexaddr(mem_r).c_str());
+        LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=taint-reg origin=addr reg=%s addr=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), REG_StringShort((REG)reg_w).c_str(), hexaddr(mem_r).c_str());
         taintedRegs[reg_w] = true;
     }
     else {
         /* mem is clean -> reg is cleaned */
-        //LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=free-reg origin=addr reg=%s addr=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), REG_StringShort((REG)reg_w).c_str(), hexaddr(mem_r).c_str());
+        LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=free-reg origin=addr reg=%s addr=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), REG_StringShort((REG)reg_w).c_str(), hexaddr(mem_r).c_str());
         taintedRegs[reg_w] = false;
     }
 }
@@ -63,11 +63,11 @@ void addrToReg(ADDRINT insAddr, std::string *insDis, char* routine, ADDRINT mem_
 /* Reg copied to another reg */
 void regToReg(ADDRINT insAddr, std::string *insDis, char* routine, ADDRINT reg_r, ADDRINT reg_w) {
     if (taintedRegs[reg_r]) {
-        //LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=taint-reg origin=reg reg-taint=%s reg-origin=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), REG_StringShort((REG)reg_w).c_str(), REG_StringShort((REG)reg_r).c_str());
+        LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=taint-reg origin=reg reg-taint=%s reg-origin=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), REG_StringShort((REG)reg_w).c_str(), REG_StringShort((REG)reg_r).c_str());
         taintedRegs[reg_w] = true;
     }
     else if (taintedRegs[reg_w]) {
-        //LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=free-reg origin=reg reg-free=%s reg-origin=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), REG_StringShort((REG)reg_w).c_str(), REG_StringShort((REG)reg_r).c_str());
+        LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=free-reg origin=reg reg-free=%s reg-origin=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), REG_StringShort((REG)reg_w).c_str(), REG_StringShort((REG)reg_r).c_str());
         taintedRegs[reg_w] = false;
     }
     else {
@@ -78,7 +78,7 @@ void regToReg(ADDRINT insAddr, std::string *insDis, char* routine, ADDRINT reg_r
 /* Immediate copied to a register */
 void immToReg(ADDRINT insAddr, std::string *insDis, char* routine, ADDRINT reg_w) {
     if (taintedRegs[reg_w]) {
-        //LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=free-reg reg=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), REG_StringShort((REG)reg_w).c_str());
+        LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=free-reg reg=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), REG_StringShort((REG)reg_w).c_str());
         taintedRegs[reg_w] = false;
     }
     else {
@@ -90,7 +90,7 @@ void immToReg(ADDRINT insAddr, std::string *insDis, char* routine, ADDRINT reg_w
 void immToAddr(ADDRINT insAddr, std::string *insDis, char* routine, ADDRINT mem_w) {
     /* if mem is not tainted nothing to do */
     if (taintedAdddrs.count(mem_w)) {
-        //LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=free-addr addr=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), hexaddr(mem_w).c_str());
+        LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=free-addr addr=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), hexaddr(mem_w).c_str());
         taintedAdddrs.erase(taintedAdddrs.find(mem_w));
     }
     else {
@@ -174,7 +174,7 @@ void traceCall(ADDRINT insAddr, std::string *insDis, char* routine, char* callTy
         target = "unknown";
     }
 
-    //LOG_INFO("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=%s target=\"%s\"\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), callType, target.c_str());
+    LOG_INFO("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=%s target=\"%s\"\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), callType, target.c_str());
 }
 
 /* Analyzes mov instructions */
@@ -275,7 +275,7 @@ void analyzeCall(INS ins, const char* routine) {
 /* Immediate compared to memory address */
 void compareImmToAddr(ADDRINT insAddr, std::string *insDis, char* routine, ADDRINT mem_r, REG reg_r, ADDRINT imm) {
     if (taintedAdddrs.count(mem_r)) {
-        //LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=compare origin=imm-addr addr=%s reg=%s imm=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), hexaddr(mem_r).c_str(), REG_StringShort(reg_r).c_str(), hexaddr(imm).c_str());
+        LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=compare origin=imm-addr addr=%s reg=%s imm=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), hexaddr(mem_r).c_str(), REG_StringShort(reg_r).c_str(), hexaddr(imm).c_str());
     }
     else {
         traceIns(insAddr, insDis, routine);
@@ -285,7 +285,7 @@ void compareImmToAddr(ADDRINT insAddr, std::string *insDis, char* routine, ADDRI
 /* Immediate compared to register */
 void compareImmToReg(ADDRINT insAddr, std::string *insDis, char* routine, REG reg, ADDRINT imm) {
     if (taintedRegs[reg]) {
-        //LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=compare origin=imm-reg reg=%s imm=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), REG_StringShort(reg).c_str(), hexaddr(imm).c_str());
+        LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=compare origin=imm-reg reg=%s imm=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), REG_StringShort(reg).c_str(), hexaddr(imm).c_str());
     }
     else {
         traceIns(insAddr, insDis, routine);
@@ -295,7 +295,7 @@ void compareImmToReg(ADDRINT insAddr, std::string *insDis, char* routine, REG re
 /* Register compared to register */
 void compareRegToReg(ADDRINT insAddr, std::string *insDis, char* routine, REG reg1, REG reg2) {
     if (taintedRegs[reg1] || taintedRegs[reg2]) {
-        //LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=compare origin=reg-reg reg1=%s reg2=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), REG_StringShort(reg1).c_str(), REG_StringShort(reg2).c_str());
+        LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=compare origin=reg-reg reg1=%s reg2=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), REG_StringShort(reg1).c_str(), REG_StringShort(reg2).c_str());
     }
     else {
         traceIns(insAddr, insDis, routine);
@@ -346,7 +346,7 @@ void analyzeComparison(INS ins, const char* routine) {
             IARG_END);
     }
     else {
-        //LOG_INFO("routine=\"%s\" ins-addr=%s ins-dis=\"%s\"\n", routine, hexaddr(INS_Address(ins)).c_str(), INS_Disassemble(ins).c_str());
+        LOG_INFO("routine=\"%s\" ins-addr=%s ins-dis=\"%s\"\n", routine, hexaddr(INS_Address(ins)).c_str(), INS_Disassemble(ins).c_str());
     }
 }
 
@@ -401,7 +401,7 @@ void moduleLoad(IMG img, void* v) {
 
     /* Avoid to hook the main executable */
     if (IMG_IsMainExecutable(img)) {
-        //LOG_INFO("action=relocate image-base=%s\n", hexaddr(image_base).c_str());
+        LOG_INFO("action=relocate image-base=%s\n", hexaddr(image_base).c_str());
         return;
     }
 
@@ -426,7 +426,7 @@ int main(int argc, char* argv[]) {
     }
 
     std::cout << "[*] server-tracer\t: INFO\t: log file\t\t\t: " << LOG_FILENAME << std::endl;
-    //LOG_RAW("-----BEGIN TRACE-----\n");
+    LOG_RAW("-----BEGIN TRACE-----\n");
 
     /* Disassembly syntax to Intel format */
     PIN_SetSyntaxIntel();
