@@ -256,7 +256,7 @@
   <ItemGroup>
     <ClCompile Include="log.cpp" />
     <ClCompile Include="moduleload_windows.cpp" />
-    <ClCompile Include="server-tracer.cpp" />
+    <ClCompile Include="server_tracer.cpp" />
     <ClCompile Include="util.cpp" />
   </ItemGroup>
   <ItemGroup>
