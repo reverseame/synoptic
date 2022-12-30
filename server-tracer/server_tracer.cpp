@@ -24,7 +24,6 @@ void fini(INT32 code, void* v) {
 }
 
 void traceIns(ADDRINT insAddr, std::string *insDis, const char* routine) {
-    std::cout << *insDis << std::endl;
     LOG_INFO("routine=\"%s\" ins-addr=%s ins-dis=\"%s\"\n", routine, hexaddr(insAddr).c_str(), insDis->c_str());
 }
 
