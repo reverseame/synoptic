@@ -4,9 +4,9 @@
 #include <iostream>
 
 #include "log.h"
-#include "util.h"
+#include "utilities.h"
 
-#if __GNUC__
+#if linux
 #include "moduleload_linux.h"
 #elif _WIN32 || _WIN64
 #include "moduleload_windows.h"
@@ -32,15 +32,13 @@ void regToAddr(ADDRINT insAddr, std::string *insDis, char* routine, ADDRINT reg_
     if (taintedRegs[reg_r]) {
         LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=taint-addr origin=reg addr=%s reg=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), hexaddr(mem_w).c_str(), REG_StringShort((REG)reg_r).c_str());
         taintedAdddrs.insert(mem_w);
-    }
-    else {
+    } else {
         /* reg not tainted --> mem not tainted */
         /* if mem is already not tainted nothing to do */
         if (taintedAdddrs.count(mem_w)) {
             LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=free-addr origin=reg addr=%s reg=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), hexaddr(mem_w).c_str(), REG_StringShort((REG)reg_r).c_str());
             taintedAdddrs.erase(taintedAdddrs.find(mem_w));
-        }
-        else {
+        } else {
             traceIns(insAddr, insDis, routine);
         }
     }
@@ -51,8 +49,7 @@ void addrToReg(ADDRINT insAddr, std::string *insDis, char* routine, ADDRINT mem_
     if (taintedAdddrs.count(mem_r)) {
         LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=taint-reg origin=addr reg=%s addr=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), REG_StringShort((REG)reg_w).c_str(), hexaddr(mem_r).c_str());
         taintedRegs[reg_w] = true;
-    }
-    else {
+    } else {
         /* mem is clean -> reg is cleaned */
         LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=free-reg origin=addr reg=%s addr=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), REG_StringShort((REG)reg_w).c_str(), hexaddr(mem_r).c_str());
         taintedRegs[reg_w] = false;
@@ -64,12 +61,10 @@ void regToReg(ADDRINT insAddr, std::string *insDis, char* routine, ADDRINT reg_r
     if (taintedRegs[reg_r]) {
         LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=taint-reg origin=reg reg-taint=%s reg-origin=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), REG_StringShort((REG)reg_w).c_str(), REG_StringShort((REG)reg_r).c_str());
         taintedRegs[reg_w] = true;
-    }
-    else if (taintedRegs[reg_w]) {
+    } else if (taintedRegs[reg_w]) {
         LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=free-reg origin=reg reg-free=%s reg-origin=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), REG_StringShort((REG)reg_w).c_str(), REG_StringShort((REG)reg_r).c_str());
         taintedRegs[reg_w] = false;
-    }
-    else {
+    } else {
         traceIns(insAddr, insDis, routine);
     }
 }
@@ -79,8 +74,7 @@ void immToReg(ADDRINT insAddr, std::string *insDis, char* routine, ADDRINT reg_w
     if (taintedRegs[reg_w]) {
         LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=free-reg reg=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), REG_StringShort((REG)reg_w).c_str());
         taintedRegs[reg_w] = false;
-    }
-    else {
+    } else {
         traceIns(insAddr, insDis, routine);
     }
 }
@@ -91,8 +85,7 @@ void immToAddr(ADDRINT insAddr, std::string *insDis, char* routine, ADDRINT mem_
     if (taintedAdddrs.count(mem_w)) {
         LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=free-addr addr=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), hexaddr(mem_w).c_str());
         taintedAdddrs.erase(taintedAdddrs.find(mem_w));
-    }
-    else {
+    } else {
         traceIns(insAddr, insDis, routine);
     }
 }
@@ -188,8 +181,7 @@ void propagateTaint(INS ins, const char* routine) {
                 IARG_PTR, routine,
                 IARG_MEMORYOP_EA, 0,
                 IARG_END);
-        }
-        else {
+        } else {
             /* reg <- imm */
             REG reg = getWriteReg(ins);
             INS_InsertCall(
@@ -200,8 +192,7 @@ void propagateTaint(INS ins, const char* routine) {
                 IARG_ADDRINT, (ADDRINT)reg,
                 IARG_END);
         }
-    }
-    else if (INS_IsMemoryRead(ins)) {
+    } else if (INS_IsMemoryRead(ins)) {
         /* reg <- [addr] */
         REG reg = getWriteReg(ins);
         INS_InsertCall(
@@ -212,8 +203,7 @@ void propagateTaint(INS ins, const char* routine) {
             IARG_MEMORYOP_EA, 0,
             IARG_ADDRINT, (ADDRINT)reg,
             IARG_END);
-    }
-    else if (INS_IsMemoryWrite(ins)) {
+    } else if (INS_IsMemoryWrite(ins)) {
         /* [addr] <- reg */
         REG reg = getReadReg(ins);
         INS_InsertCall(
@@ -224,8 +214,7 @@ void propagateTaint(INS ins, const char* routine) {
             IARG_ADDRINT, (ADDRINT)reg,
             IARG_MEMORYOP_EA, 0,
             IARG_END);
-    }
-    else if (INS_RegR(ins, 0) != REG_INVALID()) {
+    } else if (INS_RegR(ins, 0) != REG_INVALID()) {
         /* reg <- reg */
         REG reg_r = getReadReg(ins);
         REG reg_w = getWriteReg(ins);
@@ -237,8 +226,7 @@ void propagateTaint(INS ins, const char* routine) {
             IARG_ADDRINT, (ADDRINT)reg_r,
             IARG_ADDRINT, (ADDRINT)reg_w,
             IARG_END);
-    }
-    else {
+    } else {
         std::cerr << "[*] server-tracer\t: ERROR\t: Unable to propagate taint info: " << INS_Disassemble(ins) << std::endl;
     }
 }
@@ -254,8 +242,7 @@ void analyzeCall(INS ins, const char* routine) {
             IARG_PTR, "direct-call",
             IARG_BRANCH_TARGET_ADDR,
             IARG_END);
-    }
-    else if (INS_IsIndirectControlFlow(ins)) {
+    } else if (INS_IsIndirectControlFlow(ins)) {
         /* call [reg] */
         INS_InsertCall(
             ins, IPOINT_BEFORE, (AFUNPTR)traceCall,
@@ -265,8 +252,7 @@ void analyzeCall(INS ins, const char* routine) {
             IARG_PTR, "indirect-call",
             IARG_BRANCH_TARGET_ADDR,
             IARG_END);
-    }
-    else {
+    } else {
         std::cerr << "[*] server-tracer\t: ERROR\t: Unknown call: " << INS_Disassemble(ins) << std::endl;
     }
 }
@@ -275,8 +261,7 @@ void analyzeCall(INS ins, const char* routine) {
 void compareImmToAddr(ADDRINT insAddr, std::string *insDis, char* routine, ADDRINT mem_r, REG reg_r, ADDRINT imm) {
     if (taintedAdddrs.count(mem_r)) {
         LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=compare origin=imm-addr addr=%s reg=%s imm=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), hexaddr(mem_r).c_str(), REG_StringShort(reg_r).c_str(), hexaddr(imm).c_str());
-    }
-    else {
+    } else {
         traceIns(insAddr, insDis, routine);
     }
 }
@@ -285,8 +270,7 @@ void compareImmToAddr(ADDRINT insAddr, std::string *insDis, char* routine, ADDRI
 void compareImmToReg(ADDRINT insAddr, std::string *insDis, char* routine, REG reg, ADDRINT imm) {
     if (taintedRegs[reg]) {
         LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=compare origin=imm-reg reg=%s imm=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), REG_StringShort(reg).c_str(), hexaddr(imm).c_str());
-    }
-    else {
+    } else {
         traceIns(insAddr, insDis, routine);
     }
 }
@@ -295,8 +279,7 @@ void compareImmToReg(ADDRINT insAddr, std::string *insDis, char* routine, REG re
 void compareRegToReg(ADDRINT insAddr, std::string *insDis, char* routine, REG reg1, REG reg2) {
     if (taintedRegs[reg1] || taintedRegs[reg2]) {
         LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=compare origin=reg-reg reg1=%s reg2=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), REG_StringShort(reg1).c_str(), REG_StringShort(reg2).c_str());
-    }
-    else {
+    } else {
         traceIns(insAddr, insDis, routine);
     }
 }
@@ -316,8 +299,7 @@ void analyzeComparison(INS ins, const char* routine) {
                 IARG_PTR, reg,
                 IARG_PTR, imm,
                 IARG_END);
-        }
-        else {
+        } else {
             /* reg == imm */
             REG reg = getReg(ins);
             ADDRINT imm = getImm(ins);
@@ -330,8 +312,7 @@ void analyzeComparison(INS ins, const char* routine) {
                 IARG_PTR, imm,
                 IARG_END);
         }
-    }
-    else if (INS_OperandIsReg(ins, 0) && INS_OperandIsReg(ins, 1)) {
+    } else if (INS_OperandIsReg(ins, 0) && INS_OperandIsReg(ins, 1)) {
         /* reg == reg */
         REG reg1 = REG_FullRegName(INS_OperandReg(ins, 0));
         REG reg2 = REG_FullRegName(INS_OperandReg(ins, 1));
@@ -343,8 +324,7 @@ void analyzeComparison(INS ins, const char* routine) {
             IARG_PTR, reg1,
             IARG_PTR, reg2,
             IARG_END);
-    }
-    else {
+    } else {
         LOG_INFO("routine=\"%s\" ins-addr=%s ins-dis=\"%s\"\n", routine, hexaddr(INS_Address(ins)).c_str(), INS_Disassemble(ins).c_str());
     }
 }

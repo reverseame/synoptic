@@ -44,7 +44,7 @@ void replaceConnectFunction(IMG img, RTN rtn) {
 
     PROTO_Free(proto_connect);
 
-    std::cout "[*] server-tracer\t: INFO\t: connect replaced\t: " << IMG_Name(img) << std::endl;
+    std::cout << "[*] server-tracer\t: INFO\t: connect replaced\t\t: " << IMG_Name(img) << std::endl;
 }
 
 int newAcceptFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, int sockfd, struct sockaddr *addr, socklen_t *addrLen) {
@@ -83,7 +83,7 @@ void replaceAcceptFunction(IMG img, RTN rtn) {
 
     PROTO_Free(proto_accept);
 
-    std::cout << "[*] server-tracer\t: INFO\t: accept replaced\t: " << IMG_Name(img) << std::endl;
+    std::cout << "[*] server-tracer\t: INFO\t: accept replaced\t\t: " << IMG_Name(img) << std::endl;
 }
 
 int newCloseFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, int fd) {
@@ -122,7 +122,7 @@ void replaceCloseFunction(IMG img, RTN rtn) {
 
     PROTO_Free(proto_close);
 
-    std::cout << "[*] server-tracer\t: INFO\t: close replaced\t: " << IMG_Name(img) << std::endl;
+    std::cout << "[*] server-tracer\t: INFO\t: close replaced\t\t: " << IMG_Name(img) << std::endl;
 }
 
 ssize_t newTCPActivityFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, const char *functionName, std::set<ADDRINT> &taintedAdddrs, bool(&taintedRegs)[REG_LAST], int sockfd, void *buf, size_t len, int flags) {
@@ -190,7 +190,7 @@ void replaceTCPActivityFunction(IMG img, RTN rtn, const char *functionName, std:
 
     PROTO_Free(proto_tcp_activity);
 
-    std::cout << "[*] server-tracer\t: INFO\t: " << functionName << "replaced\t\t\t: " << IMG_Name(img) << std::endl;
+    std::cout << "[*] server-tracer\t: INFO\t: " << functionName << " replaced\t\t\t: " << IMG_Name(img) << std::endl;
 }
 
 void replaceSignatures(IMG img, std::set<ADDRINT> &taintedAdddrs, bool(&taintedRegs)[REG_LAST]) {
@@ -198,12 +198,12 @@ void replaceSignatures(IMG img, std::set<ADDRINT> &taintedAdddrs, bool(&taintedR
 
     rtn = RTN_FindByName(img, "recv");
     if (RTN_Valid(rtn)) {
-        replaceTCPActivityFunction(img, rtn, taintedAdddrs, taintedRegs);
+        replaceTCPActivityFunction(img, rtn, "recv", taintedAdddrs, taintedRegs);
     }
 
     rtn = RTN_FindByName(img, "send");
     if (RTN_Valid(rtn)) {
-        replaceTCPActivityFunction(img, rtn, taintedAdddrs, taintedRegs);
+        replaceTCPActivityFunction(img, rtn, "send", taintedAdddrs, taintedRegs);
     }
 
     rtn = RTN_FindByName(img, "close");

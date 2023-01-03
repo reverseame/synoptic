@@ -83,3 +83,6 @@ SANITY_SUBSET := $(TEST_TOOL_ROOTS) $(TEST_ROOTS)
 
 # This section contains the build rules for all binaries that have special build rules.
 # See makefile.default.rules for the default build rules.
+
+$(OBJDIR)server_tracer$(PINTOOL_SUFFIX): $(OBJDIR)server_tracer$(OBJ_SUFFIX) $(OBJDIR)log$(OBJ_SUFFIX) $(OBJDIR)utilities$(OBJ_SUFFIX) $(OBJDIR)moduleload_linux$(OBJ_SUFFIX)
+	$(LINKER) $(TOOL_LDFLAGS) $(LINK_EXE)$@ $^ $(TOOL_LPATHS) $(TOOL_LIBS)
