@@ -20,7 +20,13 @@ bool taintedRegs[REG_LAST];
 void fini(INT32 code, void* v) {
     LOG_RAW("-----END TRACE-----\n");
     CLOSELOG();
-    std::cout << "[*] server-tracer\t: INFO\t: Analysis finished" << std::endl;
+    std::cout << std::endl << "[*] server-tracer\t: INFO\t: Analysis finished" << std::endl;
+}
+
+bool followChild(CHILD_PROCESS cProcess, void* userData) {
+    std::cout << "[*] server-tracer\t: INFO\t: New child process spawned" << std::endl;
+
+    return true;
 }
 
 void traceIns(ADDRINT insAddr, std::string *insDis, const char* routine) {
@@ -396,6 +402,7 @@ int usage() {
 
 int main(int argc, char* argv[]) {
     std::cout << "[*] server-tracer\t: INFO\t: Analysis started" << std::endl;
+
     /* Symbol processing */
     PIN_InitSymbols();
 
@@ -415,6 +422,9 @@ int main(int argc, char* argv[]) {
 
     /* Instrument traces */
     TRACE_AddInstrumentFunction(instrumentTrace, 0);
+
+    /* Follow child processes **/
+    PIN_AddFollowChildProcessFunction(followChild, 0);
 
     /* Function called on program exit */
     PIN_AddFiniFunction(fini, 0);

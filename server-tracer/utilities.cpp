@@ -1,7 +1,7 @@
 #include "utilities.h"
 
 #if linux
-#include <sys/syscall.h>
+#include <unistd.h>
 #elif _WIN32 || _WIN64
 #include "windows_include.h"
 #endif
@@ -18,11 +18,20 @@ std::string hexaddr(ADDRINT addr) {
     return ss.str();
 }
 
+std::string getProcessId() {
+    std::stringstream ss;
+#if linux
+    ss << getpid();
+#elif _WIN32 || _WIN64
+    ss << WINDOWS::GetCurrentProcessId();
+#endif
+    return ss.str();
+}
 
 std::string getThreadId() {
     std::stringstream ss;
 #if linux
-    ss << syscall(SYS_gettid);
+    ss << gettid();
 #elif _WIN32 || _WIN64
     ss << WINDOWS::GetCurrentThreadId();
 #endif
