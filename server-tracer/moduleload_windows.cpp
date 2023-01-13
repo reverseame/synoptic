@@ -42,7 +42,7 @@ void replaceConnectFunction(IMG img, RTN rtn) {
 
     PROTO_Free(proto_connect);
 
-    std::cout << "[*] server-tracer\t: INFO\t: connect replaced\t\t: " << IMG_Name(img) << std::endl;
+    std::cerr << "[*] server-tracer\t: DEBUG\t: connect replaced\t\t: " << IMG_Name(img) << std::endl;
 }
 
 WINDOWS::SOCKET WSAAPI newAcceptFunction(AFUNPTR orgFuncPtr, CONTEXT* ctx, WINDOWS::SOCKET s, WINDOWS::sockaddr* addr, WINDOWS::INT* addrlen) {
@@ -81,7 +81,7 @@ void replaceAcceptFunction(IMG img, RTN rtn) {
 
     PROTO_Free(proto_accept);
 
-    std::cout << "[*] server-tracer\t: INFO\t: accept replaced\t\t: " << IMG_Name(img) << std::endl;
+    std::cerr << "[*] server-tracer\t: DEBUG\t: accept replaced\t\t: " << IMG_Name(img) << std::endl;
 }
 
 WINDOWS::INT WSAAPI newCloseSocketFunction(AFUNPTR orgFuncPtr, CONTEXT* ctx, WINDOWS::SOCKET s) {
@@ -114,7 +114,7 @@ void replaceCloseSocketFunction(IMG img, RTN rtn) {
 
     PROTO_Free(proto_closesocket);
 
-    std::cout << "[*] server-tracer\t: INFO\t: closesocket replaced\t\t: " << IMG_Name(img) << std::endl;
+    std::cerr << "[*] server-tracer\t: DEBUG\t: closesocket replaced\t\t: " << IMG_Name(img) << std::endl;
 }
 
 WINDOWS::INT WSAAPI newSend(AFUNPTR orgFuncPtr, CONTEXT* ctx, std::set<ADDRINT> &taintedAdddrs, bool(&taintedRegs)[REG_LAST], WINDOWS::SOCKET s, const WINDOWS::CHAR* buf, WINDOWS::INT len, WINDOWS::INT flags) {
@@ -175,7 +175,7 @@ void replaceSend(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, bool(&taint
 
     PROTO_Free(proto_send);
 
-    std::cout << "[*] server-tracer\t: INFO\t: send replaced\t\t\t: " << IMG_Name(img) << std::endl;
+    std::cerr << "[*] server-tracer\t: DEBUG\t: send replaced\t\t\t: " << IMG_Name(img) << std::endl;
 }
 
 WINDOWS::INT WSAAPI newRecv(AFUNPTR orgFuncPtr, CONTEXT* ctx, std::set<ADDRINT> &taintedAdddrs, WINDOWS::SOCKET s, WINDOWS::CHAR* buf, WINDOWS::INT len, WINDOWS::INT flags) {
@@ -229,7 +229,7 @@ void replaceRecv(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs) {
 
     PROTO_Free(proto_recv);
 
-    std::cout << "[*] server-tracer\t: INFO\t: recv replaced\t\t\t: " << IMG_Name(img) << std::endl;
+    std::cerr << "[*] server-tracer\t: DEBUG\t: recv replaced\t\t\t: " << IMG_Name(img) << std::endl;
 }
 
 void replaceSignatures(IMG img, std::set<ADDRINT> &taintedAdddrs, bool(&taintedRegs)[REG_LAST]) {

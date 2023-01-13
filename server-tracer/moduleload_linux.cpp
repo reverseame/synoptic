@@ -1,6 +1,7 @@
 #include "log.h"
 #include "moduleload_linux.h"
 
+#include <unistd.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 
@@ -22,6 +23,114 @@ bool isNetworkSocket(int fd) {
     return false;
 }
 
+int newSocketFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, int domain, int type, int protocol) {
+    int ret;
+
+    PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
+                                CALLINGSTD_DEFAULT, orgFuncPtr,
+                                NULL,
+                                PIN_PARG(int), &ret,
+                                PIN_PARG(int), domain,
+                                PIN_PARG(int), type,
+                                PIN_PARG(int), protocol,
+                                PIN_PARG_END());
+    if (isNetworkSocket(ret)) {
+        LOG_INFO("action=socket return=%d\n", ret);
+    }
+
+    return ret;
+}
+
+int newAcceptFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, int sockfd, struct sockaddr *addr, socklen_t *addrLen) {
+    int ret;
+
+    PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
+                                CALLINGSTD_DEFAULT, orgFuncPtr,
+                                NULL,
+                                PIN_PARG(int), &ret,
+                                PIN_PARG(int), sockfd,
+                                PIN_PARG(struct sockaddr*), addr,
+                                PIN_PARG(socklen_t*), addrLen,
+                                PIN_PARG_END());
+
+    if (isNetworkSocket(sockfd)) {
+        LOG_INFO("action=accept return=%d\n", ret);
+    }
+
+    return ret;
+}
+
+int newConnectFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, int sockfd, const struct sockaddr *addr, socklen_t addrLen) {
+    int ret;
+
+    PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
+                                CALLINGSTD_DEFAULT, orgFuncPtr,
+                                NULL,
+                                PIN_PARG(int), &ret,
+                                PIN_PARG(int), sockfd,
+                                PIN_PARG(const struct sockaddr*), addr,
+                                PIN_PARG(socklen_t), addrLen,
+                                PIN_PARG_END());
+
+    if (isNetworkSocket(sockfd)) {
+        LOG_INFO("action=connect file-descriptor=%d return=%d\n", sockfd, ret);
+    }
+    
+
+    return ret;
+}
+
+int newCloseFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, int fd) {
+    int ret;
+
+    if (isNetworkSocket(fd)) {
+        LOG_INFO("action=close file-descriptor=%d return=%d\n", fd, ret);
+    }
+
+    PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
+                                CALLINGSTD_DEFAULT, orgFuncPtr,
+                                NULL,
+                                PIN_PARG(int), &ret,
+                                PIN_PARG(int), fd,
+                                PIN_PARG_END());
+
+    return ret;
+}
+
+ssize_t newReadFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAdddrs, int fd, void *buf, size_t count) {
+    ssize_t ret;
+
+    PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
+                                CALLINGSTD_DEFAULT, orgFuncPtr,
+                                NULL,
+                                PIN_PARG(ssize_t), &ret,
+                                PIN_PARG(int), fd,
+                                PIN_PARG(void*), buf,
+                                PIN_PARG(size_t), count,
+                                PIN_PARG_END());
+
+    if (isNetworkSocket(fd)) {
+        LOG_TAINT("action=read file-descriptor=%d buffer-address=%p buffer-size=%ld return=%ld", fd, buf, count, ret);
+
+        if (ret > 0) {
+            LOG_RAW(" buffer-content=");
+            for (int i = 0; i < ret; i++) {
+                LOG_RAW("%02x", ((char* )buf)[i]);
+            }
+            LOG_RAW(" range-start=%p range-end=0x%08lx", buf, (UINT64) buf + ret - 1);
+        }
+
+        LOG_RAW("\n");
+
+        /* Taint all recv data at byte level */
+        for (int i = 0; i < ret; i++) {
+            taintedAdddrs.insert((UINT64) buf + i);
+        }
+    }
+
+    return ret;
+}
+
 ssize_t newRecvFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAdddrs, int sockfd, void *buf, size_t len, int flags) {
     ssize_t ret;
 
@@ -36,7 +145,7 @@ ssize_t newRecvFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &tai
                                 PIN_PARG_END());
 
     if (isNetworkSocket(sockfd)) {
-        LOG_TAINT("action=recv file-descriptor=%d buffer-address=%p buffer-size=%ld content-size=%ld", sockfd, buf, len, ret);
+        LOG_TAINT("action=recv file-descriptor=%d buffer-address=%p buffer-size=%ld return=%ld", sockfd, buf, len, ret);
 
         if (ret > 0) {
             LOG_RAW(" buffer-content=");
@@ -73,7 +182,7 @@ ssize_t newRecvFromFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> 
                                 PIN_PARG_END());
 
     if (isNetworkSocket(sockfd)) {
-        LOG_TAINT("action=recvfrom file-descriptor=%d buffer-address=%p buffer-size=%ld content-size=%ld", sockfd, buf, len, ret);
+        LOG_TAINT("action=recvfrom file-descriptor=%d buffer-address=%p buffer-size=%ld return=%ld", sockfd, buf, len, ret);
 
         if (ret > 0) {
             LOG_RAW(" buffer-content=");
@@ -109,10 +218,45 @@ ssize_t newRecvMsgFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &
     //struct cmsghdr *cmsg;
 
     if (isNetworkSocket(sockfd)) {
-        LOG_TAINT("action=recvmsg file-descriptor=%d content-size=%ld\n", sockfd, ret);
+        LOG_TAINT("action=recvmsg file-descriptor=%d return=%ld\n", sockfd, ret);
         /*for (cmsg = CMSG_FIRSTHDR(msg); cmsg != NULL; cmsg = CMSG_NXTHDR(msg, cmsg)) {
-            std::cout << "msg read" << std::endl;
+            std::cerr << "msg read" << std::endl;
         }*/
+    }
+
+    return ret;
+}
+
+ssize_t newWriteFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAdddrs, bool(&taintedRegs)[REG_LAST], int fd, const void *buf, size_t count) {
+    ssize_t ret;
+
+    PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
+                                CALLINGSTD_DEFAULT, orgFuncPtr,
+                                NULL,
+                                PIN_PARG(ssize_t), &ret,
+                                PIN_PARG(int), fd,
+                                PIN_PARG(const void*), buf,
+                                PIN_PARG(size_t), count,
+                                PIN_PARG_END());
+
+    if (isNetworkSocket(fd)) {
+        LOG_TAINT("action=send file-descriptor=%d buffer-address=%p buffer-size=%ld return=%ld", fd, buf, count, ret);
+
+        if (ret > 0) {
+            LOG_RAW(" buffer-content=");
+            for (int i = 0; i < ret; i++) {
+                LOG_RAW("%02x", ((char* )buf)[i]);
+            }
+            LOG_RAW(" range-start=%p range-end=0x%08lx", buf, (UINT64) buf + ret - 1);
+        }
+
+        LOG_RAW("\n");
+
+        /* Free all tainted data */
+        taintedAdddrs.clear();
+        for (int i = 0; i < REG_LAST; i++) {
+            taintedRegs[i] = false;
+        }
     }
 
     return ret;
@@ -132,7 +276,7 @@ ssize_t newSendFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &tai
                                 PIN_PARG_END());
 
     if (isNetworkSocket(sockfd)) {
-        LOG_TAINT("action=send file-descriptor=%d buffer-address=%p buffer-size=%ld content-size=%ld", sockfd, buf, len, ret);
+        LOG_TAINT("action=send file-descriptor=%d buffer-address=%p buffer-size=%ld return=%ld", sockfd, buf, len, ret);
 
         if (ret > 0) {
             LOG_RAW(" buffer-content=");
@@ -170,7 +314,7 @@ ssize_t newSendToFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &t
                                 PIN_PARG_END());
 
     if (isNetworkSocket(sockfd)) {
-        LOG_TAINT("action=sendto file-descriptor=%d buffer-address=%p buffer-size=%ld content-size=%ld", sockfd, buf, len, ret);
+        LOG_TAINT("action=sendto file-descriptor=%d buffer-address=%p buffer-size=%ld return=%ld", sockfd, buf, len, ret);
 
         if (ret > 0) {
             LOG_RAW(" buffer-content=");
@@ -206,9 +350,9 @@ ssize_t newSendMsgFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &
     //struct cmsghdr *cmsg;
 
     if (isNetworkSocket(sockfd)) {
-        LOG_TAINT("action=sendmsg file-descriptor=%d content-size=%ld\n", sockfd, ret);
+        LOG_TAINT("action=sendmsg file-descriptor=%d return=%ld\n", sockfd, ret);
         /*for (cmsg = CMSG_FIRSTHDR(msg); cmsg != NULL; cmsg = CMSG_NXTHDR(msg, cmsg)) {
-            std::cout << "msg read" << std::endl;
+            std::cerr << "msg read" << std::endl;
         }*/
         /* Free all tainted data */
         taintedAdddrs.clear();
@@ -220,60 +364,101 @@ ssize_t newSendMsgFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &
     return ret;
 }
 
-int newCloseFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, int fd) {
-    int ret;
+void replaceSocketFunction(IMG img, RTN rtn) {
+    PROTO proto_socket = PROTO_Allocate(PIN_PARG(int), CALLINGSTD_DEFAULT,
+                                        NULL,
+                                        PIN_PARG(int),      // domain
+                                        PIN_PARG(int),      // type
+                                        PIN_PARG(int),      // protocol
+                                        PIN_PARG_END());
 
-    if (isNetworkSocket(fd)) {
-        LOG_INFO("action=close file-descriptor=%d\n", fd);
-    }
+    RTN_ReplaceSignature(rtn, AFUNPTR(newSocketFunction),
+                                IARG_PROTOTYPE, proto_socket,
+                                IARG_ORIG_FUNCPTR,
+                                IARG_CONTEXT,
+                                IARG_FUNCARG_ENTRYPOINT_VALUE, 0,
+                                IARG_FUNCARG_ENTRYPOINT_VALUE, 1,
+                                IARG_FUNCARG_ENTRYPOINT_VALUE, 2,
+                                IARG_END);
 
-    PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
-                                CALLINGSTD_DEFAULT, orgFuncPtr,
-                                NULL,
-                                PIN_PARG(int), &ret,
-                                PIN_PARG(int), fd,
-                                PIN_PARG_END());
-
-    return ret;
+    PROTO_Free(proto_socket);
 }
 
-int newAcceptFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, int sockfd, struct sockaddr *addr, socklen_t *addrLen) {
-    int ret;
+void replaceAcceptFunction(IMG img, RTN rtn) {
+    PROTO proto_accept = PROTO_Allocate(PIN_PARG(int), CALLINGSTD_DEFAULT,
+                                        NULL,
+                                        PIN_PARG(int),              // sockfd
+                                        PIN_PARG(struct sockaddr*), // addr
+                                        PIN_PARG(socklen_t*),       // addrlen
+                                        PIN_PARG_END());
 
-    PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
-                                CALLINGSTD_DEFAULT, orgFuncPtr,
-                                NULL,
-                                PIN_PARG(int), &ret,
-                                PIN_PARG(int), sockfd,
-                                PIN_PARG(struct sockaddr*), addr,
-                                PIN_PARG(socklen_t*), addrLen,
-                                PIN_PARG_END());
+    RTN_ReplaceSignature(rtn, AFUNPTR(newAcceptFunction),
+                                IARG_PROTOTYPE, proto_accept,
+                                IARG_ORIG_FUNCPTR,
+                                IARG_CONTEXT,
+                                IARG_FUNCARG_ENTRYPOINT_VALUE, 0,
+                                IARG_FUNCARG_ENTRYPOINT_VALUE, 1,
+                                IARG_FUNCARG_ENTRYPOINT_VALUE, 2,
+                                IARG_END);
 
-    if (isNetworkSocket(sockfd)) {
-        LOG_INFO("action=accept file-descriptor=%d\n", ret);
-    }
-
-    return ret;
+    PROTO_Free(proto_accept);
 }
 
-int newConnectFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, int sockfd, const struct sockaddr *addr, socklen_t addrLen) {
-    int ret;
+void replaceConnectFunction(IMG img, RTN rtn) {
+    PROTO proto_connect = PROTO_Allocate(PIN_PARG(int), CALLINGSTD_DEFAULT,
+                                        NULL,
+                                        PIN_PARG(int),                      // sockfd
+                                        PIN_PARG(const struct sockaddr*),   // addr
+                                        PIN_PARG(socklen_t),                // addrlen
+                                        PIN_PARG_END());
 
-    PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
-                                CALLINGSTD_DEFAULT, orgFuncPtr,
-                                NULL,
-                                PIN_PARG(int), &ret,
-                                PIN_PARG(int), sockfd,
-                                PIN_PARG(const struct sockaddr*), addr,
-                                PIN_PARG(socklen_t), addrLen,
-                                PIN_PARG_END());
+    RTN_ReplaceSignature(rtn, AFUNPTR(newConnectFunction),
+                                IARG_PROTOTYPE, proto_connect,
+                                IARG_ORIG_FUNCPTR,
+                                IARG_CONTEXT,
+                                IARG_FUNCARG_ENTRYPOINT_VALUE, 0,
+                                IARG_FUNCARG_ENTRYPOINT_VALUE, 1,
+                                IARG_FUNCARG_ENTRYPOINT_VALUE, 2,
+                                IARG_END);
 
-    if (isNetworkSocket(sockfd)) {
-        LOG_INFO("action=connect file-descriptor=%d\n", sockfd);
-    }
-    
+    PROTO_Free(proto_connect);
+}
 
-    return ret;
+void replaceCloseFunction(IMG img, RTN rtn) {
+    PROTO proto_close = PROTO_Allocate(PIN_PARG(int), CALLINGSTD_DEFAULT,
+                                        NULL,
+                                        PIN_PARG(int),      // fd
+                                        PIN_PARG_END());
+
+    RTN_ReplaceSignature(rtn, AFUNPTR(newCloseFunction),
+                                IARG_PROTOTYPE, proto_close,
+                                IARG_ORIG_FUNCPTR,
+                                IARG_CONTEXT,
+                                IARG_FUNCARG_ENTRYPOINT_VALUE, 0,
+                                IARG_END);
+
+    PROTO_Free(proto_close);
+}
+
+void replaceReadFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs) {
+    PROTO proto_tcp_activity = PROTO_Allocate(PIN_PARG(ssize_t), CALLINGSTD_DEFAULT,
+                                        NULL,
+                                        PIN_PARG(int),      // fd
+                                        PIN_PARG(void*),    // buf
+                                        PIN_PARG(size_t),   // count
+                                        PIN_PARG_END());
+
+    RTN_ReplaceSignature(rtn, AFUNPTR(newReadFunction),
+                                IARG_PROTOTYPE, proto_tcp_activity,
+                                IARG_ORIG_FUNCPTR,
+                                IARG_CONTEXT,
+                                IARG_PTR, &taintedAdddrs,
+                                IARG_FUNCARG_ENTRYPOINT_VALUE, 0,
+                                IARG_FUNCARG_ENTRYPOINT_VALUE, 1,
+                                IARG_FUNCARG_ENTRYPOINT_VALUE, 2,
+                                IARG_END);
+
+    PROTO_Free(proto_tcp_activity);
 }
 
 void replaceRecvFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs) {
@@ -297,8 +482,6 @@ void replaceRecvFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs) {
                                 IARG_END);
 
     PROTO_Free(proto_tcp_activity);
-
-    std::cout << "[*] server-tracer\t: INFO\t: recv replaced\t\t\t: " << IMG_Name(img) << std::endl;
 }
 
 void replaceRecvFromFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs) {
@@ -326,8 +509,6 @@ void replaceRecvFromFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs)
                                 IARG_END);
 
     PROTO_Free(proto_tcp_activity);
-
-    std::cout << "[*] server-tracer\t: INFO\t: recvfrom replaced\t\t\t: " << IMG_Name(img) << std::endl;
 }
 
 void replaceRecvMsgFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs) {
@@ -349,8 +530,28 @@ void replaceRecvMsgFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs) 
                                 IARG_END);
 
     PROTO_Free(proto_tcp_activity);
+}
 
-    std::cout << "[*] server-tracer\t: INFO\t: recvmsg replaced\t\t\t: " << IMG_Name(img) << std::endl;
+void replaceWriteFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, bool(&taintedRegs)[REG_LAST]) {
+    PROTO proto_tcp_activity = PROTO_Allocate(PIN_PARG(ssize_t), CALLINGSTD_DEFAULT,
+                                        NULL,
+                                        PIN_PARG(int),          // fd
+                                        PIN_PARG(const void*),  // buf
+                                        PIN_PARG(size_t),       // count
+                                        PIN_PARG_END());
+
+    RTN_ReplaceSignature(rtn, AFUNPTR(newWriteFunction),
+                                IARG_PROTOTYPE, proto_tcp_activity,
+                                IARG_ORIG_FUNCPTR,
+                                IARG_CONTEXT,
+                                IARG_PTR, &taintedAdddrs,
+                                IARG_PTR, &taintedRegs,
+                                IARG_FUNCARG_ENTRYPOINT_VALUE, 0,
+                                IARG_FUNCARG_ENTRYPOINT_VALUE, 1,
+                                IARG_FUNCARG_ENTRYPOINT_VALUE, 2,
+                                IARG_END);
+
+    PROTO_Free(proto_tcp_activity);
 }
 
 void replaceSendFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, bool(&taintedRegs)[REG_LAST]) {
@@ -375,8 +576,6 @@ void replaceSendFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, boo
                                 IARG_END);
 
     PROTO_Free(proto_tcp_activity);
-
-    std::cout << "[*] server-tracer\t: INFO\t: send replaced\t\t\t: " << IMG_Name(img) << std::endl;
 }
 
 void replaceSendToFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, bool(&taintedRegs)[REG_LAST]) {
@@ -405,8 +604,6 @@ void replaceSendToFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, b
                                 IARG_END);
 
     PROTO_Free(proto_tcp_activity);
-
-    std::cout << "[*] server-tracer\t: INFO\t: sendto replaced\t\t\t: " << IMG_Name(img) << std::endl;
 }
 
 void replaceSendMsgFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, bool(&taintedRegs)[REG_LAST]) {
@@ -429,117 +626,104 @@ void replaceSendMsgFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, 
                                 IARG_END);
 
     PROTO_Free(proto_tcp_activity);
-
-    std::cout << "[*] server-tracer\t: INFO\t: sendmsg replaced\t\t\t: " << IMG_Name(img) << std::endl;
 }
 
-void replaceCloseFunction(IMG img, RTN rtn) {
-    PROTO proto_close = PROTO_Allocate(PIN_PARG(int), CALLINGSTD_DEFAULT,
-                                        NULL,
-                                        PIN_PARG(int),      // fd
-                                        PIN_PARG_END());
-
-    RTN_ReplaceSignature(rtn, AFUNPTR(newCloseFunction),
-                                IARG_PROTOTYPE, proto_close,
-                                IARG_ORIG_FUNCPTR,
-                                IARG_CONTEXT,
-                                IARG_FUNCARG_ENTRYPOINT_VALUE, 0,
-                                IARG_END);
-
-    PROTO_Free(proto_close);
-
-    std::cout << "[*] server-tracer\t: INFO\t: close replaced\t\t: " << IMG_Name(img) << std::endl;
-}
-
-void replaceAcceptFunction(IMG img, RTN rtn) {
-    PROTO proto_accept = PROTO_Allocate(PIN_PARG(int), CALLINGSTD_DEFAULT,
-                                        NULL,
-                                        PIN_PARG(int),              // sockfd
-                                        PIN_PARG(struct sockaddr*), // addr
-                                        PIN_PARG(socklen_t*),       // addrlen
-                                        PIN_PARG_END());
-
-    RTN_ReplaceSignature(rtn, AFUNPTR(newAcceptFunction),
-                                IARG_PROTOTYPE, proto_accept,
-                                IARG_ORIG_FUNCPTR,
-                                IARG_CONTEXT,
-                                IARG_FUNCARG_ENTRYPOINT_VALUE, 0,
-                                IARG_FUNCARG_ENTRYPOINT_VALUE, 1,
-                                IARG_FUNCARG_ENTRYPOINT_VALUE, 2,
-                                IARG_END);
-
-    PROTO_Free(proto_accept);
-
-    std::cout << "[*] server-tracer\t: INFO\t: accept replaced\t\t: " << IMG_Name(img) << std::endl;
-}
-
-void replaceConnectFunction(IMG img, RTN rtn) {
-    PROTO proto_connect = PROTO_Allocate(PIN_PARG(int), CALLINGSTD_DEFAULT,
-                                        NULL,
-                                        PIN_PARG(int),                      // sockfd
-                                        PIN_PARG(const struct sockaddr*),   // addr
-                                        PIN_PARG(socklen_t),                // addrlen
-                                        PIN_PARG_END());
-
-    RTN_ReplaceSignature(rtn, AFUNPTR(newConnectFunction),
-                                IARG_PROTOTYPE, proto_connect,
-                                IARG_ORIG_FUNCPTR,
-                                IARG_CONTEXT,
-                                IARG_FUNCARG_ENTRYPOINT_VALUE, 0,
-                                IARG_FUNCARG_ENTRYPOINT_VALUE, 1,
-                                IARG_FUNCARG_ENTRYPOINT_VALUE, 2,
-                                IARG_END);
-
-    PROTO_Free(proto_connect);
-
-    std::cout << "[*] server-tracer\t: INFO\t: connect replaced\t\t: " << IMG_Name(img) << std::endl;
-}
-
-void replaceSignatures(IMG img, std::set<ADDRINT> &taintedAdddrs, bool(&taintedRegs)[REG_LAST]) {
+void replaceSignatures(bool KnobDebug, IMG img, std::set<ADDRINT> &taintedAdddrs, bool(&taintedRegs)[REG_LAST]) {
     RTN rtn;
 
-    rtn = RTN_FindByName(img, "recv");
+    rtn = RTN_FindByName(img, "socket");
     if (RTN_Valid(rtn)) {
-        replaceRecvFunction(img, rtn, taintedAdddrs);
-    }
-
-    rtn = RTN_FindByName(img, "recvfrom");
-    if (RTN_Valid(rtn)) {
-        replaceRecvFromFunction(img, rtn, taintedAdddrs);
-    }
-
-    rtn = RTN_FindByName(img, "recvmsg");
-    if (RTN_Valid(rtn)) {
-        replaceRecvMsgFunction(img, rtn, taintedAdddrs);
-    }
-
-    rtn = RTN_FindByName(img, "send");
-    if (RTN_Valid(rtn)) {
-        replaceSendFunction(img, rtn, taintedAdddrs, taintedRegs);
-    }
-
-    rtn = RTN_FindByName(img, "sendto");
-    if (RTN_Valid(rtn)) {
-        replaceSendToFunction(img, rtn, taintedAdddrs, taintedRegs);
-    }
-
-    rtn = RTN_FindByName(img, "sendmsg");
-    if (RTN_Valid(rtn)) {
-        replaceSendMsgFunction(img, rtn, taintedAdddrs, taintedRegs);
-    }
-
-    rtn = RTN_FindByName(img, "close");
-    if (RTN_Valid(rtn)) {
-        replaceCloseFunction(img, rtn);
+        replaceSocketFunction(img, rtn);
+        if (KnobDebug) {
+            std::cerr << "[*] server-tracer\t: DEBUG\t: socket replaced\t\t: " << IMG_Name(img) << std::endl;
+        }
     }
 
     rtn = RTN_FindByName(img, "accept");
     if (RTN_Valid(rtn)) {
         replaceAcceptFunction(img, rtn);
+        if (KnobDebug) {
+            std::cerr << "[*] server-tracer\t: DEBUG\t: accept replaced\t\t: " << IMG_Name(img) << std::endl;
+        }
     }
 
     rtn = RTN_FindByName(img, "connect");
     if (RTN_Valid(rtn)) {
         replaceConnectFunction(img, rtn);
+        if (KnobDebug) {
+            std::cerr << "[*] server-tracer\t: DEBUG\t: connect replaced\t\t: " << IMG_Name(img) << std::endl;
+        }
+    }
+
+    rtn = RTN_FindByName(img, "close");
+    if (RTN_Valid(rtn)) {
+        replaceCloseFunction(img, rtn);
+        if (KnobDebug) {
+            std::cerr << "[*] server-tracer\t: DEBUG\t: close replaced\t\t: " << IMG_Name(img) << std::endl;
+        }
+    }
+
+    rtn = RTN_FindByName(img, "read");
+    if (RTN_Valid(rtn)) {
+        replaceReadFunction(img, rtn, taintedAdddrs);
+        if (KnobDebug) {
+            std::cerr << "[*] server-tracer\t: DEBUG\t: read replaced\t\t\t: " << IMG_Name(img) << std::endl;
+        }
+    }
+
+    rtn = RTN_FindByName(img, "recv");
+    if (RTN_Valid(rtn)) {
+        replaceRecvFunction(img, rtn, taintedAdddrs);
+        if (KnobDebug) {
+            std::cerr << "[*] server-tracer\t: DEBUG\t: recv replaced\t\t\t: " << IMG_Name(img) << std::endl;
+        }
+    }
+
+    rtn = RTN_FindByName(img, "recvfrom");
+    if (RTN_Valid(rtn)) {
+        replaceRecvFromFunction(img, rtn, taintedAdddrs);
+        if (KnobDebug) {
+            std::cerr << "[*] server-tracer\t: DEBUG\t: recvfrom replaced\t\t: " << IMG_Name(img) << std::endl;
+        }
+    }
+
+    rtn = RTN_FindByName(img, "recvmsg");
+    if (RTN_Valid(rtn)) {
+        replaceRecvMsgFunction(img, rtn, taintedAdddrs);
+        if (KnobDebug) {
+            std::cerr << "[*] server-tracer\t: DEBUG\t: recvmsg replaced\t\t: " << IMG_Name(img) << std::endl;
+        }
+    }
+
+    rtn = RTN_FindByName(img, "write");
+    if (RTN_Valid(rtn)) {
+        replaceWriteFunction(img, rtn, taintedAdddrs, taintedRegs);
+        if (KnobDebug) {
+            std::cerr << "[*] server-tracer\t: DEBUG\t: write replaced\t\t: " << IMG_Name(img) << std::endl;
+        }
+    }
+
+    rtn = RTN_FindByName(img, "send");
+    if (RTN_Valid(rtn)) {
+        replaceSendFunction(img, rtn, taintedAdddrs, taintedRegs);
+        if (KnobDebug) {
+            std::cerr << "[*] server-tracer\t: DEBUG\t: send replaced\t\t\t: " << IMG_Name(img) << std::endl;
+        }
+    }
+
+    rtn = RTN_FindByName(img, "sendto");
+    if (RTN_Valid(rtn)) {
+        replaceSendToFunction(img, rtn, taintedAdddrs, taintedRegs);
+        if (KnobDebug) {
+            std::cerr << "[*] server-tracer\t: DEBUG\t: sendto replaced\t\t: " << IMG_Name(img) << std::endl;
+        }
+    }
+
+    rtn = RTN_FindByName(img, "sendmsg");
+    if (RTN_Valid(rtn)) {
+        replaceSendMsgFunction(img, rtn, taintedAdddrs, taintedRegs);
+        if (KnobDebug) {
+            std::cerr << "[*] server-tracer\t: DEBUG\t: sendmsg replaced\t\t: " << IMG_Name(img) << std::endl;
+        }
     }
 }

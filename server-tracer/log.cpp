@@ -11,8 +11,11 @@ Log* Log::getInstance() {
 	return instance;
 }
 
-Log::Log(void) {
-	logfile = fopen(LOG_FILENAME, "a");
+Log::Log(void) {}
+
+void Log::openLogFile(const char *filename) {
+	logfilename = filename;
+	logfile = fopen(logfilename, "a");
 }
 
 void Log::closeLogfile() {
@@ -22,4 +25,8 @@ void Log::closeLogfile() {
 
 FILE* Log::getLogFile() {
 	return logfile;
+}
+
+const char* Log::getLogFilename() {
+	return logfilename;
 }

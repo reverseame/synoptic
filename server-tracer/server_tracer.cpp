@@ -2,6 +2,7 @@
 
 #include <set>
 #include <iostream>
+#include <errno.h>
 
 #include "log.h"
 #include "utilities.h"
@@ -12,29 +13,50 @@
 #include "moduleload_windows.h"
 #endif
 
+/* Give up taint analysis after TAINT_INS_PROXIMITY instructions */
+int INS_COUNT = 0;
+int TAINT_INS_PROXIMITY = 1000;
+
 /* Keep track of tainted addresses */
 std::set<ADDRINT> taintedAdddrs;
 /* Keep track of tainted registers */
 bool taintedRegs[REG_LAST];
 
-void fini(INT32 code, void* v) {
-    LOG_RAW("-----END TRACE-----\n");
-    CLOSELOG();
-    std::cout << std::endl << "[*] server-tracer\t: INFO\t: Analysis finished" << std::endl;
+/* Command line options */
+KNOB<bool> KnobDebug(KNOB_MODE_WRITEONCE, "pintool", "debug", "0", "Enable debug messages");
+KNOB<std::string> KnobLogFile(KNOB_MODE_WRITEONCE, "pintool", "log", "trace.log", "Absolute path of log filename (default to trace.log in current directory)");
+
+void fini(INT32 code, VOID *v) {
+    char buffer[256];
+    strerror_r(errno, buffer, 256);
+    LOG_INFO("action=process-end return=%x return-string=\"%s\" errno=%x\n", code, buffer, errno);
+    //CLOSELOG();       // Rely on SO closing file during normal existing. Not calling close prevents several processes calling common log file
+    if (KnobDebug) {
+        std::cerr << "[*] server-tracer\t: DEBUG\t: Analysis finished (PID: " << getProcessId() << ")" << std::endl;
+    }
 }
 
-bool followChild(CHILD_PROCESS cProcess, void* userData) {
-    std::cout << "[*] server-tracer\t: INFO\t: New child process spawned" << std::endl;
-
+bool followChild(CHILD_PROCESS cProcess, VOID *val) {
+    if (KnobDebug) {
+        std::cerr << "[*] server-tracer\t: DEBUG\t: New child process spawned" << std::endl;
+    }
+    /* true value to inject PIN into child process */
     return true;
 }
 
-void traceIns(ADDRINT insAddr, std::string *insDis, const char* routine) {
+void followForkInChild(THREADID threadid, const CONTEXT *ctxt, VOID *v) {
+    if (KnobDebug) {
+        std::cerr << "[*] server-tracer\t: DEBUG\t: New process forked (PID: " << getProcessId() << ")" << std::endl;
+    }
+    LOG_INFO("action=process-forked\n");
+}
+
+void traceIns(ADDRINT insAddr, std::string *insDis, const char *routine) {
     LOG_INFO("routine=\"%s\" ins-addr=%s ins-dis=\"%s\"\n", routine, hexaddr(insAddr).c_str(), insDis->c_str());
 }
 
 /* Register copied to memory */
-void regToAddr(ADDRINT insAddr, std::string *insDis, char* routine, ADDRINT reg_r, ADDRINT mem_w) {
+void regToAddr(ADDRINT insAddr, std::string *insDis, char *routine, ADDRINT reg_r, ADDRINT mem_w) {
     if (taintedRegs[reg_r]) {
         LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=taint-addr origin=reg addr=%s reg=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), hexaddr(mem_w).c_str(), REG_StringShort((REG)reg_r).c_str());
         taintedAdddrs.insert(mem_w);
@@ -51,19 +73,21 @@ void regToAddr(ADDRINT insAddr, std::string *insDis, char* routine, ADDRINT reg_
 }
 
 /* Memory copied to register */
-void addrToReg(ADDRINT insAddr, std::string *insDis, char* routine, ADDRINT mem_r, ADDRINT reg_w) {
+void addrToReg(ADDRINT insAddr, std::string *insDis, char *routine, ADDRINT mem_r, ADDRINT reg_w) {
     if (taintedAdddrs.count(mem_r)) {
         LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=taint-reg origin=addr reg=%s addr=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), REG_StringShort((REG)reg_w).c_str(), hexaddr(mem_r).c_str());
         taintedRegs[reg_w] = true;
-    } else {
+    } else if (taintedRegs[reg_w]) {
         /* mem is clean -> reg is cleaned */
         LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=free-reg origin=addr reg=%s addr=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), REG_StringShort((REG)reg_w).c_str(), hexaddr(mem_r).c_str());
         taintedRegs[reg_w] = false;
+    } else {
+        traceIns(insAddr, insDis, routine);
     }
 }
 
 /* Reg copied to another reg */
-void regToReg(ADDRINT insAddr, std::string *insDis, char* routine, ADDRINT reg_r, ADDRINT reg_w) {
+void regToReg(ADDRINT insAddr, std::string *insDis, char *routine, ADDRINT reg_r, ADDRINT reg_w) {
     if (taintedRegs[reg_r]) {
         LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=taint-reg origin=reg reg-taint=%s reg-origin=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), REG_StringShort((REG)reg_w).c_str(), REG_StringShort((REG)reg_r).c_str());
         taintedRegs[reg_w] = true;
@@ -76,7 +100,7 @@ void regToReg(ADDRINT insAddr, std::string *insDis, char* routine, ADDRINT reg_r
 }
 
 /* Immediate copied to a register */
-void immToReg(ADDRINT insAddr, std::string *insDis, char* routine, ADDRINT reg_w) {
+void immToReg(ADDRINT insAddr, std::string *insDis, char *routine, ADDRINT reg_w) {
     if (taintedRegs[reg_w]) {
         LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=free-reg reg=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), REG_StringShort((REG)reg_w).c_str());
         taintedRegs[reg_w] = false;
@@ -86,7 +110,7 @@ void immToReg(ADDRINT insAddr, std::string *insDis, char* routine, ADDRINT reg_w
 }
 
 /* Immediate copied to memory address */
-void immToAddr(ADDRINT insAddr, std::string *insDis, char* routine, ADDRINT mem_w) {
+void immToAddr(ADDRINT insAddr, std::string *insDis, char *routine, ADDRINT mem_w) {
     /* if mem is not tainted nothing to do */
     if (taintedAdddrs.count(mem_w)) {
         LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=free-addr addr=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), hexaddr(mem_w).c_str());
@@ -165,7 +189,7 @@ REG getMemoryReg(INS ins) {
 }
 
 /* Print in/direct call instruction with  */
-void traceCall(ADDRINT insAddr, std::string *insDis, char* routine, char* callType, ADDRINT targetAddr) {
+void traceCall(ADDRINT insAddr, std::string *insDis, char *routine, char *callType, ADDRINT targetAddr) {
     std::string target = RTN_FindNameByAddress(targetAddr);
 
     if (target.empty()) {
@@ -176,7 +200,7 @@ void traceCall(ADDRINT insAddr, std::string *insDis, char* routine, char* callTy
 }
 
 /* Analyzes mov instructions */
-void propagateTaint(INS ins, const char* routine) {
+void propagateTaint(INS ins, const char *routine) {
     if (hasImm(ins)) {
         /* [addr] <- imm */
         if (INS_IsMemoryWrite(ins)) {
@@ -237,7 +261,7 @@ void propagateTaint(INS ins, const char* routine) {
     }
 }
 
-void analyzeCall(INS ins, const char* routine) {
+void analyzeCall(INS ins, const char *routine) {
     /* call addr */
     if (INS_IsDirectControlFlow(ins)) {
         INS_InsertCall(
@@ -264,7 +288,7 @@ void analyzeCall(INS ins, const char* routine) {
 }
 
 /* Immediate compared to memory address */
-void compareImmToAddr(ADDRINT insAddr, std::string *insDis, char* routine, ADDRINT mem_r, REG reg_r, ADDRINT imm) {
+void compareImmToAddr(ADDRINT insAddr, std::string *insDis, char *routine, ADDRINT mem_r, REG reg_r, ADDRINT imm) {
     if (taintedAdddrs.count(mem_r)) {
         LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=compare origin=imm-addr addr=%s reg=%s imm=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), hexaddr(mem_r).c_str(), REG_StringShort(reg_r).c_str(), hexaddr(imm).c_str());
     } else {
@@ -273,7 +297,7 @@ void compareImmToAddr(ADDRINT insAddr, std::string *insDis, char* routine, ADDRI
 }
 
 /* Immediate compared to register */
-void compareImmToReg(ADDRINT insAddr, std::string *insDis, char* routine, REG reg, ADDRINT imm) {
+void compareImmToReg(ADDRINT insAddr, std::string *insDis, char *routine, REG reg, ADDRINT imm) {
     if (taintedRegs[reg]) {
         LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=compare origin=imm-reg reg=%s imm=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), REG_StringShort(reg).c_str(), hexaddr(imm).c_str());
     } else {
@@ -282,7 +306,7 @@ void compareImmToReg(ADDRINT insAddr, std::string *insDis, char* routine, REG re
 }
 
 /* Register compared to register */
-void compareRegToReg(ADDRINT insAddr, std::string *insDis, char* routine, REG reg1, REG reg2) {
+void compareRegToReg(ADDRINT insAddr, std::string *insDis, char *routine, REG reg1, REG reg2) {
     if (taintedRegs[reg1] || taintedRegs[reg2]) {
         LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=compare origin=reg-reg reg1=%s reg2=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), REG_StringShort(reg1).c_str(), REG_StringShort(reg2).c_str());
     } else {
@@ -290,7 +314,7 @@ void compareRegToReg(ADDRINT insAddr, std::string *insDis, char* routine, REG re
     }
 }
 
-void analyzeComparison(INS ins, const char* routine) {
+void analyzeComparison(INS ins, const char *routine) {
     if (hasImm(ins)) {
         /* [addr] == imm */
         if (INS_IsMemoryRead(ins)) {
@@ -341,7 +365,7 @@ void analyzeComparison(INS ins, const char* routine) {
 * and propogate taint at run-time if needed
 * This function is called every time a new trace is encountered.
 */
-void instrumentTrace(TRACE trace, void* v) {
+void instrumentTrace(TRACE trace, void *v) {
     /* Return inmediatly if there are no buffers of interest */
     if (taintedAdddrs.empty()) {
         return;
@@ -353,13 +377,13 @@ void instrumentTrace(TRACE trace, void* v) {
         return;
     }
 
-    const char* routine = "unknown";
+    const char *routine = "unknown";
     if (RTN_Valid(TRACE_Rtn(trace))) {
         routine = RTN_Name(TRACE_Rtn(trace)).c_str();
     }
 
     for (BBL bbl = TRACE_BblHead(trace); BBL_Valid(bbl); bbl = BBL_Next(bbl)) {
-        for (INS ins = BBL_InsHead(bbl); INS_Valid(ins); ins = INS_Next(ins)) {
+        for (INS ins = BBL_InsHead(bbl); INS_Valid(ins) && INS_COUNT < TAINT_INS_PROXIMITY; ins = INS_Next(ins), INS_COUNT++) {
             if ((INS_Opcode(ins) >= XED_ICLASS_MOV) && (INS_Opcode(ins) <= XED_ICLASS_MOVZX)) {
                 propagateTaint(ins, routine);
             } else if (INS_IsCall(ins)) {
@@ -378,31 +402,41 @@ void instrumentTrace(TRACE trace, void* v) {
             }
         }
     }
+
+    /* Free all tainted data */
+    if (INS_COUNT >= TAINT_INS_PROXIMITY) {
+        taintedAdddrs.clear();
+        for (int i = 0; i < REG_LAST; i++) {
+            taintedRegs[i] = false;
+        }
+
+        INS_COUNT = 0;
+    }
 }
 
-void moduleLoad(IMG img, void* v) {
+void moduleLoad(IMG img, void *v) {
     ADDRINT image_base = IMG_LowAddress(img);
-    std::cout << "[*] server-tracer\t: INFO\t: Module loaded\t\t\t: " << IMG_Name(img) << " (" << hexaddr(image_base) << ")" << std::endl;
+    if (KnobDebug) {
+        std::cerr << "[*] server-tracer\t: DEBUG\t: Module loaded\t\t\t: " << IMG_Name(img) << " (" << hexaddr(image_base) << ")" << std::endl;
+    }
 
     /* Avoid to hook the main executable */
     if (IMG_IsMainExecutable(img)) {
-        LOG_INFO("action=relocate image-base=%s\n", hexaddr(image_base).c_str());
+        LOG_INFO("action=relocate image-base=%s main-executable=%s\n", hexaddr(image_base).c_str(), IMG_Name(img).c_str());
         return;
     }
 
-    replaceSignatures(img, taintedAdddrs, taintedRegs);
+    replaceSignatures(KnobDebug, img, taintedAdddrs, taintedRegs);
 }
 
 int usage() {
-    std::cout << "This Pintool aims to infer the protocol message format and protocol finite state machine of an unknown protocol" << std::endl;
-    std::cout << KNOB_BASE::StringKnobSummary() << std::endl;
+    std::cerr << "This Pintool aims to infer the protocol message format and protocol finite state machine of an unknown protocol" << std::endl;
+    std::cerr << KNOB_BASE::StringKnobSummary() << std::endl;
 
     return -1;
 }
 
-int main(int argc, char* argv[]) {
-    std::cout << "[*] server-tracer\t: INFO\t: Analysis started" << std::endl;
-
+int main(int argc, char *argv[]) {
     /* Symbol processing */
     PIN_InitSymbols();
 
@@ -411,8 +445,14 @@ int main(int argc, char* argv[]) {
         return usage();
     }
 
-    std::cout << "[*] server-tracer\t: INFO\t: log file\t\t\t: " << LOG_FILENAME << std::endl;
-    LOG_RAW("-----BEGIN TRACE-----\n");
+    if (KnobDebug) {
+        std::cerr << "[*] server-tracer\t: DEBUG\t: Analysis started (PID: " << getProcessId() << ")" << std::endl;
+        std::cerr << "[*] server-tracer\t: DEBUG\t: log file\t\t\t: " << KnobLogFile.Value() << std::endl;
+    }
+
+    OPENLOG(KnobLogFile.Value().c_str());
+
+    LOG_INFO("action=process-begin\n");
 
     /* Disassembly syntax to Intel format */
     PIN_SetSyntaxIntel();
@@ -423,8 +463,11 @@ int main(int argc, char* argv[]) {
     /* Instrument traces */
     TRACE_AddInstrumentFunction(instrumentTrace, 0);
 
-    /* Follow child processes **/
+    /* Follow child processes */
     PIN_AddFollowChildProcessFunction(followChild, 0);
+
+    /* Follow after fork function in the child process */
+    PIN_AddForkFunction(FPOINT_AFTER_IN_CHILD, followForkInChild, 0);
 
     /* Function called on program exit */
     PIN_AddFiniFunction(fini, 0);
