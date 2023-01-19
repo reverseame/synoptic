@@ -2,7 +2,6 @@
 
 #include <set>
 #include <iostream>
-#include <errno.h>
 
 #include "log.h"
 #include "utilities.h"
@@ -12,10 +11,6 @@
 #elif _WIN32 || _WIN64
 #include "moduleload_windows.h"
 #endif
-
-/* Give up taint analysis after TAINT_INS_PROXIMITY instructions */
-int INS_COUNT = 0;
-int TAINT_INS_PROXIMITY = 1000;
 
 /* Keep track of tainted addresses */
 std::set<ADDRINT> taintedAdddrs;
@@ -27,9 +22,7 @@ KNOB<bool> KnobDebug(KNOB_MODE_WRITEONCE, "pintool", "debug", "0", "Enable debug
 KNOB<std::string> KnobLogFile(KNOB_MODE_WRITEONCE, "pintool", "log", "trace.log", "Absolute path of log filename (default to trace.log in current directory)");
 
 void fini(INT32 code, VOID *v) {
-    char buffer[256];
-    strerror_r(errno, buffer, 256);
-    LOG_INFO("action=process-end return=%x return-string=\"%s\" errno=%x\n", code, buffer, errno);
+    LOG_INFO("action=process-end return=%x\n", code);
     //CLOSELOG();       // Rely on SO closing file during normal existing. Not calling close prevents several processes calling common log file
     if (KnobDebug) {
         std::cerr << "[*] server-tracer\t: DEBUG\t: Analysis finished (PID: " << getProcessId() << ")" << std::endl;
@@ -383,7 +376,7 @@ void instrumentTrace(TRACE trace, void *v) {
     }
 
     for (BBL bbl = TRACE_BblHead(trace); BBL_Valid(bbl); bbl = BBL_Next(bbl)) {
-        for (INS ins = BBL_InsHead(bbl); INS_Valid(ins) && INS_COUNT < TAINT_INS_PROXIMITY; ins = INS_Next(ins), INS_COUNT++) {
+        for (INS ins = BBL_InsHead(bbl); INS_Valid(ins); ins = INS_Next(ins)) {
             if ((INS_Opcode(ins) >= XED_ICLASS_MOV) && (INS_Opcode(ins) <= XED_ICLASS_MOVZX)) {
                 propagateTaint(ins, routine);
             } else if (INS_IsCall(ins)) {
@@ -401,16 +394,6 @@ void instrumentTrace(TRACE trace, void *v) {
                     IARG_END);
             }
         }
-    }
-
-    /* Free all tainted data */
-    if (INS_COUNT >= TAINT_INS_PROXIMITY) {
-        taintedAdddrs.clear();
-        for (int i = 0; i < REG_LAST; i++) {
-            taintedRegs[i] = false;
-        }
-
-        INS_COUNT = 0;
     }
 }
 
@@ -430,7 +413,7 @@ void moduleLoad(IMG img, void *v) {
 }
 
 int usage() {
-    std::cerr << "This Pintool aims to infer the protocol message format and protocol finite state machine of an unknown protocol" << std::endl;
+    std::cerr << std::endl << "This Pintool traces all data activity sent and recv over the network" << std::endl;
     std::cerr << KNOB_BASE::StringKnobSummary() << std::endl;
 
     return -1;

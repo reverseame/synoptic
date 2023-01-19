@@ -1,245 +1,87 @@
 # protocol-modeler
 
-This project aims to infer the protocol message format and protocol finite state machine of an unknown protocol. This project relies on PIN Dynamic Binary Instrumentation to dynamically analyze the server implementing the target protocol during its normal execution.
+This project aims to infer the protocol message format and protocol finite state machine of an unknown protocol. This project mixes [Pin dynamic binary instrumentation framework](https://www.intel.com/content/www/us/en/developer/articles/tool/pin-a-dynamic-binary-instrumentation-tool.html) and symbolic execution to dynamically analyze the server implementing the target protocol during its normal execution.
 
 ## Structure
 
-- `server-tracer`: Pin tool that generate execution traces
+This project is divided in two modules:
 
-- `trace-modeler`: script to analyze the execution trace and generate the protocol model (protocol FSM and message format), and also a script to send messages based on the protocol model
+- `server-tracer`: Pintool that generate execution traces.
+
+- `trace-modeler`: Python script to analyze the execution trace and generate the protocol model (protocol FSM and message format). It also sends messages based on the protocol model.
 
 ## Requisites
 
 - `server-tracer`:
-  - Linux: [Pin 3.22](https://www.intel.com/content/www/us/en/developer/articles/tool/pin-a-binary-instrumentation-tool-downloads.html)
-  - Windows: [Pin 3.22](https://www.intel.com/content/www/us/en/developer/articles/tool/pin-a-binary-instrumentation-tool-downloads.html), [Visual Studio Community](https://visualstudio.microsoft.com/es/vs/community/) (tested on version 2022) with C++ Desktop workload
-- `trace-analyzer`: [Python](https://www.python.org/)
+  - Linux: [Pin 3.25](https://www.intel.com/content/www/us/en/developer/articles/tool/pin-a-binary-instrumentation-tool-downloads.html)
+  - Windows: [Pin 3.25](https://www.intel.com/content/www/us/en/developer/articles/tool/pin-a-binary-instrumentation-tool-downloads.html), [Visual Studio Community](https://visualstudio.microsoft.com/es/vs/community/) (tested on version 2022) with C++ Desktop workload
+- `trace-modeler`: [Python](https://www.python.org/) and [pip](https://pip.pypa.io/en/stable/)
 
-## Compilation and Usage
+## Installation
 
-### Linux
+See [INSTALL.md](INSTALL.md) to install `server-tracer` and `trace-modeler` modules.
 
-1. Export the following variable in your `.bashrc` file:
+## Usage 
 
-    ```Bash
-    export PIN_ROOT="/path/to/pin-3.22"
-    ```
-
-2. `make` will create the Pin's `server-tracer.so` tool under `obj-intel64` folder
-
-3. You can now run the following command to obtain execution `trace.log`:
+## server-tracer
 
 ```console
-$ $PIN_ROOT/pin -t obj-intel64/server-tracer.so -- server-executable [args]
+$ $PIN_ROOT/pin -follow_execv -t /absolute/path/to/protocol-modeler/server-tracer/obj-intel64/server_tracer.so -h -- /usr/bin/true
+
+This Pintool traces all data activity sent and received over the network
+
+Pin tools switches
+
+-debug  [default 0]
+	Enable debug messages
+-log  [default trace.log]
+	Absolute path of log filename (default to trace.log in current
+	directory)
 ```
 
-### Windows
-
-1. Copy [server-tracer for Windows](server-tracer/windows/) to `%PIN_ROOT%\source\tools`
-2. Open [server-tracer.vcxproj](server-tracer/windows/server-tracer.vcxproj) with Vistual Studio
-3. Select _Release x86/x64_ option and build Pin tool with _Build_ > _Build Solution_. This will create DLLs in their corresponding folder
-4. Run Pin tool to obtain the `trace.log` with:
+## trace-modeler
 
 ```console
-> %PIN_ROOT%\pin.exe -t x64\Release\server-tracer.dll -- server-executable [args]
+$ python3 modeler.py -h
+usage: modeler.py [-h] [-v] [--trace <log>] [--m32] [--output <file>] [--replay] [--fsm <file>] [--export <file>] [--host <ip>] [--port <port>] [--udp] [--delay DELAY]
+
+This tool analyze a server execution trace to model a server protocol and generate new messages based in this model
+
+optional arguments:
+  -h, --help       show this help message and exit
+  -v, --version    display version and exit
+  --trace <log>    specify the server execution trace
+  --m32            trace of a 32-bit program (64-bit by default)
+  --output <file>  output protocol model file
+  --replay         replay messages based in a model
+  --fsm <file>     specify the protocol FSM
+  --export <file>  export Graphviz file (.gv) representing the protocol FSM
+  --host <ip>      server IP
+  --port <port>    server listening port
+  --udp            UDP transport protocol (TCP by default)
+  --delay DELAY    delay between send calls (default to 0.5 s)
+
+usage examples:
+    Print generated model:
+        $ python trace-modeler/modeler.py --trace /path/to/trace.log
+
+    Export a model to an output file:
+        $ python trace-modeler/modeler.py --trace /path/to/trace.log --output /path/to/model.json
+
+    Replay messages to a host based on a model generated from a trace file:
+        $ python trace-modeler/modeler.py --trace /path/to/trace.log --replay --host 127.0.0.1 --port 21
+
+    Replay messages to a host based on an already generated model:
+        $ python trace-modeler/modeler.py --model /path/to/model.json --replay --host 127.0.0.1 --port 21
+
+    Export a model and also replay messages to a host:
+        $ python trace-modeler/modeler.py --trace /path/to/trace.log --output /path/to/model.json --replay --host 127.0.0.1 --port 21
+
+    Export graphviz .gv and .pdf files:
+        $ python trace-modeler/modeler.py --trace /path/to/trace.log --export /path/to/filename
 ```
 
-## BINSEC
-
-### Creating the core dump
-
-After setting up [BINSEC](https://github.com/binsec/binsec), you need to follow these instructions to create a valid core dump to be analyzed by BINSEC:
-
-1. Set dynamic linker to resolve all symbols at program startup instead of deferring function call resolution to the point when they are first referenced:
-
-```console
-$ export LD_BIND_NOW=1
-```
-
-2. Load your executable in the GNU Debugger (remember to preserve the already defined environment variable if your gaining privileges):
-
-```console
-$ sudo --preserve-env=LD_BIND_NOW gdb --args /path/to/executable arg1 arg2
-```
-
-3. Create a core dump of the debugged process:
-
-```console
-(gdb) b main
-Breakpoint 1 at 0x35e0
-(gdb) r
-Starting program: /path/to/executable arg1 arg2
-[Thread debugging using libthread_db enabled]
-Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
-
-Breakpoint 1, 0x00005555555575e0 in main ()
-(gdb) generate-core-file core.snapshot
-warning: target file /proc/2785/cmdline contained unexpected null characters
-Saved corefile core.snapshot
-```
-
-### Analyzing the executable with BINSEC
-
-Now, you have to set goals and symbolic variables in a separated `.ini` file. For example, to obtain strings that satisfy the following code block:
-
-![Code block](doc/graph.png)
-
-We create the following `.ini` file:
-
-```ini
-starting from core
-
-# entrypoint from core dump (program counter)
-replace 0x5555555575e0 by
-    rbx := 0xfffff000000000             # input buffer
-    r13 := nondet                       # input len
-    assume 0 < r13 < 8                  # 0 < strlen(input) < 8
-    @[rbx, 128] := 0                    # clear buffer
-    for i<64> in 0 to r13 - 1 do
-        @[rbx + i] := nondet as token   # fill symbolic input
-        assume "A" <= token <= "Z"      # such that it is uppercase
-    end
-    jump at 0x55555555d0b3              # real entrypoint
-
-reach * 0x55555555d0e2 then print ascii stream token
-cut at 0x55555555d0e2
-cut at 0x55555555d270
-```
-
-First, we specify to BINSEC to analyze the generated core dump. Now, we replace the entrypoint of the core dump with our symbolic definitions. To obtain the entrypoint (program counter) we can use the gdb itself:
-
-```console
-$ gdb -c core.snapshot
-Core was generated by `/path/to/executable arg1 arg2'.
-Program terminated with signal SIGTRAP, Trace/breakpoint trap.
-#0  0x00005555555575e0 in ?? ()
-(gdb) info registers rip
-rip            0x5555555575e0      0x5555555575e0
-```
-
-Or with radare2:
-
-```console
-$ r2 core.snapshot 
-Setting up coredump arch-bits to: x86-64
-Setting up coredump: Registers have been set
-Setting up coredump: 53 maps have been found and created
- -- radare2-built farm beats the facebook one.
-[0x5555555575e0]> dr?rip
-0x5555555575e0
-```
-
-At the end of our function definition, we jump to our code block to start the analysis, that is, 0x90b3 in the previous image. To translate between mapped addresses in the coredump and the executable, we can tell to radare2 to map the executable in the base address that was used in the coredump. To obtain the base address, we can use either the rabin2 utility (installed alongside radare2):
-
-```console
-$ rabin2 -I core.snapshot
-arch     x86
-baddr    0x555555554000
-[...]
-```
-
-Or radare2:
-
-```console
-$ r2 core.snapshot
-Setting up coredump arch-bits to: x86-64
-Setting up coredump: Registers have been set
-Setting up coredump: 53 maps have been found and created
- -- We feed trolls
-[0x5555555575e0]> i
-fd       3
-file     core.snapshot
-size     0x1966d0
-humansz  1.6M
-mode     r-x
-format   elf64
-iorw     false
-block    0x100
-type     CORE (Core file)
-arch     x86
-baddr    0x555555554000
-[...]
-```
-
-Now, we can analyze our executable with the same base address as the one in the coredump, and translate our desired addresses:
-
-```console
-$ r2 -B 0x555555554000 /path/to/executable
-Warning: run r2 with -e bin.cache=true to fix relocations in disassembly
- -- Your project name should contain an uppercase letter, 8 vowels, some numbers, and the first 5 characters of your private bitcoin key.
-[0x555555557bc0]> pd 10 @ 0x55555555d0b3
-            0x55555555d0b3      4c8d35065b00.  lea r14, obj.ftpprocs   ; 0x555555562bc0 ; "v\xb4"
-            0x55555555d0ba      31ed           xor ebp, ebp
-        ┌─< 0x55555555d0bc      eb12           jmp 0x55555555d0d0
-        │   0x55555555d0be      6690           nop
-        │   0x55555555d0c0      83c501         add ebp, 1
-        │   0x55555555d0c3      4983c610       add r14, 0x10           ; 16
-        │   0x55555555d0c7      83fd20         cmp ebp, 0x20           ; 32
-       ┌──< 0x55555555d0ca      0f84a0010000   je 0x55555555d270
-       │└─> 0x55555555d0d0      498b36         mov rsi, qword [r14]
-       │    0x55555555d0d3      4c89ea         mov rdx, r13
-```
-
-### Use of BINSEC
-
-First, we need to activate OCaml toolchain:
-
-```console
-$ eval $(opam env)
-```
-
-And then, we can use BINSEC with the following options:
-
-```console
-$ binsec -sse -sse-script crackme.ini core.snapshot -sse-alternative-engine
-[...]
-[sse:result] Ascii stream token : "PORT"
-[sse:result] Ascii stream token : "PASV"
-[sse:result] Ascii stream token : "PASS"
-[sse:result] Ascii stream token : "TYPE"
-[sse:result] Ascii stream token : "LIST"
-[sse:result] Ascii stream token : "CDUP"
-[sse:result] Ascii stream token : "RETR"
-[sse:result] Ascii stream token : "REST"
-[sse:result] Ascii stream token : "ABOR"
-[sse:result] Ascii stream token : "DELE"
-
-[sse:info] Empty path worklist: halting ...
-[sse:info] SMT queries
-             Preprocessing simplifications
-               total          23301
-               sat            448
-               unsat          18382
-               constant enum  4471
-             
-             Satisfiability queries
-               total          6893
-               sat            296
-               unsat          6597
-               unknown        0
-               time           39.64
-               average        0.01
-             
-           Exploration
-             total paths                      289
-             completed/cut paths              57
-             pending paths                    232
-             stale paths                      0
-             failed assertions                0
-             branching points                 30069
-             max path depth                   1050
-             visited instructions (unrolled)  130844
-             visited instructions (static)    152
-```
-
-# TODO
-
-1. Keep track of all memory writes during server session (don't delete written tainted address after send)
-2. Analyze the execution trace to identify messages and message exchanges
-3. Create the protocol model
-
-# Ideas
-
+## Ideas
 - Could symbolic execution improve state discovery?
 - Replay messages to analyze how new messages are parsed?
 - Network trace could be good to replay function?

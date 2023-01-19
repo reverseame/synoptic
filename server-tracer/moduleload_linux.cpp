@@ -82,9 +82,10 @@ int newConnectFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, int sockfd, const struc
 
 int newCloseFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, int fd) {
     int ret;
+    bool network_socket = isNetworkSocket(fd);
 
-    if (isNetworkSocket(fd)) {
-        LOG_INFO("action=close file-descriptor=%d return=%d\n", fd, ret);
+    if (network_socket) {
+        LOG_INFO("action=close file-descriptor=%d", fd);
     }
 
     PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
@@ -93,6 +94,10 @@ int newCloseFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, int fd) {
                                 PIN_PARG(int), &ret,
                                 PIN_PARG(int), fd,
                                 PIN_PARG_END());
+    
+    if (network_socket) {
+        LOG_RAW(" return=%d\n", ret);
+    }
 
     return ret;
 }
