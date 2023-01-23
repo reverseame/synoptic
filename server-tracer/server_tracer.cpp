@@ -12,34 +12,42 @@
 #include "moduleload_windows.h"
 #endif
 
-/* Keep track of tainted addresses */
-std::set<ADDRINT> taintedAdddrs;
-/* Keep track of tainted registers */
-bool taintedRegs[REG_LAST];
+/*
+* Rely on spatial location to minimize runtime overhead. Usually,
+* message parsing is done just after receiving data over the network
+*/
+#define TRACE_THRESHOLD 1000
+int insCount = 0;
 
 /* Command line options */
 KNOB<bool> KnobDebug(KNOB_MODE_WRITEONCE, "pintool", "debug", "0", "Enable debug messages");
 KNOB<std::string> KnobLogFile(KNOB_MODE_WRITEONCE, "pintool", "log", "trace.log", "Absolute path of log filename (default to trace.log in current directory)");
 
+/* Keep track of tainted addresses */
+std::set<ADDRINT> taintedAdddrs;
+/* Keep track of tainted registers */
+bool taintedRegs[REG_LAST];
+
 void fini(INT32 code, VOID *v) {
     LOG_INFO("action=process-end return=%x\n", code);
-    //CLOSELOG();       // Rely on SO closing file during normal existing. Not calling close prevents several processes calling common log file
+    //CLOSE_LOG();       // Rely on SO closing file during normal existing. Not calling close prevents several processes calling common log file
     if (KnobDebug) {
-        std::cerr << "[*] server-tracer\t: DEBUG\t: Analysis finished (PID: " << getProcessId() << ")" << std::endl;
+        PRINT_DEBUG("Analysis finished (PID: %s)\n", getProcessId().c_str());
     }
 }
 
 bool followChild(CHILD_PROCESS cProcess, VOID *val) {
     if (KnobDebug) {
-        std::cerr << "[*] server-tracer\t: DEBUG\t: New child process spawned" << std::endl;
+        PRINT_DEBUG("New child process spawned\n");
     }
+    LOG_INFO("action=new-child\n");
     /* true value to inject PIN into child process */
     return true;
 }
 
 void followForkInChild(THREADID threadid, const CONTEXT *ctxt, VOID *v) {
     if (KnobDebug) {
-        std::cerr << "[*] server-tracer\t: DEBUG\t: New process forked (PID: " << getProcessId() << ")" << std::endl;
+        PRINT_DEBUG("New process forked (PID: %s)\n", getProcessId().c_str());
     }
     LOG_INFO("action=process-forked\n");
 }
@@ -250,7 +258,7 @@ void propagateTaint(INS ins, const char *routine) {
             IARG_ADDRINT, (ADDRINT)reg_w,
             IARG_END);
     } else {
-        std::cerr << "[*] server-tracer\t: ERROR\t: Unable to propagate taint info: " << INS_Disassemble(ins) << std::endl;
+        PRINT_WARNING("Unable to propagate taint info: %s\n", INS_Disassemble(ins).c_str());
     }
 }
 
@@ -276,7 +284,7 @@ void analyzeCall(INS ins, const char *routine) {
             IARG_BRANCH_TARGET_ADDR,
             IARG_END);
     } else {
-        std::cerr << "[*] server-tracer\t: ERROR\t: Unknown call: " << INS_Disassemble(ins) << std::endl;
+        PRINT_WARNING("Unknown call: %s\n", INS_Disassemble(ins).c_str());
     }
 }
 
@@ -348,19 +356,27 @@ void analyzeComparison(INS ins, const char *routine) {
             IARG_PTR, reg2,
             IARG_END);
     } else {
-        LOG_INFO("routine=\"%s\" ins-addr=%s ins-dis=\"%s\"\n", routine, hexaddr(INS_Address(ins)).c_str(), INS_Disassemble(ins).c_str());
+        INS_InsertCall(
+            ins, IPOINT_BEFORE, (AFUNPTR)traceIns,
+            IARG_INST_PTR,
+            IARG_PTR, new std::string(INS_Disassemble(ins)),
+            IARG_PTR, routine,
+            IARG_END);
     }
 }
 
-/*!
+/*
 * This function checks for each instruction if it does a mov that can potentially
 * transfer taint and if true adds the approriate analysis routine to check
 * and propogate taint at run-time if needed
 * This function is called every time a new trace is encountered.
 */
 void instrumentTrace(TRACE trace, void *v) {
-    /* Return inmediatly if there are no buffers of interest */
-    if (taintedAdddrs.empty()) {
+    /*
+    * Return inmediatly if there are no buffers of interest or we surprassed the
+    * spatial location threshold
+    */
+    if (taintedAdddrs.empty() || insCount >= TRACE_THRESHOLD) {
         return;
     }
 
@@ -376,15 +392,14 @@ void instrumentTrace(TRACE trace, void *v) {
     }
 
     for (BBL bbl = TRACE_BblHead(trace); BBL_Valid(bbl); bbl = BBL_Next(bbl)) {
-        for (INS ins = BBL_InsHead(bbl); INS_Valid(ins); ins = INS_Next(ins)) {
+        for (INS ins = BBL_InsHead(bbl); insCount < TRACE_THRESHOLD && INS_Valid(ins); ins = INS_Next(ins), insCount++) {
+            PRINT_DEBUG("insCount: %d\n", insCount);
             if ((INS_Opcode(ins) >= XED_ICLASS_MOV) && (INS_Opcode(ins) <= XED_ICLASS_MOVZX)) {
                 propagateTaint(ins, routine);
             } else if (INS_IsCall(ins)) {
                 analyzeCall(ins, routine);
             } else if ((INS_Opcode(ins) == XED_ICLASS_CMP) || (INS_Opcode(ins) == XED_ICLASS_TEST)) {
                 analyzeComparison(ins, routine);
-                /*} else if(INS_MaxNumWRegs(ins)) {
-                    analyzeWrite(ins, routine);*/
             } else {
                 INS_InsertCall(
                     ins, IPOINT_BEFORE, (AFUNPTR)traceIns,
@@ -399,21 +414,25 @@ void instrumentTrace(TRACE trace, void *v) {
 
 void moduleLoad(IMG img, void *v) {
     ADDRINT image_base = IMG_LowAddress(img);
-    if (KnobDebug) {
-        std::cerr << "[*] server-tracer\t: DEBUG\t: Module loaded\t\t\t: " << IMG_Name(img) << " (" << hexaddr(image_base) << ")" << std::endl;
-    }
 
     /* Avoid to hook the main executable */
     if (IMG_IsMainExecutable(img)) {
+        if (KnobDebug) {
+            PRINT_DEBUG("Main module loaded\t\t: %s (%s)\n", IMG_Name(img).c_str(), hexaddr(image_base).c_str());
+        }
         LOG_INFO("action=relocate image-base=%s main-executable=%s\n", hexaddr(image_base).c_str(), IMG_Name(img).c_str());
         return;
     }
 
-    replaceSignatures(KnobDebug, img, taintedAdddrs, taintedRegs);
+    if (KnobDebug) {
+        PRINT_DEBUG("Module loaded\t\t\t: %s (%s)\n", IMG_Name(img).c_str(), hexaddr(image_base).c_str());
+    }
+
+    replaceSignatures(KnobDebug, img, taintedAdddrs, taintedRegs, insCount);
 }
 
 int usage() {
-    std::cerr << std::endl << "This Pintool traces all data activity sent and recv over the network" << std::endl;
+    std::cerr << std::endl << "This Pintool traces all data activity sent and received over the network" << std::endl;
     std::cerr << KNOB_BASE::StringKnobSummary() << std::endl;
 
     return -1;
@@ -429,11 +448,11 @@ int main(int argc, char *argv[]) {
     }
 
     if (KnobDebug) {
-        std::cerr << "[*] server-tracer\t: DEBUG\t: Analysis started (PID: " << getProcessId() << ")" << std::endl;
-        std::cerr << "[*] server-tracer\t: DEBUG\t: log file\t\t\t: " << KnobLogFile.Value() << std::endl;
+        PRINT_DEBUG("Analysis started (PID: %s)\n", getProcessId().c_str());
+        PRINT_DEBUG("log file\t\t\t: %s\n", KnobLogFile.Value().c_str());
     }
 
-    OPENLOG(KnobLogFile.Value().c_str());
+    OPEN_LOG(KnobLogFile.Value().c_str());
 
     LOG_INFO("action=process-begin\n");
 

@@ -11,6 +11,7 @@ Log* Log::getInstance() {
 	return instance;
 }
 
+/* Empty constructor */
 Log::Log(void) {}
 
 void Log::openLogFile(const char *filename) {
