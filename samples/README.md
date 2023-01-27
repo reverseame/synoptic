@@ -13,7 +13,7 @@ $ sudo apt install libtool
 First, install WolfSSL in `/usr/local/`:
 
 ```console
-$ git clone --depth 1 --branch v5.5.4-stable https://github.com/wolfSSL/wolfssl
+$ git clone --depth 1 --branch v5.5.4-stable https://github.com/wolfSSL/wolfssl     # or download v5.5.4 from https://www.wolfssl.com/download/
 $ cd wolfssl
 $ ./configure --enable-keygen --enable-ocsp --enable-ssh
 $ make check
@@ -23,7 +23,7 @@ $ sudo make install
 You can skip the last step to not to install WolfSSL system-wide and link WolfSSH with the libraries placed at `wolfssl-5.5.4/src/.libs`. After WolfSSL compilation, build WolfSSH:
 
 ```console
-$ git clone --depth 1 --branch v1.4.12-stable https://github.com/wolfSSL/wolfssh
+$ git clone --depth 1 --branch v1.4.12-stable https://github.com/wolfSSL/wolfssh    # or download v1.4.12 from https://www.wolfssl.com/download/
 $ cd wolfssh
 $ ./autogen.sh
 $ ./configure --with-wolfssl=/usr/local --enable-shell

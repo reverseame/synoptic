@@ -23,7 +23,7 @@ bool isNetworkSocket(int fd) {
     return false;
 }
 
-int newSocketFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, int domain, int type, int protocol) {
+int newSocketFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::string *imgName, int domain, int type, int protocol) {
     int ret;
 
     PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
@@ -35,13 +35,13 @@ int newSocketFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, int domain, int type, in
                                 PIN_PARG(int), protocol,
                                 PIN_PARG_END());
     if (isNetworkSocket(ret)) {
-        LOG_INFO("action=socket return=%d\n", ret);
+        LOG_INFO("action=socket module=\"%s\" return=%d\n", imgName->c_str(), ret);
     }
 
     return ret;
 }
 
-int newAcceptFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, int sockfd, struct sockaddr *addr, socklen_t *addrLen) {
+int newAcceptFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::string *imgName, int sockfd, struct sockaddr *addr, socklen_t *addrLen) {
     int ret;
 
     PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
@@ -54,13 +54,13 @@ int newAcceptFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, int sockfd, struct socka
                                 PIN_PARG_END());
 
     if (isNetworkSocket(sockfd)) {
-        LOG_INFO("action=accept return=%d\n", ret);
+        LOG_INFO("action=accept module=\"%s\" return=%d\n", imgName->c_str(), ret);
     }
 
     return ret;
 }
 
-int newConnectFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, int sockfd, const struct sockaddr *addr, socklen_t addrLen) {
+int newConnectFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::string *imgName, int sockfd, const struct sockaddr *addr, socklen_t addrLen) {
     int ret;
 
     PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
@@ -73,19 +73,19 @@ int newConnectFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, int sockfd, const struc
                                 PIN_PARG_END());
 
     if (isNetworkSocket(sockfd)) {
-        LOG_INFO("action=connect file-descriptor=%d return=%d\n", sockfd, ret);
+        LOG_INFO("action=connect module=\"%s\" file-descriptor=%d return=%d\n", imgName->c_str(), sockfd, ret);
     }
     
 
     return ret;
 }
 
-int newCloseFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, int fd) {
+int newCloseFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::string *imgName, int fd) {
     int ret;
     bool network_socket = isNetworkSocket(fd);
 
     if (network_socket) {
-        LOG_INFO("action=close file-descriptor=%d", fd);
+        LOG_INFO("action=close module=\"%s\" file-descriptor=%d", imgName->c_str(), fd);
     }
 
     PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
@@ -102,7 +102,31 @@ int newCloseFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, int fd) {
     return ret;
 }
 
-ssize_t newReadFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAdddrs, int &insCount, int fd, void *buf, size_t count) {
+int newDup2Function(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::string *imgName, int oldfd, int newfd) {
+    int ret;
+
+    bool network_socket = isNetworkSocket(oldfd);
+
+    if (network_socket) {
+        LOG_INFO("action=dup2 module=\"%s\" file-descriptor=%d", imgName->c_str(), oldfd);
+    }
+
+    PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
+                                CALLINGSTD_DEFAULT, orgFuncPtr,
+                                NULL,
+                                PIN_PARG(int), &ret,
+                                PIN_PARG(int), oldfd,
+                                PIN_PARG(int), newfd,
+                                PIN_PARG_END());
+    
+    if (network_socket) {
+        LOG_RAW(" return=%d\n", ret);
+    }
+
+    return ret;
+}
+
+ssize_t newReadFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAdddrs, int &insCount, std::string *imgName, int fd, void *buf, size_t count) {
     ssize_t ret;
 
     PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
@@ -115,7 +139,7 @@ ssize_t newReadFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &tai
                                 PIN_PARG_END());
 
     if (isNetworkSocket(fd)) {
-        LOG_TAINT("action=read file-descriptor=%d buffer-address=%p buffer-size=%ld return=%ld", fd, buf, count, ret);
+        LOG_TAINT("action=read module=\"%s\" file-descriptor=%d buffer-address=%p buffer-size=%ld return=%ld", imgName->c_str(), fd, buf, count, ret);
 
         if (ret > 0) {
             LOG_RAW(" buffer-content=");
@@ -138,7 +162,7 @@ ssize_t newReadFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &tai
     return ret;
 }
 
-ssize_t newRecvFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAdddrs, int &insCount, int sockfd, void *buf, size_t len, int flags) {
+ssize_t newRecvFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAdddrs, int &insCount, std::string *imgName, int sockfd, void *buf, size_t len, int flags) {
     ssize_t ret;
 
     PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
@@ -152,7 +176,7 @@ ssize_t newRecvFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &tai
                                 PIN_PARG_END());
 
     if (isNetworkSocket(sockfd)) {
-        LOG_TAINT("action=recv file-descriptor=%d buffer-address=%p buffer-size=%ld return=%ld", sockfd, buf, len, ret);
+        LOG_TAINT("action=recv module=\"%s\" file-descriptor=%d buffer-address=%p buffer-size=%ld return=%ld", imgName->c_str(), sockfd, buf, len, ret);
 
         if (ret > 0) {
             LOG_RAW(" buffer-content=");
@@ -175,7 +199,7 @@ ssize_t newRecvFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &tai
     return ret;
 }
 
-ssize_t newRecvFromFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAdddrs, int &insCount, int sockfd, void *buf, size_t len, int flags, struct sockaddr *src_addr, socklen_t *addrlen) {
+ssize_t newRecvFromFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAdddrs, int &insCount, std::string *imgName, int sockfd, void *buf, size_t len, int flags, struct sockaddr *src_addr, socklen_t *addrlen) {
     ssize_t ret;
 
     PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
@@ -191,7 +215,7 @@ ssize_t newRecvFromFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> 
                                 PIN_PARG_END());
 
     if (isNetworkSocket(sockfd)) {
-        LOG_TAINT("action=recvfrom file-descriptor=%d buffer-address=%p buffer-size=%ld return=%ld", sockfd, buf, len, ret);
+        LOG_TAINT("action=recvfrom module=\"%s\" file-descriptor=%d buffer-address=%p buffer-size=%ld return=%ld", imgName->c_str(), sockfd, buf, len, ret);
 
         if (ret > 0) {
             LOG_RAW(" buffer-content=");
@@ -214,7 +238,7 @@ ssize_t newRecvFromFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> 
     return ret;
 }
 
-ssize_t newRecvMsgFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAdddrs, int &insCount, int sockfd, struct msghdr *msg, int flags) {
+ssize_t newRecvMsgFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAdddrs, int &insCount, std::string *imgName, int sockfd, struct msghdr *msg, int flags) {
     ssize_t ret;
 
     PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
@@ -229,7 +253,7 @@ ssize_t newRecvMsgFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &
     //struct cmsghdr *cmsg;
 
     if (isNetworkSocket(sockfd)) {
-        LOG_TAINT("action=recvmsg file-descriptor=%d return=%ld\n", sockfd, ret);
+        LOG_TAINT("action=recvmsg module=\"%s\" file-descriptor=%d return=%ld\n", imgName->c_str(), sockfd, ret);
         /*for (cmsg = CMSG_FIRSTHDR(msg); cmsg != NULL; cmsg = CMSG_NXTHDR(msg, cmsg)) {
             std::cerr << "msg read" << std::endl;
         }*/
@@ -238,7 +262,7 @@ ssize_t newRecvMsgFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &
     return ret;
 }
 
-ssize_t newWriteFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAdddrs, bool(&taintedRegs)[REG_LAST], int fd, const void *buf, size_t count) {
+ssize_t newWriteFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAdddrs, bool(&taintedRegs)[REG_LAST], std::string *imgName, int fd, const void *buf, size_t count) {
     ssize_t ret;
 
     PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
@@ -251,7 +275,7 @@ ssize_t newWriteFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &ta
                                 PIN_PARG_END());
 
     if (isNetworkSocket(fd)) {
-        LOG_TAINT("action=send file-descriptor=%d buffer-address=%p buffer-size=%ld return=%ld", fd, buf, count, ret);
+        LOG_TAINT("action=write module=\"%s\" file-descriptor=%d buffer-address=%p buffer-size=%ld return=%ld", imgName->c_str(), fd, buf, count, ret);
 
         if (ret > 0) {
             LOG_RAW(" buffer-content=");
@@ -273,7 +297,7 @@ ssize_t newWriteFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &ta
     return ret;
 }
 
-ssize_t newSendFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAdddrs, bool(&taintedRegs)[REG_LAST], int sockfd, const void *buf, size_t len, int flags) {
+ssize_t newSendFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAdddrs, bool(&taintedRegs)[REG_LAST], std::string *imgName, int sockfd, const void *buf, size_t len, int flags) {
     ssize_t ret;
 
     PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
@@ -287,7 +311,7 @@ ssize_t newSendFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &tai
                                 PIN_PARG_END());
 
     if (isNetworkSocket(sockfd)) {
-        LOG_TAINT("action=send file-descriptor=%d buffer-address=%p buffer-size=%ld return=%ld", sockfd, buf, len, ret);
+        LOG_TAINT("action=send module=\"%s\" file-descriptor=%d buffer-address=%p buffer-size=%ld return=%ld", imgName->c_str(), sockfd, buf, len, ret);
 
         if (ret > 0) {
             LOG_RAW(" buffer-content=");
@@ -309,7 +333,7 @@ ssize_t newSendFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &tai
     return ret;
 }
 
-ssize_t newSendToFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAdddrs, bool(&taintedRegs)[REG_LAST], int sockfd, const void *buf, size_t len, int flags, const struct sockaddr *dest_addr, socklen_t addrlen) {
+ssize_t newSendToFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAdddrs, bool(&taintedRegs)[REG_LAST], std::string *imgName, int sockfd, const void *buf, size_t len, int flags, const struct sockaddr *dest_addr, socklen_t addrlen) {
     ssize_t ret;
 
     PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
@@ -325,7 +349,7 @@ ssize_t newSendToFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &t
                                 PIN_PARG_END());
 
     if (isNetworkSocket(sockfd)) {
-        LOG_TAINT("action=sendto file-descriptor=%d buffer-address=%p buffer-size=%ld return=%ld", sockfd, buf, len, ret);
+        LOG_TAINT("action=sendto module=\"%s\" file-descriptor=%d buffer-address=%p buffer-size=%ld return=%ld", imgName->c_str(), sockfd, buf, len, ret);
 
         if (ret > 0) {
             LOG_RAW(" buffer-content=");
@@ -347,7 +371,7 @@ ssize_t newSendToFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &t
     return ret;
 }
 
-ssize_t newSendMsgFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAdddrs, bool(&taintedRegs)[REG_LAST], int sockfd, const struct msghdr *msg, int flags) {
+ssize_t newSendMsgFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAdddrs, bool(&taintedRegs)[REG_LAST], std::string *imgName, int sockfd, const struct msghdr *msg, int flags) {
     ssize_t ret;
 
     PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
@@ -361,7 +385,7 @@ ssize_t newSendMsgFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &
     //struct cmsghdr *cmsg;
 
     if (isNetworkSocket(sockfd)) {
-        LOG_TAINT("action=sendmsg file-descriptor=%d return=%ld\n", sockfd, ret);
+        LOG_TAINT("action=sendmsg module=\"%s\" file-descriptor=%d return=%ld\n", imgName->c_str(), sockfd, ret);
         /*for (cmsg = CMSG_FIRSTHDR(msg); cmsg != NULL; cmsg = CMSG_NXTHDR(msg, cmsg)) {
             std::cerr << "msg read" << std::endl;
         }*/
@@ -387,6 +411,7 @@ void replaceSocketFunction(IMG img, RTN rtn) {
                                 IARG_PROTOTYPE, proto_socket,
                                 IARG_ORIG_FUNCPTR,
                                 IARG_CONTEXT,
+                                IARG_PTR, new std::string(IMG_Name(img)),
                                 IARG_FUNCARG_ENTRYPOINT_VALUE, 0,
                                 IARG_FUNCARG_ENTRYPOINT_VALUE, 1,
                                 IARG_FUNCARG_ENTRYPOINT_VALUE, 2,
@@ -407,6 +432,7 @@ void replaceAcceptFunction(IMG img, RTN rtn) {
                                 IARG_PROTOTYPE, proto_accept,
                                 IARG_ORIG_FUNCPTR,
                                 IARG_CONTEXT,
+                                IARG_PTR, new std::string(IMG_Name(img)),
                                 IARG_FUNCARG_ENTRYPOINT_VALUE, 0,
                                 IARG_FUNCARG_ENTRYPOINT_VALUE, 1,
                                 IARG_FUNCARG_ENTRYPOINT_VALUE, 2,
@@ -427,6 +453,7 @@ void replaceConnectFunction(IMG img, RTN rtn) {
                                 IARG_PROTOTYPE, proto_connect,
                                 IARG_ORIG_FUNCPTR,
                                 IARG_CONTEXT,
+                                IARG_PTR, new std::string(IMG_Name(img)),
                                 IARG_FUNCARG_ENTRYPOINT_VALUE, 0,
                                 IARG_FUNCARG_ENTRYPOINT_VALUE, 1,
                                 IARG_FUNCARG_ENTRYPOINT_VALUE, 2,
@@ -445,10 +472,30 @@ void replaceCloseFunction(IMG img, RTN rtn) {
                                 IARG_PROTOTYPE, proto_close,
                                 IARG_ORIG_FUNCPTR,
                                 IARG_CONTEXT,
+                                IARG_PTR, new std::string(IMG_Name(img)),
                                 IARG_FUNCARG_ENTRYPOINT_VALUE, 0,
                                 IARG_END);
 
     PROTO_Free(proto_close);
+}
+
+void replaceDup2Function(IMG img, RTN rtn) {
+    PROTO proto_dup2 = PROTO_Allocate(PIN_PARG(int), CALLINGSTD_DEFAULT,
+                                        NULL,
+                                        PIN_PARG(int),      // oldfd
+                                        PIN_PARG(int),      // newfd
+                                        PIN_PARG_END());
+
+    RTN_ReplaceSignature(rtn, AFUNPTR(newDup2Function),
+                                IARG_PROTOTYPE, proto_dup2,
+                                IARG_ORIG_FUNCPTR,
+                                IARG_CONTEXT,
+                                IARG_PTR, new std::string(IMG_Name(img)),
+                                IARG_FUNCARG_ENTRYPOINT_VALUE, 0,
+                                IARG_FUNCARG_ENTRYPOINT_VALUE, 1,
+                                IARG_END);
+
+    PROTO_Free(proto_dup2);
 }
 
 void replaceReadFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, int &insCount) {
@@ -465,6 +512,7 @@ void replaceReadFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, int
                                 IARG_CONTEXT,
                                 IARG_PTR, &taintedAdddrs,
                                 IARG_PTR, &insCount,
+                                IARG_PTR, new std::string(IMG_Name(img)),
                                 IARG_FUNCARG_ENTRYPOINT_VALUE, 0,
                                 IARG_FUNCARG_ENTRYPOINT_VALUE, 1,
                                 IARG_FUNCARG_ENTRYPOINT_VALUE, 2,
@@ -488,6 +536,7 @@ void replaceRecvFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, int
                                 IARG_CONTEXT,
                                 IARG_PTR, &taintedAdddrs,
                                 IARG_PTR, &insCount,
+                                IARG_PTR, new std::string(IMG_Name(img)),
                                 IARG_FUNCARG_ENTRYPOINT_VALUE, 0,
                                 IARG_FUNCARG_ENTRYPOINT_VALUE, 1,
                                 IARG_FUNCARG_ENTRYPOINT_VALUE, 2,
@@ -514,6 +563,7 @@ void replaceRecvFromFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs,
                                 IARG_CONTEXT,
                                 IARG_PTR, &taintedAdddrs,
                                 IARG_PTR, &insCount,
+                                IARG_PTR, new std::string(IMG_Name(img)),
                                 IARG_FUNCARG_ENTRYPOINT_VALUE, 0,
                                 IARG_FUNCARG_ENTRYPOINT_VALUE, 1,
                                 IARG_FUNCARG_ENTRYPOINT_VALUE, 2,
@@ -539,6 +589,7 @@ void replaceRecvMsgFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, 
                                 IARG_CONTEXT,
                                 IARG_PTR, &taintedAdddrs,
                                 IARG_PTR, &insCount,
+                                IARG_PTR, new std::string(IMG_Name(img)),
                                 IARG_FUNCARG_ENTRYPOINT_VALUE, 0,
                                 IARG_FUNCARG_ENTRYPOINT_VALUE, 1,
                                 IARG_FUNCARG_ENTRYPOINT_VALUE, 2,
@@ -561,6 +612,7 @@ void replaceWriteFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, bo
                                 IARG_CONTEXT,
                                 IARG_PTR, &taintedAdddrs,
                                 IARG_PTR, &taintedRegs,
+                                IARG_PTR, new std::string(IMG_Name(img)),
                                 IARG_FUNCARG_ENTRYPOINT_VALUE, 0,
                                 IARG_FUNCARG_ENTRYPOINT_VALUE, 1,
                                 IARG_FUNCARG_ENTRYPOINT_VALUE, 2,
@@ -584,6 +636,7 @@ void replaceSendFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, boo
                                 IARG_CONTEXT,
                                 IARG_PTR, &taintedAdddrs,
                                 IARG_PTR, &taintedRegs,
+                                IARG_PTR, new std::string(IMG_Name(img)),
                                 IARG_FUNCARG_ENTRYPOINT_VALUE, 0,
                                 IARG_FUNCARG_ENTRYPOINT_VALUE, 1,
                                 IARG_FUNCARG_ENTRYPOINT_VALUE, 2,
@@ -610,6 +663,7 @@ void replaceSendToFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, b
                                 IARG_CONTEXT,
                                 IARG_PTR, &taintedAdddrs,
                                 IARG_PTR, &taintedRegs,
+                                IARG_PTR, new std::string(IMG_Name(img)),
                                 IARG_FUNCARG_ENTRYPOINT_VALUE, 0,
                                 IARG_FUNCARG_ENTRYPOINT_VALUE, 1,
                                 IARG_FUNCARG_ENTRYPOINT_VALUE, 2,
@@ -635,6 +689,7 @@ void replaceSendMsgFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, 
                                 IARG_CONTEXT,
                                 IARG_PTR, &taintedAdddrs,
                                 IARG_PTR, &taintedRegs,
+                                IARG_PTR, new std::string(IMG_Name(img)),
                                 IARG_FUNCARG_ENTRYPOINT_VALUE, 0,
                                 IARG_FUNCARG_ENTRYPOINT_VALUE, 1,
                                 IARG_FUNCARG_ENTRYPOINT_VALUE, 2,
@@ -675,6 +730,14 @@ void replaceSignatures(bool KnobDebug, IMG img, std::set<ADDRINT> &taintedAdddrs
         replaceCloseFunction(img, rtn);
         if (KnobDebug) {
             PRINT_DEBUG("close replaced\t\t: %s\n", IMG_Name(img).c_str());
+        }
+    }
+
+    rtn = RTN_FindByName(img, "dup2");
+    if (RTN_Valid(rtn)) {
+        replaceDup2Function(img, rtn);
+        if (KnobDebug) {
+            PRINT_DEBUG("dup2 replaced\t\t\t: %s\n", IMG_Name(img).c_str());
         }
     }
 

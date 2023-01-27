@@ -24,6 +24,10 @@ void Log::closeLogfile() {
 	fclose(logfile);
 }
 
+void Log::flushLogfile() {
+	fflush(logfile);
+}
+
 FILE* Log::getLogFile() {
 	return logfile;
 }

@@ -21,7 +21,7 @@ int insCount = 0;
 
 /* Command line options */
 KNOB<bool> KnobDebug(KNOB_MODE_WRITEONCE, "pintool", "debug", "0", "Enable debug messages");
-KNOB<std::string> KnobLogFile(KNOB_MODE_WRITEONCE, "pintool", "log", "trace.log", "Absolute path of log filename (default to trace.log in current directory)");
+KNOB<std::string> KnobLogDir(KNOB_MODE_WRITEONCE, "pintool", "dirlog", ".", "Absolute path of log directory (default to current directory)");
 
 /* Keep track of tainted addresses */
 std::set<ADDRINT> taintedAdddrs;
@@ -30,9 +30,9 @@ bool taintedRegs[REG_LAST];
 
 void fini(INT32 code, VOID *v) {
     LOG_INFO("action=process-end return=%x\n", code);
-    //CLOSE_LOG();       // Rely on SO closing file during normal existing. Not calling close prevents several processes calling common log file
+    CLOSE_LOG();
     if (KnobDebug) {
-        PRINT_DEBUG("Analysis finished (PID: %s)\n", getProcessId().c_str());
+        PRINT_DEBUG("Analysis finished\n");
     }
 }
 
@@ -41,15 +41,32 @@ bool followChild(CHILD_PROCESS cProcess, VOID *val) {
         PRINT_DEBUG("New child process spawned\n");
     }
     LOG_INFO("action=new-child\n");
+    /* Flush log file before injecting into new process */
+    FLUSH_LOG();
     /* true value to inject PIN into child process */
     return true;
 }
 
-void followForkInChild(THREADID threadid, const CONTEXT *ctxt, VOID *v) {
-    if (KnobDebug) {
-        PRINT_DEBUG("New process forked (PID: %s)\n", getProcessId().c_str());
-    }
+void followForkBefore(THREADID threadid, const CONTEXT *ctxt, VOID *v) {
+    /* Flush log file before fork */
+    FLUSH_LOG();
+}
+
+void followForkInParent(THREADID threadid, const CONTEXT *ctxt, VOID *v) {
     LOG_INFO("action=process-forked\n");
+}
+
+void followForkInChild(THREADID threadid, const CONTEXT *ctxt, VOID *v) {
+    /* Change to corresponding log file */
+    std::string filename = getFilePath(KnobLogDir.Value(), getProcessId() + ".log");
+
+    if (KnobDebug) {
+        PRINT_DEBUG("New process forked\n");
+        PRINT_DEBUG("log file\t\t\t: %s\n", filename.c_str());
+    }
+    OPEN_LOG(filename.c_str());
+
+    LOG_INFO("action=new-process-forked\n");
 }
 
 void traceIns(ADDRINT insAddr, std::string *insDis, const char *routine) {
@@ -393,7 +410,6 @@ void instrumentTrace(TRACE trace, void *v) {
 
     for (BBL bbl = TRACE_BblHead(trace); BBL_Valid(bbl); bbl = BBL_Next(bbl)) {
         for (INS ins = BBL_InsHead(bbl); insCount < TRACE_THRESHOLD && INS_Valid(ins); ins = INS_Next(ins), insCount++) {
-            PRINT_DEBUG("insCount: %d\n", insCount);
             if ((INS_Opcode(ins) >= XED_ICLASS_MOV) && (INS_Opcode(ins) <= XED_ICLASS_MOVZX)) {
                 propagateTaint(ins, routine);
             } else if (INS_IsCall(ins)) {
@@ -420,7 +436,7 @@ void moduleLoad(IMG img, void *v) {
         if (KnobDebug) {
             PRINT_DEBUG("Main module loaded\t\t: %s (%s)\n", IMG_Name(img).c_str(), hexaddr(image_base).c_str());
         }
-        LOG_INFO("action=relocate image-base=%s main-executable=%s\n", hexaddr(image_base).c_str(), IMG_Name(img).c_str());
+        LOG_INFO("action=relocate image-base=%s main-executable=\"%s\"\n", hexaddr(image_base).c_str(), IMG_Name(img).c_str());
         return;
     }
 
@@ -447,12 +463,15 @@ int main(int argc, char *argv[]) {
         return usage();
     }
 
+    /* Output file to PID.log */
+    std::string filename = getFilePath(KnobLogDir.Value(), getProcessId() + ".log");
+
     if (KnobDebug) {
-        PRINT_DEBUG("Analysis started (PID: %s)\n", getProcessId().c_str());
-        PRINT_DEBUG("log file\t\t\t: %s\n", KnobLogFile.Value().c_str());
+        PRINT_DEBUG("Analysis started\n");
+        PRINT_DEBUG("log file\t\t\t: %s\n", filename.c_str());
     }
 
-    OPEN_LOG(KnobLogFile.Value().c_str());
+    OPEN_LOG(filename.c_str());
 
     LOG_INFO("action=process-begin\n");
 
@@ -467,6 +486,12 @@ int main(int argc, char *argv[]) {
 
     /* Follow child processes */
     PIN_AddFollowChildProcessFunction(followChild, 0);
+
+    /* Follow before fork function in the parent process */
+    PIN_AddForkFunction(FPOINT_BEFORE, followForkBefore, 0);
+
+    /* Follow after fork function in the parent process */
+    PIN_AddForkFunction(FPOINT_AFTER_IN_PARENT, followForkInParent, 0);
 
     /* Follow after fork function in the child process */
     PIN_AddForkFunction(FPOINT_AFTER_IN_CHILD, followForkInChild, 0);

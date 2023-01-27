@@ -6,4 +6,5 @@
 namespace WINDOWS {
 #include <Windows.h>
 #include <winsock2.h>
+#include <tlhelp32.h>
 }
