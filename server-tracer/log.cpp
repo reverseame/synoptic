@@ -16,7 +16,7 @@ Log::Log(void) {}
 
 void Log::openLogFile(const char *filename) {
 	logfilename = filename;
-	logfile = fopen(logfilename, "a");
+	logfile = fopen(logfilename, "w");
 }
 
 void Log::closeLogfile() {

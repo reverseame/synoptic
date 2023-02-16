@@ -1,3 +1,5 @@
+#!/usr/bin/env python
+
 import os
 import sys
 import glob
@@ -74,8 +76,12 @@ def parse_data(data):
     return ret
 
 def read_file(path):
-    with open(path, 'r') as f:
-        return f.read().splitlines()
+    try:
+        with open(path, 'r') as f:
+            return f.read().splitlines()
+    except OSError as ex:
+        print_error(f'{filename}\t: Unable to read file\t: {str(ex)}')
+        sys.exit(-1)
 
 def read_all_data(filenames, output):
     count = 0

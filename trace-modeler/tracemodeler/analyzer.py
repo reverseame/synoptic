@@ -10,9 +10,6 @@ locale.setlocale(locale.LC_ALL, '')     # '' means auto
 import tracemodeler.model
 import tracemodeler.debug as debug
 
-START_TRACE = '-----BEGIN TRACE-----'
-END_TRACE = '-----END TRACE-----'
-
 class Analyzer:
     def __init__(self, trace, arch_mode=capstone.CS_MODE_64):
         self.tracefile = os.path.abspath(trace)
@@ -22,35 +19,10 @@ class Analyzer:
         self.fsm = tracemodeler.model.ProtocolFSM()
 
     def read_traces(self):
-        ret = []
-
         content = self.read_file()
+        debug.info(f'Parsing {len(content):n} records...')
 
-        while content:
-            try:
-                start = content.index(START_TRACE) + 1
-                end = content.index(END_TRACE)
-            except ValueError as e:
-                cause = str(e).split('\'')[1]
-                debug.error(f'{self.tracefile}: Unable to parse file: Could not find \"{cause}\" marker')
-
-            ret.append(content[start:end])
-            content = content[end+1:]
-
-        if ret:
-            debug.info(f'{self.tracefile}: {len(ret)} execution trace/s imported')
-        else:
-            debug.warning(f'{self.tracefile}: No trace found')
-
-        count = 0
-        for trace in ret:
-            count += len(trace)
-
-        debug.info(f'Parsing {count:n} records...')
-
-        ret = self.trace_to_dict(ret)
-
-        return ret
+        return self.trace_to_dict(content)
 
     def read_file(self):
         with open(self.tracefile, 'r') as f:
@@ -59,52 +31,49 @@ class Analyzer:
     def trace_to_dict(self, traces):
         ret = []
 
-        for trace in traces:
-            list_dict = []
-            for (i, line) in enumerate(trace, start=1):
-                try:
-                    new_dict = {}
-                    splitted = shlex.split(line)
-                    for (key, value) in [item.split('=') for item in splitted]:
-                        new_dict[key] = value
-                    list_dict.append(new_dict)
-                except ValueError as e:
-                    debug.error(f'Parsing error: {str(e)}: line {i}: "{line}"')
-            ret.append(list_dict)
+        for (i, trace) in enumerate(traces, start=1):
+            try:
+                new_dict = {}
+                splitted = shlex.split(trace)
+                for (key, value) in [item.split('=') for item in splitted]:
+                    new_dict[key] = value
+                ret.append(new_dict)
+            except ValueError as e:
+                debug.error(f'Parsing error: {str(e)}: line {i}: "{trace}"')
 
         return ret
 
     def analyze(self):
         """
         Traces are divided by:
-            1. Execution trace: each time the program is executed under the server-tracer DBI module
-            2. Session trace: each client session delimited by accepting a new connection
+            1. Session trace: each client session delimited by accepting a new connection
                                 and closing its corresponding socket
-            3. Network trace: each recv and send action during a session trace
+            2. Network trace: each recv and send action during a session trace
         
-        We restart the FSM construction for every new session in an execution trace
+        We restart the FSM construction for every new session
         """
-        for (i, execution_trace) in enumerate(self.traces, start=1):
-            sessions = self.split_sessions(execution_trace)
-            debug.info(f'{len(sessions)} session/s in execution trace no. {i}')
+        sessions = self.split_sessions()
+        debug.info(f'{len(sessions)} session/s found')
 
-            for session in sessions:
-                """ Start construction of FSM by each session """
-                self.fsm.initialize()
+        for session in sessions:
+            """ Start construction of FSM by each session """
+            self.fsm.initialize()
 
-                """ Only use taint information """
-                session_trace = [item for item in session if item['level'] == 'taint']
+            """ Only use taint information """
+            session_trace = [item for item in session if item['level'] == 'taint']
 
-                for net_trace in self.split_network_activity(session_trace):
-                    self.analyze_net_trace(net_trace)
+            for net_trace in self.split_network_activity(session_trace):
+                self.analyze_net_trace(net_trace)
 
         return self.fsm
 
-    def split_sessions(self, execution_trace):
+    def split_sessions(self):
         ret = []
 
         """ Search for either accept new connection or close current ones """
-        fd_actions = [trace for trace in execution_trace if 'action' in trace and trace['action'] in ['accept', 'close']]
+        fd_actions = [trace for trace in self.traces if 'action' in trace and trace['action'] in ['accept', 'close']]
+        print('*** support dup2 action ***')
+        import pdb; pdb.set_trace()
         
         accept = None
         close = None
