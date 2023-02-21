@@ -232,7 +232,7 @@ void replaceRecv(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs) {
     std::cerr << "[*] server-tracer\t: DEBUG\t: recv replaced\t\t\t: " << IMG_Name(img) << std::endl;
 }
 
-void replaceSignatures(IMG img, std::set<ADDRINT> &taintedAdddrs, bool(&taintedRegs)[REG_LAST]) {
+void replaceSignatures(bool KnobDebug, IMG img, std::set<ADDRINT> &taintedAdddrs, bool(&taintedRegs)[REG_LAST], std::set<ADDRINT> &visitedAddrs) {
     RTN rtn;
 
     rtn = RTN_FindByName(img, "recv");

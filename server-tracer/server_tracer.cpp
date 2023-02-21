@@ -16,8 +16,8 @@
 * Rely on spatial location to minimize runtime overhead. Usually,
 * message parsing is done just after receiving data over the network
 */
-#define TRACE_THRESHOLD 1000
-int insCount = 0;
+#define SPATIAL_THRESHOLD 1000
+std::set<ADDRINT> visitedAddrs;
 
 /* Command line options */
 KNOB<bool> KnobDebug(KNOB_MODE_WRITEONCE, "pintool", "debug", "0", "Enable debug messages");
@@ -32,7 +32,7 @@ void fini(INT32 code, VOID *v) {
     LOG_INFO("action=process-end return=%x\n", code);
     CLOSE_LOG();
     if (KnobDebug) {
-        PRINT_DEBUG("Analysis finished\n");
+        PRINT_DEBUG("Analysis finished\t: Checkout \"%s\" folder\n", KnobLogDir.Value().c_str());
     }
 }
 
@@ -69,12 +69,34 @@ void followForkInChild(THREADID threadid, const CONTEXT *ctxt, VOID *v) {
     LOG_INFO("action=new-process-forked\n");
 }
 
-void traceIns(ADDRINT insAddr, std::string *insDis, const char *routine) {
+bool addrIsTraceable(ADDRINT insAddr) {
+    if (visitedAddrs.size() >= SPATIAL_THRESHOLD) {
+        return false;
+    }
+
+    visitedAddrs.insert(insAddr);
+
+    return true;
+}
+
+void logIns(ADDRINT insAddr, std::string *insDis, const char *routine) {
     LOG_INFO("routine=\"%s\" ins-addr=%s ins-dis=\"%s\"\n", routine, hexaddr(insAddr).c_str(), insDis->c_str());
+}
+
+void traceIns(ADDRINT insAddr, std::string *insDis, const char *routine) {
+    if (!addrIsTraceable(insAddr)) {
+        return;
+    }
+
+    logIns(insAddr, insDis, routine);
 }
 
 /* Register copied to memory */
 void regToAddr(ADDRINT insAddr, std::string *insDis, char *routine, ADDRINT reg_r, ADDRINT mem_w) {
+    if (!addrIsTraceable(insAddr)) {
+        return;
+    }
+
     if (taintedRegs[reg_r]) {
         LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=taint-addr origin=reg addr=%s reg=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), hexaddr(mem_w).c_str(), REG_StringShort((REG)reg_r).c_str());
         taintedAdddrs.insert(mem_w);
@@ -85,13 +107,17 @@ void regToAddr(ADDRINT insAddr, std::string *insDis, char *routine, ADDRINT reg_
             LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=free-addr origin=reg addr=%s reg=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), hexaddr(mem_w).c_str(), REG_StringShort((REG)reg_r).c_str());
             taintedAdddrs.erase(taintedAdddrs.find(mem_w));
         } else {
-            traceIns(insAddr, insDis, routine);
+            logIns(insAddr, insDis, routine);
         }
     }
 }
 
 /* Memory copied to register */
 void addrToReg(ADDRINT insAddr, std::string *insDis, char *routine, ADDRINT mem_r, ADDRINT reg_w) {
+    if (!addrIsTraceable(insAddr)) {
+        return;
+    }
+
     if (taintedAdddrs.count(mem_r)) {
         LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=taint-reg origin=addr reg=%s addr=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), REG_StringShort((REG)reg_w).c_str(), hexaddr(mem_r).c_str());
         taintedRegs[reg_w] = true;
@@ -100,12 +126,16 @@ void addrToReg(ADDRINT insAddr, std::string *insDis, char *routine, ADDRINT mem_
         LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=free-reg origin=addr reg=%s addr=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), REG_StringShort((REG)reg_w).c_str(), hexaddr(mem_r).c_str());
         taintedRegs[reg_w] = false;
     } else {
-        traceIns(insAddr, insDis, routine);
+        logIns(insAddr, insDis, routine);
     }
 }
 
 /* Reg copied to another reg */
 void regToReg(ADDRINT insAddr, std::string *insDis, char *routine, ADDRINT reg_r, ADDRINT reg_w) {
+    if (!addrIsTraceable(insAddr)) {
+        return;
+    }
+
     if (taintedRegs[reg_r]) {
         LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=taint-reg origin=reg reg-taint=%s reg-origin=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), REG_StringShort((REG)reg_w).c_str(), REG_StringShort((REG)reg_r).c_str());
         taintedRegs[reg_w] = true;
@@ -113,28 +143,36 @@ void regToReg(ADDRINT insAddr, std::string *insDis, char *routine, ADDRINT reg_r
         LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=free-reg origin=reg reg-free=%s reg-origin=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), REG_StringShort((REG)reg_w).c_str(), REG_StringShort((REG)reg_r).c_str());
         taintedRegs[reg_w] = false;
     } else {
-        traceIns(insAddr, insDis, routine);
+        logIns(insAddr, insDis, routine);
     }
 }
 
 /* Immediate copied to a register */
 void immToReg(ADDRINT insAddr, std::string *insDis, char *routine, ADDRINT reg_w) {
+    if (!addrIsTraceable(insAddr)) {
+        return;
+    }
+
     if (taintedRegs[reg_w]) {
         LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=free-reg reg=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), REG_StringShort((REG)reg_w).c_str());
         taintedRegs[reg_w] = false;
     } else {
-        traceIns(insAddr, insDis, routine);
+        logIns(insAddr, insDis, routine);
     }
 }
 
 /* Immediate copied to memory address */
 void immToAddr(ADDRINT insAddr, std::string *insDis, char *routine, ADDRINT mem_w) {
+    if (!addrIsTraceable(insAddr)) {
+        return;
+    }
+
     /* if mem is not tainted nothing to do */
     if (taintedAdddrs.count(mem_w)) {
         LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=free-addr addr=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), hexaddr(mem_w).c_str());
         taintedAdddrs.erase(taintedAdddrs.find(mem_w));
     } else {
-        traceIns(insAddr, insDis, routine);
+        logIns(insAddr, insDis, routine);
     }
 }
 
@@ -208,6 +246,10 @@ REG getMemoryReg(INS ins) {
 
 /* Print in/direct call instruction with  */
 void traceCall(ADDRINT insAddr, std::string *insDis, char *routine, char *callType, ADDRINT targetAddr) {
+    if (!addrIsTraceable(insAddr)) {
+        return;
+    }
+
     std::string target = RTN_FindNameByAddress(targetAddr);
 
     if (target.empty()) {
@@ -307,28 +349,40 @@ void analyzeCall(INS ins, const char *routine) {
 
 /* Immediate compared to memory address */
 void compareImmToAddr(ADDRINT insAddr, std::string *insDis, char *routine, ADDRINT mem_r, REG reg_r, ADDRINT imm) {
+    if (!addrIsTraceable(insAddr)) {
+        return;
+    }
+
     if (taintedAdddrs.count(mem_r)) {
         LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=compare origin=imm-addr addr=%s reg=%s imm=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), hexaddr(mem_r).c_str(), REG_StringShort(reg_r).c_str(), hexaddr(imm).c_str());
     } else {
-        traceIns(insAddr, insDis, routine);
+        logIns(insAddr, insDis, routine);
     }
 }
 
 /* Immediate compared to register */
 void compareImmToReg(ADDRINT insAddr, std::string *insDis, char *routine, REG reg, ADDRINT imm) {
+    if (!addrIsTraceable(insAddr)) {
+        return;
+    }
+
     if (taintedRegs[reg]) {
         LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=compare origin=imm-reg reg=%s imm=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), REG_StringShort(reg).c_str(), hexaddr(imm).c_str());
     } else {
-        traceIns(insAddr, insDis, routine);
+        logIns(insAddr, insDis, routine);
     }
 }
 
 /* Register compared to register */
 void compareRegToReg(ADDRINT insAddr, std::string *insDis, char *routine, REG reg1, REG reg2) {
+    if (!addrIsTraceable(insAddr)) {
+        return;
+    }
+
     if (taintedRegs[reg1] || taintedRegs[reg2]) {
         LOG_TAINT("routine=\"%s\" ins-addr=%s ins-dis=\"%s\" action=compare origin=reg-reg reg1=%s reg2=%s\n", routine, hexaddr(insAddr).c_str(), insDis->c_str(), REG_StringShort(reg1).c_str(), REG_StringShort(reg2).c_str());
     } else {
-        traceIns(insAddr, insDis, routine);
+        logIns(insAddr, insDis, routine);
     }
 }
 
@@ -393,7 +447,7 @@ void instrumentTrace(TRACE trace, void *v) {
     * Return inmediatly if there are no buffers of interest or we surprassed the
     * spatial location threshold
     */
-    if (taintedAdddrs.empty() || insCount >= TRACE_THRESHOLD) {
+    if (taintedAdddrs.empty() || visitedAddrs.size() >= SPATIAL_THRESHOLD) {
         return;
     }
 
@@ -409,7 +463,7 @@ void instrumentTrace(TRACE trace, void *v) {
     }
 
     for (BBL bbl = TRACE_BblHead(trace); BBL_Valid(bbl); bbl = BBL_Next(bbl)) {
-        for (INS ins = BBL_InsHead(bbl); insCount < TRACE_THRESHOLD && INS_Valid(ins); ins = INS_Next(ins), insCount++) {
+        for (INS ins = BBL_InsHead(bbl); INS_Valid(ins); ins = INS_Next(ins)) {
             if ((INS_Opcode(ins) >= XED_ICLASS_MOV) && (INS_Opcode(ins) <= XED_ICLASS_MOVZX)) {
                 propagateTaint(ins, routine);
             } else if (INS_IsCall(ins)) {
@@ -444,7 +498,7 @@ void moduleLoad(IMG img, void *v) {
         PRINT_DEBUG("Module loaded\t\t\t: %s (%s)\n", IMG_Name(img).c_str(), hexaddr(image_base).c_str());
     }
 
-    replaceSignatures(KnobDebug, img, taintedAdddrs, taintedRegs, insCount);
+    replaceSignatures(KnobDebug, img, taintedAdddrs, taintedRegs, visitedAddrs);
 }
 
 int usage() {

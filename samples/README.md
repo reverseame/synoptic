@@ -135,7 +135,7 @@ $ vim proftpd.conf
 You can now analyze ProFTPD server under `server-tracer`:
 
 ```
-$ sudo /opt/pin-3.25/pin -follow_execv -- /path/to/proftpd-1.3.8/proftpd -c /path/to/proftpd-1.3.8/proftpd.conf -n -X -d 10
+$ sudo /opt/pin-3.25/pin -follow_execv -t /path/to/protocol-modeler/server-tracer/obj-intel64/server_tracer.so -- /path/to/proftpd-1.3.8/proftpd -c /path/to/proftpd-1.3.8/proftpd.conf -n -X -d 10
 ```
 
 ## vsftpd - failing
