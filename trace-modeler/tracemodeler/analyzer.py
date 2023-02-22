@@ -70,39 +70,35 @@ class Analyzer:
     def split_sessions(self):
         ret = []
 
-        """ Search for either accept new connection or close current ones """
-        fd_actions = [trace for trace in self.traces if 'action' in trace and trace['action'] in ['accept', 'close']]
-        print('*** support dup2 action ***')
-        import pdb; pdb.set_trace()
-        
-        accept = None
-        close = None
+        (index, fd) = (None, None)
 
-        """ Asume there will be always a close call matching the file descriptor of a connect call """
-        for fd_action in fd_actions:
-            if fd_action['action'] == 'accept':
-                accept = fd_action
-            elif fd_action['action'] == 'close':
-                close = fd_action
-
-            if (accept is not None) and (close is not None):        
-                if accept['file-descriptor'] == close['file-descriptor']:
-                    ret.append(execution_trace[execution_trace.index(accept):execution_trace.index(close)])
+        """ Asume there will be always a close call matching the file descriptor of a accept call """
+        for (i, trace) in enumerate(self.traces):
+            if 'action' in trace:
+                if (fd is None) and (trace['action'] == 'accept'):
+                    (index, fd) = (i, trace['return'])
+                elif fd is not None:
+                    """ Duplicate file descriptor """
+                    if trace['action'] == 'dup2':
+                        fd = trace['return']
+                    elif (trace['action'] == 'close') and (fd == trace['file-descriptor']):
+                        ret.append(self.traces[index:i])
+                        (index, fd) = (None, None)
 
         return ret
 
     def split_network_activity(self, session):
         """
-        Split traces based in recv calls
+        Split traces based in recv/read calls
 
         :param session: list of traces in a client session
-        :returns: a new list of traces from a recv call until the next
+        :returns: a new list of traces from a recv/read call until the next
         """
         ret = []
         last = 0
 
         for (i, item) in enumerate(session):
-            if ('action' in item) and (item['action'] == 'recv'):
+            if ('action' in item) and (item['action'] in ['recv', 'read']):
                 ret.append(session[last:i])
                 last = i
 
@@ -115,8 +111,8 @@ class Analyzer:
         trace = net_trace[0]    # Asumme recv trace is in first position
 
         if trace['level'] == 'taint':
-            if trace['action'] == 'recv':
-                if int(trace['content-size']) >= 0:
+            if trace['action'] in ['recv', 'read']:
+                if int(trace['return']) >= 0:
                     buffer_content = trace['buffer-content']
                     #buffer_base_address = int(trace['range-start'], 16)
                     message = tracemodeler.model.Message(buffer_content)
