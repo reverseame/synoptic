@@ -343,3 +343,41 @@ class Message:
         self.bytes = binascii.unhexlify(message['content'])
         self.keyword = message['keyword']
         self.constraints = message['constraints']
+
+class Memory:
+    def __init__(self, memory_bytes, memory_addr):
+        self.bytes = memory_bytes
+        self.addr = memory_addr
+        self.size = len(memory_bytes)
+
+    def _is_addr_in_range(self, addr):
+        return (self.addr <= addr) and ((self.addr + self.size - 1) >= addr)
+
+    def _get_index_by_addr(self, addr):
+        if addr is None:
+            return None
+
+        if isinstance(addr, int):
+            if self._is_addr_in_range(addr):
+                return addr - self.addr
+            else:
+                raise IndexError(f'memory range from {hex(self.addr)} to {hex(self.addr + self.size - 1)}')
+        else:
+            raise TypeError(f'memory indices must be integers, not {type(addr).__name__}')
+
+    def __len__(self):
+        return self.size
+    
+    def __getitem__(self, addr):
+        if isinstance(addr, slice):
+            index_slice = slice(self._get_index_by_addr(addr.start), self._get_index_by_addr(addr.stop), addr.step)
+            return self.bytes[index_slice]
+
+        if isinstance(addr, int):
+            return self.bytes[self._get_index_by_addr(addr)]
+
+        raise TypeError(f'memory indices must be integers or slices, not {type(addr).__name__}')
+
+    def __iter__(self):
+        for b in self.bytes:
+            yield b

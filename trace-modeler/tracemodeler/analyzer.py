@@ -2,6 +2,7 @@ import os
 import shlex
 import capstone
 import capstone.x86
+import binascii
 
 """ Set auto local for user messages """
 import locale
@@ -79,7 +80,7 @@ class Analyzer:
                     (index, fd) = (i, trace['return'])
                 elif fd is not None:
                     """ Duplicate file descriptor """
-                    if trace['action'] == 'dup2':
+                    if (trace['action'] == 'dup2') and (trace['file-descriptor'] == fd):
                         fd = trace['return']
                     elif (trace['action'] == 'close') and (fd == trace['file-descriptor']):
                         ret.append(self.traces[index:i])
@@ -126,3 +127,14 @@ class Analyzer:
 
         if message is not None:
             self.fsm.append(message)
+
+        if len(net_trace) > 1:
+            trace = net_trace[0]
+            buffer_data = binascii.unhexlify(trace['buffer-content'])
+            buffer_address = int(trace['buffer-address'], 16)
+
+            memory = tracemodeler.model.Memory(buffer_data, buffer_address)
+
+            assert int(trace['return']) == memory.size
+
+            import pdb; pdb.set_trace()
