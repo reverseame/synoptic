@@ -295,17 +295,12 @@ class Transition:
         return False
 
 class Message:
-    def __init__(self, hexbytes=None, keyword=None, constraints={}):
-        self.hexbytes = hexbytes
-        self.bytes = hexbytes if hexbytes is None else binascii.unhexlify(hexbytes)
+    def __init__(self, msg_bytes=None, msg_addr=None, keyword=None, constraints={}):
+        self.bytes = msg_bytes
+        self.addr = msg_addr
+        self.size = None if msg_bytes is None else len(msg_bytes)
         self.keyword = self.get_keyword() if keyword is None else keyword
         self.constraints = constraints
-
-    def __eq__(self, other):
-        if isinstance(other, Message):
-            return self.keyword == other.keyword
-
-        return False
 
     def get_keyword(self):
         if self.bytes is None:
@@ -331,24 +326,16 @@ class Message:
 
     def dump(self):
         ret = {}
-
-        ret['content'] = self.hexbytes
+        ret['content'] = binascii.hexlify(self.bytes).decode('utf-8')
         ret['keyword'] = self.keyword
         ret['constraints'] = self.constraints
 
         return ret
 
     def load(self, message):
-        self.hexbytes = message['content']
         self.bytes = binascii.unhexlify(message['content'])
         self.keyword = message['keyword']
         self.constraints = message['constraints']
-
-class Memory:
-    def __init__(self, memory_bytes, memory_addr):
-        self.bytes = memory_bytes
-        self.addr = memory_addr
-        self.size = len(memory_bytes)
 
     def _is_addr_in_range(self, addr):
         return (self.addr <= addr) and ((self.addr + self.size - 1) >= addr)
@@ -381,3 +368,9 @@ class Memory:
     def __iter__(self):
         for b in self.bytes:
             yield b
+
+    def __eq__(self, other):
+        if isinstance(other, Message):
+            return self.keyword == other.keyword
+
+        return False

@@ -1,7 +1,7 @@
 import os
 import sys
 import json
-import capstone
+import unicorn
 
 import tracemodeler.args
 import tracemodeler.model
@@ -16,7 +16,7 @@ def main():
         debug.info('v0.0.1')
         sys.exit(0)
 
-    arch_mode = capstone.CS_MODE_32 if args.m32 else capstone.CS_MODE_64
+    arch_mode = unicorn.UC_MODE_32 if args.m32 else unicorn.UC_MODE_64
 
     """ Either load a model file or generate a new one based in a trace file """
     if args.fsm:

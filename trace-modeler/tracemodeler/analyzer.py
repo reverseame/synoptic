@@ -1,7 +1,7 @@
 import os
 import shlex
-import capstone
-import capstone.x86
+import unicorn
+import unicorn.x86_const
 import binascii
 
 """ Set auto local for user messages """
@@ -12,12 +12,25 @@ import tracemodeler.model
 import tracemodeler.debug as debug
 
 class Analyzer:
-    def __init__(self, trace, arch_mode=capstone.CS_MODE_64):
+    def __init__(self, trace, arch_mode=unicorn.UC_MODE_64):
         self.tracefile = os.path.abspath(trace)
         self.traces = self.read_traces()
-        self.md = capstone.Cs(capstone.CS_ARCH_X86, arch_mode)
-        self.md.detail = True
+        self.mu = unicorn.Uc(unicorn.UC_ARCH_X86, arch_mode)
+        self.mu_addr = self._set_up_unicorn_engine()
         self.fsm = tracemodeler.model.ProtocolFSM()
+
+    def _set_up_unicorn_engine(self):
+        """
+        Set up executable memory range
+        """
+        trace = self.traces[1]
+        assert trace['action'] == 'relocate'
+
+        image_low = int(trace['image-low'], 16)
+
+        self.mu.mem_map(image_low, 4 * 1024, perms=unicorn.UC_PROT_EXEC)      # One executable page of 4 KiB
+
+        return image_low
 
     def read_traces(self):
         content = self.read_file()
@@ -108,33 +121,88 @@ class Analyzer:
 
         return ret
 
-    def create_message(self, net_trace):
-        trace = net_trace[0]    # Asumme recv trace is in first position
-
-        if trace['level'] == 'taint':
-            if trace['action'] in ['recv', 'read']:
-                if int(trace['return']) >= 0:
-                    buffer_content = trace['buffer-content']
-                    #buffer_base_address = int(trace['range-start'], 16)
-                    message = tracemodeler.model.Message(buffer_content)
-                    return message
+    def create_message(self, trace):
+        if (trace['level'] == 'taint') and (trace['action'] in ['recv', 'read']):
+            if int(trace['return']) >= 0:
+                buffer_content = binascii.unhexlify(trace['buffer-content'])
+                buffer_addr = int(trace['buffer-address'], 16)
+                message = tracemodeler.model.Message(msg_bytes=buffer_content, msg_addr=buffer_addr)
+                return message
 
         return None
 
     def analyze_net_trace(self, net_trace):
         """ Create message of recv data """
-        message = self.create_message(net_trace)
+        (message_trace, traces) = (net_trace[0], net_trace[1:])     # Asumme recv trace is in first position
+        message = self.create_message(message_trace)
 
         if message is not None:
             self.fsm.append(message)
 
-        if len(net_trace) > 1:
-            trace = net_trace[0]
-            buffer_data = binascii.unhexlify(trace['buffer-content'])
-            buffer_address = int(trace['buffer-address'], 16)
+            buffer_content = message.bytes
+            buffer_addr = message.addr
 
-            memory = tracemodeler.model.Memory(buffer_data, buffer_address)
+            """ Write message to memory """
+            self.mu.mem_map(self.align_addr(buffer_addr), 4 * 1024 * 1024, perms=unicorn.UC_PROT_READ | unicorn.UC_PROT_WRITE)      # 4 MiB of read page size
+            self.mu.mem_write(buffer_addr, buffer_content)
 
-            assert int(trace['return']) == memory.size
+            for trace in traces:
+                if trace['action'] == 'compare':
+                    if trace['origin'] == 'imm-addr':
+                        opcodes = binascii.unhexlify(trace['ins-opcodes'])
+                        self.mu.mem_write(self.mu_addr, opcodes)
+                        addr = int(trace['addr'], 16)
+                        reg = self.get_reg(trace['reg'])
+                        self.mu.reg_write(reg, addr)
+                        debug.debug(f'{trace["ins-addr"]}: {trace["ins-dis"]}: {trace["action"]}')
+                        self.mu.emu_start(self.mu_addr, self.mu_addr + len(opcodes))
+                        flags = self.mu.reg_read(unicorn.x86_const.UC_X86_REG_FLAGS)
+                    elif trace['origin'] == 'imm-reg':
+                        opcodes = binascii.unhexlify(trace['ins-opcodes'])
+                        self.mu.mem_write(self.mu_addr, opcodes)
+                        debug.debug(f'{trace["ins-addr"]}: {trace["ins-dis"]}: {trace["action"]}')
+                        self.mu.emu_start(self.mu_addr, self.mu_addr + len(opcodes))
+                        flags = self.mu.reg_read(unicorn.x86_const.UC_X86_REG_FLAGS)
+                    else:
+                        raise NotImplementedError(f'{trace["action"]}: {trace["ins-dis"]}')
+                elif trace['action'] == 'taint-reg':
+                    if trace['origin'] == 'addr':
+                        opcodes = binascii.unhexlify(trace['ins-opcodes'])
+                        self.mu.mem_write(self.mu_addr, opcodes)
+                        debug.debug(f'{trace["ins-addr"]}: {trace["ins-dis"]}: {trace["action"]}')
+                        try:
+                            self.mu.emu_start(self.mu_addr, self.mu_addr + len(opcodes))
+                        except unicorn.unicorn.UcError:
+                            import pdb; pdb.set_trace()
+                elif trace['action'] == 'taint-addr':
+                    opcodes = binascii.unhexlify(trace['ins-opcodes'])
+                    self.mu.mem_write(self.mu_addr, opcodes)
+                    addr = int(trace['addr'], 16)
+                    reg = self.get_reg(trace['reg'])
+                    self.mu.reg_write(reg, addr)
+                    for (region_start, region_end, region_perms) in self.mu.mem_regions():
+                        if region_start <= addr <= region_end:
+                            break
+                    else:
+                        self.mu.mem_map(self.align_addr(addr), 4 * 1024 * 1024, perms=unicorn.UC_PROT_READ | unicorn.UC_PROT_WRITE)      # 4 MiB of write page size
+                    debug.debug(f'{trace["ins-addr"]}: {trace["ins-dis"]}: {trace["action"]}')
+                    self.mu.emu_start(self.mu_addr, self.mu_addr + len(opcodes))
+                elif trace['action'] == 'free-reg':
+                    reg = self.get_reg(trace['reg'])
+                    self.mu.reg_write(reg, 0x0)
+                else:
+                    raise NotImplementedError(f'{trace["action"]}: {trace["ins-dis"]}')
 
-            import pdb; pdb.set_trace()
+    def is_equal(self, flags):
+        return (flags & 0x0040) == 1
+
+    def align_addr(self, addr):
+        return addr & 0xfffffffff000
+
+    def get_reg(self, reg):
+        if reg == 'rax':
+            return unicorn.x86_const.UC_X86_REG_RAX
+        elif reg == 'r13':
+            return unicorn.x86_const.UC_X86_REG_R13
+
+        raise NotImplementedError
