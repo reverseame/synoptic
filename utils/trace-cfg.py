@@ -117,26 +117,29 @@ def analyze(data):
     md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
     md.detail = True
 
-    sessions = split_sessions(data)
-    print_info(f'{len(sessions)} session/s found')
+    refinements = 0
 
-    for session in sessions:
-        for (i, net_trace) in enumerate(split_network_activity(session)):
-            print(f'Iteration {i}')
+    for session in split_sessions(data):
+        net_traces = split_network_activity(session)
+        for net_trace in net_traces:
             trace_cfg.initialize()
             trace_cfg = analyze_net_trace(trace_cfg, md, net_trace)
+            refinements += 1
+            print_info(f'CFG refinement {refinements}')
 
-    print_info(f'Done!')
-
-    for (i, node) in enumerate(trace_cfg):
-        print(f'\tNode {i}\n{str(node)}')
+    return trace_cfg
 
 def main(args):
     file_data = read_file(args.log)
     print_info(f'Parsing {len(file_data)} records...')
     data = parse_data(file_data)
 
-    analyze(data)
+    trace_cfg = analyze(data)
+
+    if args.export:
+        trace_cfg.export_graph(args.export)
+        print_info(f'{args.export}.gv.pdf\t: CFG saved')
+
 
 def check_args(args):
     if args.log:
@@ -147,6 +150,15 @@ def check_args(args):
     else:
         print_error('You need to specify a .log file (--log)')
         sys.exit(-1)
+
+    if args.export:
+        if os.path.isfile(args.export):
+            print('The following file will be overwritten:')
+            print(f'\t{args.export}')
+            response = input('Do you want to continue? [Y/n] ')
+            if response and (response not in ['y', 'Y', 'yes', 'Yes']):
+                print('Abort.')
+                sys.exit(-1)
 
 def parse_args(arguments):
     argparser = argparse.ArgumentParser(description='Join all .log files ordered by timestamp')

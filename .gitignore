@@ -12,3 +12,5 @@ venv/
 doc/
 test/
 samples/*/
+*.bck
+*.bck.*
