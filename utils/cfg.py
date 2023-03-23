@@ -69,6 +69,7 @@ class Group:
         self.inss = []
         self.leader = None
         self.tail = None
+        self.taint = False
 
     def add(self, ins):
         if self.leader is None:
@@ -109,6 +110,7 @@ class Edge:
 class Node:
     def __init__(self, group):
         self.group = group
+        self.taint = group.taint
         self.edges = []
 
     def __eq__(self, other):
@@ -124,17 +126,23 @@ class Node:
         for edge in self.edges:
             yield edge
 
+    def __hash__(self):
+        return self.group.leader.addr
+
 class CFG:
     def __init__(self):
         self.entry = None
         self.index = None
-        self.last = None
+        self.last = set()
+        self.last_inserted = None
 
     def is_empty(self):
         return self.entry is None
 
     def initialize(self):
-        self.index = self.entry
+        if not self.is_empty():
+            self.index = self.entry
+            self.last.add(self.last_inserted)
 
     def add(self, group):
         node = Node(group)
@@ -142,7 +150,7 @@ class CFG:
         if self.is_empty():
             self.entry = node
             self.index = self.entry
-            self.last = self.entry
+            self.last_inserted = self.entry
         else:
             """
             This node already have edges defines, so we need to check if the new
@@ -159,20 +167,46 @@ class CFG:
                         if edge.dst == node:
                             edge.count += 1
                             self.index = edge.dst
+                            """ Preserve if node was tainted in some time """
+                            self.index.taint = self.index.taint if self.index.taint else node.taint
                             break
                     else:
-                        #TODO check if edge dst is alreay defined and set transition to that node
+                        """ Check if edge dst is alreay defined and set transition to that node """
+                        node_found = None
+                        pending_edges = [(self.index, self.index.edges)]
+                        already_seen =  []
+                        
+                        while (len(pending_edges) > 0) and (node_found is None):
+                            (n, edges) = pending_edges.pop(0)
+                            for edge in edges:
+                                if edge.dst == node:
+                                    node_found = edge.dst
+                                    continue
+                                node_id = hex(n.group.leader.addr)
+                                edge_node_id = hex(edge.dst.group.leader.addr)
+                                if (node_id, edge_node_id) not in already_seen:
+                                    already_seen.append((node_id, edge_node_id))
 
-                        """ Add a new one if not alreay defined """
-                        new_edge = Edge(node)
-                        self.index.edges.append(new_edge)
-                        self.index = node
-                        self.last = node
+                                new_edges = (edge.dst, edge.dst.edges)
+                                pending_edges.append(new_edges)
+
+                        if node_found is None:
+                            """ Add a new one if not alreay defined """
+                            new_edge = Edge(node)
+                            self.index.edges.append(new_edge)
+                            self.index = node
+                            self.last_inserted = node
+                        else:
+                            new_edge = Edge(node_found)
+                            self.index.edges.append(new_edge)
+                            self.index = node_found
+                            self.index.taint = self.index.taint if self.index.taint else node.taint
+                            self.last_inserted = node_found
             else:
                 new_edge = Edge(node)
                 self.index.edges.append(new_edge)
                 self.index = node
-                self.last = node
+                self.last_inserted = node
 
     def export_graph(self, output):
         graph = graphviz.Digraph(output)
@@ -187,7 +221,12 @@ class CFG:
         """ CFG node style """
         entry_node_id = hex(self.entry.group.leader.addr)
         label = '\l'.join([str(ins) for ins in self.entry.group.inss]) + '\l'
-        graph.node(entry_node_id, label=label)
+
+        if self.entry.taint:
+            graph.node(entry_node_id, label=label, style='filled', fillcolor='lightblue')
+        else:
+            graph.node(entry_node_id, label=label)
+
         graph.edge('entry', entry_node_id)
 
 
@@ -204,7 +243,10 @@ class CFG:
 
                 if (node_id, edge_node_id) not in already_seen:
                     label = '\l'.join([str(ins) for ins in edge.dst.group.inss]) + '\l'     # '\l' means left-aligned, last one is mandatory to ensure alignment of label last line
-                    graph.node(edge_node_id, label=label)
+                    if edge.dst.taint:
+                        graph.node(edge_node_id, label=label, style='filled', fillcolor='lightblue')
+                    else:
+                        graph.node(edge_node_id, label=label)
                     graph.edge(node_id, edge_node_id, label=str(edge.count))
                     already_seen.append((node_id, edge_node_id))
 
@@ -213,8 +255,11 @@ class CFG:
 
         """ CFG last transition """
         graph.node('final', label='', shape='doublecircle', style='filled', color='black', fixedsize='true')
-        last_node_id = hex(self.last.group.leader.addr)
-        graph.edge(last_node_id, 'final')
+
+        for last_node in self.last:
+            last_node_id = hex(last_node.group.leader.addr)
+            graph.edge(last_node_id, 'final', color='lightcoral')
+            graph.node(last_node_id, style='filled', fillcolor='lightcoral')
 
         """ Generate Graphviz DOT file (.gv) """
         graph.render()

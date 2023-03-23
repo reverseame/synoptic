@@ -106,6 +106,9 @@ def analyze_net_trace(trace_cfg, md, net_trace):
             ins = cfg.Ins(addr, opcodes, dis)
             group.add(ins)
 
+            if item['level'] == 'taint':
+                group.taint = True
+
             if ins.type != cfg.INS_TYPE_STANDARD:
                 trace_cfg.add(group)
                 group = cfg.Group()
