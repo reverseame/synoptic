@@ -107,7 +107,7 @@ def analyze_net_trace(trace_cfg, md, net_trace):
             group.add(ins)
 
             if item['level'] == 'taint':
-                group.taint = True
+                group.tainted = True
 
             if ins.type != cfg.INS_TYPE_STANDARD:
                 trace_cfg.add(group)

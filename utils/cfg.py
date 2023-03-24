@@ -69,7 +69,7 @@ class Group:
         self.inss = []
         self.leader = None
         self.tail = None
-        self.taint = False
+        self.tainted = False
 
     def add(self, ins):
         if self.leader is None:
@@ -110,8 +110,12 @@ class Edge:
 class Node:
     def __init__(self, group):
         self.group = group
-        self.taint = group.taint
+        self.tainted = group.tainted
         self.edges = []
+
+    def taint(self, node):
+        """ Preserve if node was tainted at some time """
+        self.tainted = (self.tainted or node.tainted)
 
     def __eq__(self, other):
         if isinstance(other, Node):
@@ -167,8 +171,8 @@ class CFG:
                         if edge.dst == node:
                             edge.count += 1
                             self.index = edge.dst
-                            """ Preserve if node was tainted in some time """
-                            self.index.taint = self.index.taint if self.index.taint else node.taint
+                            """ Keep taint info """
+                            self.index.taint(node)
                             break
                     else:
                         """ Check if edge dst is alreay defined and set transition to that node """
@@ -181,7 +185,7 @@ class CFG:
                             for edge in edges:
                                 if edge.dst == node:
                                     node_found = edge.dst
-                                    continue
+                                    break
                                 node_id = hex(n.group.leader.addr)
                                 edge_node_id = hex(edge.dst.group.leader.addr)
                                 if (node_id, edge_node_id) not in already_seen:
@@ -200,7 +204,7 @@ class CFG:
                             new_edge = Edge(node_found)
                             self.index.edges.append(new_edge)
                             self.index = node_found
-                            self.index.taint = self.index.taint if self.index.taint else node.taint
+                            self.index.taint(node)
                             self.last_inserted = node_found
             else:
                 new_edge = Edge(node)
