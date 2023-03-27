@@ -127,6 +127,7 @@ def analyze(data):
         for net_trace in net_traces:
             trace_cfg.initialize()
             trace_cfg = analyze_net_trace(trace_cfg, md, net_trace)
+            trace_cfg.finalize()
             refinements += 1
             print_info(f'CFG refinement {refinements}')
 

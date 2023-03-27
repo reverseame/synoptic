@@ -13,13 +13,14 @@ INS_TYPE_RETURN = 3
 INS_TYPE_STANDARD = 4    # Any other instruction
 
 class Ins:
-    def __init__(self, addr, opcodes, dis):
+    def __init__(self, addr, opcodes, dis, optional=''):
         self.addr = addr
         self.opcodes = opcodes
         self.size = len(opcodes)
         self.dis = dis
         self.type = self._get_ins_type(dis)
         self.info = self._get_ins_info(dis)
+        self.optional = optional
 
     def _get_ins_type(self, dis):
         if capstone.x86.X86_GRP_JUMP in dis.groups:
@@ -62,7 +63,12 @@ class Ins:
         return False
 
     def __str__(self):
-        return f'{hex(self.addr)} {[self.size]}: {self.dis.mnemonic} {self.dis.op_str}'
+        string = f'{hex(self.addr)} {[self.size]}: {self.dis.mnemonic} {self.dis.op_str}'
+
+        if self.optional:
+            string += f'({self.optional})'
+
+        return string
 
 class Group:
     def __init__(self):
@@ -146,6 +152,9 @@ class CFG:
     def initialize(self):
         if not self.is_empty():
             self.index = self.entry
+
+    def finalize(self):
+        if not self.is_empty():
             self.last.add(self.last_inserted)
 
     def add(self, group):
@@ -226,7 +235,7 @@ class CFG:
         entry_node_id = hex(self.entry.group.leader.addr)
         label = '\l'.join([str(ins) for ins in self.entry.group.inss]) + '\l'
 
-        if self.entry.taint:
+        if self.entry.tainted:
             graph.node(entry_node_id, label=label, style='filled', fillcolor='lightblue')
         else:
             graph.node(entry_node_id, label=label)
@@ -247,7 +256,7 @@ class CFG:
 
                 if (node_id, edge_node_id) not in already_seen:
                     label = '\l'.join([str(ins) for ins in edge.dst.group.inss]) + '\l'     # '\l' means left-aligned, last one is mandatory to ensure alignment of label last line
-                    if edge.dst.taint:
+                    if edge.dst.tainted:
                         graph.node(edge_node_id, label=label, style='filled', fillcolor='lightblue')
                     else:
                         graph.node(edge_node_id, label=label)
