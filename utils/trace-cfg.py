@@ -99,11 +99,18 @@ def analyze_net_trace(trace_cfg, md, net_trace):
 
     for item in net_trace:
         if 'ins-opcodes' in item:
+            routine = item['routine']
             addr = int(item['ins-addr'], 16)
             opcodes = binascii.unhexlify(item['ins-opcodes'])
             dis = next(md.disasm(opcodes, addr))                # Just dissasemble one instruction
 
-            ins = cfg.Ins(addr, opcodes, dis)
+            """ Get call target """
+            if (item['action'] == 'direct-call') or (item['action'] == 'indirect-call'):
+                comment = item['target']
+                ins = cfg.Ins(addr, opcodes, dis, routine=routine, comment=comment)
+            else:
+                ins = cfg.Ins(addr, opcodes, dis, routine=routine)
+
             group.add(ins)
 
             if item['level'] == 'taint':
