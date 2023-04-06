@@ -94,7 +94,7 @@ def split_sessions(data):
 
     return ret
 
-def analyze_net_trace(trace_cfg, md, net_trace):
+def analyze_net_trace(dynamic_cfg, net_trace):
     group = cfg.Group()
 
     for item in net_trace:
@@ -102,54 +102,55 @@ def analyze_net_trace(trace_cfg, md, net_trace):
             routine = item['routine']
             addr = int(item['ins-addr'], 16)
             opcodes = binascii.unhexlify(item['ins-opcodes'])
-            dis = next(md.disasm(opcodes, addr))                # Just dissasemble one instruction
 
             """ Get call target """
             if (item['action'] == 'direct-call') or (item['action'] == 'indirect-call'):
                 comment = item['target']
-                ins = cfg.Ins(addr, opcodes, dis, routine=routine, comment=comment)
+                ins = cfg.Ins(addr, opcodes, routine=routine, comment=comment)
             else:
-                ins = cfg.Ins(addr, opcodes, dis, routine=routine)
+                ins = cfg.Ins(addr, opcodes, routine=routine)
+
+            if item['level'] == 'taint':
+                ins.tainted = True
+                group.tainted = True
 
             group.add(ins)
 
-            if item['level'] == 'taint':
-                group.tainted = True
-
+            """ End of group if last ins is either call, ret, or jump """
             if ins.type != cfg.INS_TYPE_STANDARD:
-                trace_cfg.add(group)
+                dynamic_cfg.add(group)
                 group = cfg.Group()
 
-    return trace_cfg
-    
+    return dynamic_cfg
+
 def analyze(data):
-    trace_cfg = cfg.CFG()
-    md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
-    md.detail = True
+    dynamic_cfg = cfg.DynamicCFG()
 
     refinements = 0
 
     for session in split_sessions(data):
         net_traces = split_network_activity(session)
         for net_trace in net_traces:
-            trace_cfg.initialize()
-            trace_cfg = analyze_net_trace(trace_cfg, md, net_trace)
-            trace_cfg.finalize()
+            dynamic_cfg.initialize()
+            dynamic_cfg = analyze_net_trace(dynamic_cfg, net_trace)
+            dynamic_cfg.finalize()
             refinements += 1
             print_info(f'CFG refinement {refinements}')
+            if refinements == 2:
+                return dynamic_cfg
 
-    return trace_cfg
+    return dynamic_cfg
 
 def main(args):
     file_data = read_file(args.log)
     print_info(f'Parsing {len(file_data)} records...')
     data = parse_data(file_data)
 
-    trace_cfg = analyze(data)
+    dynamic_cfg = analyze(data)
 
     if args.export:
-        trace_cfg.export_graph(args.export)
-        print_info(f'{args.export}.gv.pdf\t: CFG saved')
+        dynamic_cfg.export_graph(args.export)
+        print_info(f'{args.export}\t: CFG saved')
 
 
 def check_args(args):
