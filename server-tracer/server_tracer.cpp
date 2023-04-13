@@ -96,22 +96,22 @@ void logInsOpcodes(ADDRINT insAddr, USIZE insSize) {
     }
 }
 
-void logIns(ADDRINT insAddr, USIZE insSize, std::string *insDis, const char *routine) {
-    LOG_INFO("action=log-ins routine=\"%s\" ins-addr=%s ins-dis=\"%s\" ins-opcodes=", routine, hexaddr(insAddr).c_str(), insDis->c_str());
+void logIns(ADDRINT insAddr, USIZE insSize, std::string *insDis, const char *routine, ADDRINT routineAddr) {
+    LOG_INFO("action=log-ins routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
     logInsOpcodes(insAddr, insSize);
     LOG_RAW("\n");
 }
 
-void traceIns(ADDRINT insAddr, USIZE insSize, std::string *insDis, const char *routine) {
+void traceIns(ADDRINT insAddr, USIZE insSize, std::string *insDis, const char *routine, ADDRINT routineAddr) {
     if (!addrIsTraceable(insAddr)) {
         return;
     }
 
-    logIns(insAddr, insSize, insDis, routine);
+    logIns(insAddr, insSize, insDis, routine, routineAddr);
 }
 
 /* Register copied to memory */
-void regToAddr(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, REG regAddr, ADDRINT addr, REG reg) {
+void regToAddr(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, REG regAddr, ADDRINT addr, REG reg, ADDRINT routineAddr) {
     if (!addrIsTraceable(insAddr)) {
         return;
     }
@@ -130,13 +130,13 @@ void regToAddr(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routin
             LOG_RAW(" origin=reg addr=%s reg-addr=%s reg=%s\n", hexaddr(addr).c_str(), REG_StringShort(regAddr).c_str(), REG_StringShort(reg).c_str());
             taintedAdddrs.erase(taintedAdddrs.find(addr));
         } else {
-            logIns(insAddr, insSize, insDis, routine);
+            logIns(insAddr, insSize, insDis, routine, routineAddr);
         }
     }
 }
 
 /* Memory copied to register */
-void addrToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT mem_r, REG reg_w) {
+void addrToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT mem_r, REG reg_w, ADDRINT routineAddr) {
     if (!addrIsTraceable(insAddr)) {
         return;
     }
@@ -153,12 +153,12 @@ void addrToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routin
         LOG_RAW(" origin=addr reg=%s addr=%s\n", REG_StringShort(reg_w).c_str(), hexaddr(mem_r).c_str());
         taintedRegs[reg_w] = false;
     } else {
-        logIns(insAddr, insSize, insDis, routine);
+        logIns(insAddr, insSize, insDis, routine, routineAddr);
     }
 }
 
 /* Reg copied to another reg */
-void regToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, REG reg_r, REG reg_w) {
+void regToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, REG reg_r, REG reg_w, ADDRINT routineAddr) {
     if (!addrIsTraceable(insAddr)) {
         return;
     }
@@ -174,12 +174,12 @@ void regToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine
         LOG_RAW(" origin=reg reg-free=%s reg-origin=%s\n", REG_StringShort(reg_w).c_str(), REG_StringShort(reg_r).c_str());
         taintedRegs[reg_w] = false;
     } else {
-        logIns(insAddr, insSize, insDis, routine);
+        logIns(insAddr, insSize, insDis, routine, routineAddr);
     }
 }
 
 /* Immediate copied to a register */
-void immToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, REG reg_w) {
+void immToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, REG reg_w, ADDRINT routineAddr) {
     if (!addrIsTraceable(insAddr)) {
         return;
     }
@@ -190,12 +190,12 @@ void immToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine
         LOG_RAW(" reg=%s\n", REG_StringShort(reg_w).c_str());
         taintedRegs[reg_w] = false;
     } else {
-        logIns(insAddr, insSize, insDis, routine);
+        logIns(insAddr, insSize, insDis, routine, routineAddr);
     }
 }
 
 /* Immediate copied to memory address */
-void immToAddr(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT mem_w) {
+void immToAddr(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT mem_w, ADDRINT routineAddr) {
     if (!addrIsTraceable(insAddr)) {
         return;
     }
@@ -207,7 +207,7 @@ void immToAddr(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routin
         LOG_RAW(" addr=%s\n", hexaddr(mem_w).c_str());
         taintedAdddrs.erase(taintedAdddrs.find(mem_w));
     } else {
-        logIns(insAddr, insSize, insDis, routine);
+        logIns(insAddr, insSize, insDis, routine, routineAddr);
     }
 }
 
@@ -394,7 +394,7 @@ void analyzeCall(INS ins, const char *routine) {
 }
 
 /* Immediate compared to memory address */
-void compareImmToAddr(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT mem_r, REG reg_r, ADDRINT imm) {
+void compareImmToAddr(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT mem_r, REG reg_r, ADDRINT imm, ADDRINT routineAddr) {
     if (!addrIsTraceable(insAddr)) {
         return;
     }
@@ -404,12 +404,12 @@ void compareImmToAddr(ADDRINT insAddr, USIZE insSize, std::string *insDis, char 
         logInsOpcodes(insAddr, insSize);
         LOG_RAW(" origin=imm-addr addr=%s reg=%s imm=%s\n", hexaddr(mem_r).c_str(), REG_StringShort(reg_r).c_str(), hexaddr(imm).c_str());
     } else {
-        logIns(insAddr, insSize, insDis, routine);
+        logIns(insAddr, insSize, insDis, routine, routineAddr);
     }
 }
 
 /* Immediate compared to register */
-void compareImmToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, REG reg, ADDRINT regValue, ADDRINT imm) {
+void compareImmToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, REG reg, ADDRINT regValue, ADDRINT imm, ADDRINT routineAddr) {
     if (!addrIsTraceable(insAddr)) {
         return;
     }
@@ -419,12 +419,12 @@ void compareImmToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *
         logInsOpcodes(insAddr, insSize);
         LOG_RAW(" action=compare origin=imm-reg reg=%s reg-value=%s imm=%s\n", REG_StringShort(reg).c_str(), hexaddr(regValue).c_str(), hexaddr(imm).c_str());
     } else {
-        logIns(insAddr, insSize, insDis, routine);
+        logIns(insAddr, insSize, insDis, routine, routineAddr);
     }
 }
 
 /* Register compared to register */
-void compareRegToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, REG reg1, REG reg2) {
+void compareRegToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, REG reg1, REG reg2, ADDRINT routineAddr) {
     if (!addrIsTraceable(insAddr)) {
         return;
     }
@@ -434,7 +434,7 @@ void compareRegToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *
         logInsOpcodes(insAddr, insSize);
         LOG_RAW(" action=compare origin=reg-reg reg1=%s reg2=%s\n", REG_StringShort(reg1).c_str(), REG_StringShort(reg2).c_str());
     } else {
-        logIns(insAddr, insSize, insDis, routine);
+        logIns(insAddr, insSize, insDis, routine, routineAddr);
     }
 }
 
@@ -509,14 +509,18 @@ void instrumentTrace(TRACE trace, void *v) {
     }
 
     /* Just analyze the main executable */
-    IMG img = IMG_FindByAddress(TRACE_Address(trace));
+    ADDRINT traceAddr = TRACE_Address(trace);
+    IMG img = IMG_FindByAddress(traceAddr);
     if (!IMG_Valid(img) || !IMG_IsMainExecutable(img)) {
         return;
     }
 
     const char *routine = "unknown";
-    if (RTN_Valid(TRACE_Rtn(trace))) {
-        routine = RTN_Name(TRACE_Rtn(trace)).c_str();
+    ADDRINT routineAddr = 0;
+    RTN rtn = RTN_FindByAddress(traceAddr);
+    if (RTN_Valid(rtn)) {
+        routine = RTN_Name(rtn).c_str();
+        routineAddr = RTN_Address(rtn);
     }
 
     for (BBL bbl = TRACE_BblHead(trace); BBL_Valid(bbl); bbl = BBL_Next(bbl)) {
@@ -534,6 +538,7 @@ void instrumentTrace(TRACE trace, void *v) {
                     IARG_UINT32, INS_Size(ins),
                     IARG_PTR, new std::string(INS_Disassemble(ins)),
                     IARG_PTR, routine,
+                    IARG_ADDRINT, routineAddr,
                     IARG_END);
             }
         }

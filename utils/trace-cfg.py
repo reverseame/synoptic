@@ -96,6 +96,7 @@ def split_sessions(data):
 
 def analyze_net_trace(dynamic_cfg, net_trace):
     group = cfg.Group()
+    ins = None
 
     for item in net_trace:
         if 'ins-opcodes' in item:
@@ -117,26 +118,27 @@ def analyze_net_trace(dynamic_cfg, net_trace):
             group.add(ins)
 
             """ End of group if last ins is either call, ret, or jump """
-            if ins.type != cfg.INS_TYPE_STANDARD:
+            if not ins.is_standard():
                 dynamic_cfg.add(group)
                 group = cfg.Group()
+
+    """ Add last group if last instruction is standard """
+    if (ins is not None) and (ins.is_standard()):
+        dynamic_cfg.add(group)
 
     return dynamic_cfg
 
 def analyze(data):
     dynamic_cfg = cfg.DynamicCFG()
 
-    refinements = 0
-
     for session in split_sessions(data):
         net_traces = split_network_activity(session)
-        for net_trace in net_traces:
-            dynamic_cfg.initialize()
-            dynamic_cfg = analyze_net_trace(dynamic_cfg, net_trace)
-            dynamic_cfg.finalize()
-            refinements += 1
-            print_info(f'CFG refinement {refinements}')
-            if refinements == 2:
+        for (i, net_trace) in enumerate(net_traces):
+            if i == 1:
+                dynamic_cfg.initialize()
+                dynamic_cfg = analyze_net_trace(dynamic_cfg, net_trace)
+                dynamic_cfg.finalize()
+                print_info(f'CFG refinement {i}')
                 return dynamic_cfg
 
     return dynamic_cfg
@@ -148,10 +150,11 @@ def main(args):
 
     dynamic_cfg = analyze(data)
 
-    if args.export:
+    if dynamic_cfg.is_empty():
+        print_warning('Empty CFG')
+    elif args.export:
         dynamic_cfg.export_graph(args.export)
         print_info(f'{args.export}\t: CFG saved')
-
 
 def check_args(args):
     if args.log:

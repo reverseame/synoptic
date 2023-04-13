@@ -8,11 +8,17 @@ import logging
 logging.getLogger('graphviz').setLevel(logging.WARNING)
 import graphviz
 
+""" Ins type """
 INS_TYPE_JUMP = 0        # Direct and indirect jump
 INS_TYPE_BRANCH = 1      # Conditional jump
 INS_TYPE_CALL = 2
 INS_TYPE_RETURN = 3
 INS_TYPE_STANDARD = 4    # Any other instruction
+
+""" Graphviz colors """
+COLOR_BRANCH_TAKEN = 'chartreuse3'
+COLOR_BRANCH_NOT_TAKEN = 'firebrick3'
+COLOR_TAINTED = 'lightblue'
 
 """ Capstone Dissasembler """
 md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
@@ -79,8 +85,9 @@ class Ins:
     def is_plt_jmp(self):
         """ Assume any `jmp qword ptr [rip]` as plt jump """
         if self.is_jump():
-            if self.dis.operands[0].type == capstone.x86.X86_OP_MEM:
-                return self.dis.operands[0].value.mem.base == capstone.x86.X86_REG_RIP
+            operand = self.dis.operands[0]
+            if operand.type == capstone.x86.X86_OP_MEM:
+                return operand.value.mem.base == capstone.x86.X86_REG_RIP
 
         return False
 
@@ -89,6 +96,15 @@ class Ins:
 
     def is_control_flow(self):
         return self.is_return() or self.is_call()
+
+    def is_branch_taken(self, ins):
+        if self.is_branch():
+            operand = self.dis.operands[0]
+            if operand.type == capstone.x86.X86_OP_IMM:
+                """ Branch is taken if target addr is the same to ins addr """
+                return operand.imm == ins.addr
+
+        return False
 
     def dumps(self, opcodes_padding=0):
         tab_padding = ' ' * 5
@@ -125,6 +141,11 @@ class Group:
 
         self.inss.append(ins)
 
+    def extend(self, group):
+        for ins in group:
+            if ins not in self.inss:
+                self.add(ins)
+
     def __str__(self):
         return '\n'.join([str(ins) for ins in self.inss])
 
@@ -137,8 +158,7 @@ class Group:
 
     def __eq__(self, other):
         if isinstance(other, Group):
-            if len(self) == len(other):
-                return all([ins == ins_other for (ins, ins_other) in zip(self, other)])
+            return self.leader == other.leader
 
         return False
 
@@ -146,6 +166,7 @@ class Edge:
     def __init__(self, dst):
         self.dst = dst
         self.count = 1
+        self.branch_taken = False
 
     def __eq__(self, other):
         if isinstance(other, Edge):
@@ -158,10 +179,14 @@ class Node:
         self.group = group
         self.tainted = group.tainted
         self.edges = []
+        self.diff = 0
 
     def taint(self, node):
         """ Preserve if node was tainted at some time """
         self.tainted = self.tainted or node.tainted
+
+    def set_diff(self, node):
+        self.diff = (self.group.leader.addr - node.group.leader.addr)
 
     def __eq__(self, other):
         if isinstance(other, Node):
@@ -181,12 +206,12 @@ class Node:
 
 class CFG:
     def __init__(self):
+        self.nodes = []
         self.entry_node = None
-        self.index_node = None
-        self.last_nodes = set()
         self.last_inserted = None
+        self.last_nodes = []
         self.tainted = False
-        self.next = set()
+        self.next = []
         self.previous = None
 
     def taint(self, node):
@@ -198,78 +223,51 @@ class CFG:
 
     def initialize(self):
         if not self.is_empty():
-            self.index_node = self.entry_node
+            self.last_inserted = self.entry_node
 
     def finalize(self):
         if not self.is_empty():
-            self.last_nodes.add(self.last_inserted)
+            self.last_nodes.append(self.last_inserted)
+
+    def _add_node_transition(self, node):
+        new_edge = Edge(node)
+        """ Check if new branch edge transition follows true or false predicate """
+        if self.last_inserted.group.tail.is_branch():
+            new_edge.branch_taken = self.last_inserted.group.tail.is_branch_taken(node.group.leader)
+        self.last_inserted.edges.append(new_edge)
+        self.last_inserted = node
 
     def add(self, group):
         node = Node(group)
 
         if self.is_empty():
             self.entry_node = node
-            self.index_node = self.entry_node
             self.last_inserted = self.entry_node
+            self.nodes.append(node)
         else:
-            """
-            This node already have edges defines, so we need to check if the new
-            node is alreay defined
-            """
-            if self.index_node.edges:
-                """
-                If index is equal to incomming node, do nothing. Otherwise,
-                check transition
-                """
-                if self.index_node != node:
-                    for edge in self.index_node:
-                        """ Check if transition is alreay defined and cosume its destination """
-                        if edge.dst == node:
-                            edge.count += 1
-                            self.index_node = edge.dst
-                            """ Keep taint info """
-                            self.index_node.taint(node)
-                            self.taint(node)
-                            self.last_inserted = index_node
-                            break
-                    else:
-                        """ Check if edge dst is alreay defined and set transition to that node """
-                        node_found = None
-                        pending_edges = [(self.index_node, self.index_node.edges)]
-                        already_seen =  []
-                        
-                        while (len(pending_edges) > 0) and (node_found is None):
-                            (n, edges) = pending_edges.pop(0)
-                            for edge in edges:
-                                if edge.dst == node:
-                                    node_found = edge.dst
-                                    break
-                                node_id = hex(n.group.leader.addr)
-                                edge_node_id = hex(edge.dst.group.leader.addr)
-                                if (node_id, edge_node_id) not in already_seen:
-                                    already_seen.append((node_id, edge_node_id))
-
-                                new_edges = (edge.dst, edge.dst.edges)
-                                pending_edges.append(new_edges)
-
-                        if node_found is None:
-                            """ Add a new one if not alreay defined """
-                            new_edge = Edge(node)
-                            self.index_node.edges.append(new_edge)
-                            self.index_node = node
-                            self.last_inserted = node
-                        else:
-                            new_edge = Edge(node_found)
-                            self.index_node.edges.append(new_edge)
-                            self.index_node = node_found
-                            self.index_node.taint(node)
-                            self.taint(node)
-                            self.last_inserted = node_found
+            """ Search if node is already defined """
+            if node in self.nodes:
+                """ Check if transition is already defined to the new node """
+                for edge in self.last_inserted.edges:
+                    """ Check if transition is already defined and cosume its destination """
+                    if edge.dst == node:
+                        edge.count += 1
+                        self.last_inserted = edge.dst
+                        """ Keep taint info """
+                        self.last_inserted.taint(node)
+                        self.taint(node)
+                        break
+                else:
+                    node_found = self.nodes[self.nodes.index(node)]
+                    self._add_node_transition(node_found)
+                    self.last_inserted.taint(node)
+                    self.taint(node)
             else:
-                new_edge = Edge(node)
-                self.index_node.edges.append(new_edge)
-                self.index_node = node
-                self.last_inserted = node
+                self._add_node_transition(node)
+                self.nodes.append(node)
+
+            """ Calculate last_inserted node distance from entry node """
+            self.last_inserted.set_diff(self.entry_node)
 
     def __hash__(self):
         return self.entry_node.group.leader.addr
@@ -283,61 +281,56 @@ class CFG:
 class DynamicCFG:
     def __init__(self):
         self.entry_cfg = None
-        self.index_cfg = None
         self.last_cfg = None
 
     def is_empty(self):
         return self.entry_cfg is None
+
+    def initialize(self):
+        if not self.is_empty():
+            self.last_cfg = self.entry_cfg
+
+    def finalize(self):
+        if not self.is_empty():
+            self.last_cfg.finalize()
 
     def add(self, group):
         if self.is_empty():
             cfg = CFG()
             cfg.add(group)
             self.entry_cfg = cfg
-            self.index_cfg = self.entry_cfg
             self.last_cfg = self.entry_cfg
+            if group.tail.is_return():
+                group.tail.comment = 'unknown return address'
         else:
-            """ Create a new CFG because last inserted group was a call function """
-            if self.index_cfg.last_inserted.group.tail.is_call():
-                """ call followed by plt jmp, fallthrough to the previous CFG """
-                if group.tail.is_plt_jmp():
-                    self.index_cfg.add(group)
-                else:
-                    cfg = CFG()
-                    cfg.add(group)
-                    temp = self.index_cfg
-                    self.index_cfg.next.add(cfg)
-                    self.index_cfg = cfg
-                    self.index_cfg.previous = temp
-                    self.last_cfg = cfg
-                    """ Go to the previous CFG if return instruction """
-            elif self.index_cfg.last_inserted.group.tail.is_return():
+            """ Create a new CFG due to call function """
+            if group.tail.is_call():
+                self.last_cfg.add(group)
+                cfg = CFG()
+                self.last_cfg.next.append(cfg)
+                temp = self.last_cfg
+                self.last_cfg = cfg
+                self.last_cfg.previous = temp
+            elif group.tail.is_plt_jmp():
+                """ plt jmp, fallthrough to the previous CFG """
+                self.last_cfg = self.last_cfg.previous
+                self.last_cfg.add(group)
+            elif group.tail.is_return():
                 """
-                First CFG usually is in the middle of a function, so return
-                instruction does not return to another CFG yet
+                Fallthrough to the same CFG if there is no information about the
+                previous CFG (we started tracing in the middle of a function)
                 """
-                if self.entry_cfg == self.index_cfg:
-                    cfg = CFG()
-                    cfg.add(group)
-                    temp = self.index_cfg
-                    self.index_cfg.next.add(cfg)
-                    self.index_cfg = cfg
-                    self.index_cfg.previous = temp
-                    self.last_cfg = cfg
-                else:
-                    """ Return to previous CFG """
-                    self.index_cfg = self.index_cfg.previous
-                    self.index_cfg.add(group)
+                if self.last_cfg.previous is None:
+                    group.tail.comment = 'unknown return address'
+
+                #self.last_cfg.last_inserted.group.extend(group)
+                self.last_cfg.add(group)
+
+                """ Return to previous CFG """
+                if self.last_cfg.previous is not None:
+                    self.last_cfg = self.last_cfg.previous
             else:
-                self.index_cfg.add(group)
-
-    def initialize(self):
-        if not self.is_empty():
-            self.index_cfg = self.entry_cfg
-
-    def finalize(self):
-        if not self.is_empty():
-            self.last_cfg.finalize()
+                self.last_cfg.add(group)
 
     def _export_cfg(self, cfg, cfg_output_filename, first=False):
         graph = graphviz.Digraph(cfg_output_filename)
@@ -356,7 +349,7 @@ class DynamicCFG:
         label = '; ' + cfg.entry_node.group.leader.routine + '\l\l' + '\l'.join([ins.dumps(padding) for ins in cfg.entry_node.group.inss]) + '\l'     # '\l' means left-aligned, last one is mandatory to ensure alignment of label last line
 
         if cfg.entry_node.tainted:
-            graph.node(entry_node_id, label=label, style='filled', fillcolor='lightblue')
+            graph.node(entry_node_id, label=label, style='filled', fillcolor=COLOR_TAINTED)
         else:
             graph.node(entry_node_id, label=label)
 
@@ -376,20 +369,34 @@ class DynamicCFG:
                 edge_node_id = hex(edge.dst.group.leader.addr)
 
                 if (node_id, edge_node_id) not in already_seen:
+                    """ Opcodes padding """
                     padding = max([len(ins.opcodes.hex()) for ins in edge.dst.group.inss])
-                    label = '; ' + edge.dst.group.leader.routine + '\l\l' + '\l'.join([ins.dumps(padding) for ins in edge.dst.group.inss]) + '\l'     # '\l' means left-aligned, last one is mandatory to ensure alignment of label last line
+                    """ Label with routine offset """
+                    label = f'; {edge.dst.group.leader.routine}'
+                    if edge.dst.diff > 0:
+                        label += f' + {edge.dst.diff:#x}'
+                    else:
+                        label += f' - {abs(edge.dst.diff):#x}'
+                    label += '\l\l'
+                    label += '\l'.join([ins.dumps(padding) for ins in edge.dst.group.inss])
+                    label += '\l'                                      # '\l' means left-aligned, last one is mandatory to ensure alignment of label last line
+                    """ Light blue for taint information """
                     if edge.dst.tainted:
-                        graph.node(edge_node_id, label=label, style='filled', fillcolor='lightblue')
+                        graph.node(edge_node_id, label=label, style='filled', fillcolor=COLOR_TAINTED)
                     else:
                         graph.node(edge_node_id, label=label)
-                    graph.edge(node_id, edge_node_id, label=str(edge.count))
+                    """ True or false branch jump """
+                    if node.group.tail.is_branch():
+                        if edge.branch_taken:
+                            graph.edge(node_id, edge_node_id, label=f't / {edge.count}', color=COLOR_BRANCH_TAKEN)
+                        else:
+                            graph.edge(node_id, edge_node_id, label=f'f / {edge.count}', color=COLOR_BRANCH_NOT_TAKEN)
+                    else:
+                        graph.edge(node_id, edge_node_id, label=str(edge.count))
                     already_seen.append((node_id, edge_node_id))
 
-                    """if edge.dst.group.tail.is_call():
-                        import pdb; pdb.set_trace()"""
-
-                new_edges = (edge.dst, edge.dst.edges)
-                pending_edges.append(new_edges)
+                    new_edges = (edge.dst, edge.dst.edges)
+                    pending_edges.append(new_edges)
 
         """ CFG last transition """
         if len(cfg.last_nodes):
@@ -397,35 +404,39 @@ class DynamicCFG:
 
             for last_node in cfg.last_nodes:
                 last_node_id = hex(last_node.group.leader.addr)
-                graph.edge(last_node_id, 'final', color='lightcoral')
-                graph.node(last_node_id, style='filled', fillcolor='lightcoral')
+                graph.edge(last_node_id, 'final')
+                graph.node(last_node_id)
 
         """ Generate Graphviz DOT file (.gv) """
         graph.render()
 
     def export_graph(self, output):
-        filenames = []
+        if not self.is_empty():
+            filenames = []
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            pending_cfgs = []
-            cfg = self.entry_cfg
-            cfg_output_filename = os.path.join(temp_dir, hex(hash(cfg)))
-            self._export_cfg(cfg, cfg_output_filename, first=True)
-            filenames.append(cfg_output_filename)
-            pending_cfgs.extend(list(cfg.next))
-
-            while pending_cfgs:
-                cfg = pending_cfgs.pop(0)
+            """ Automatically deletes temp_dir and all its content """
+            with tempfile.TemporaryDirectory() as temp_dir:
+                pending_cfgs = []
+                cfg = self.entry_cfg
                 cfg_output_filename = os.path.join(temp_dir, hex(hash(cfg)))
-                if cfg_output_filename not in filenames:
-                    self._export_cfg(cfg, cfg_output_filename)
-                    filenames.append(cfg_output_filename)
-                pending_cfgs.extend(list(cfg.next))
+                self._export_cfg(cfg, cfg_output_filename, first=True)
+                filenames.append(cfg_output_filename)
+                pending_cfgs.extend(cfg.next)
 
-            """ Join temp files """
-            merger = PyPDF2.PdfMerger()
-            for filename in filenames:
-                merger.append(f'{filename}.gv.pdf')
+                while pending_cfgs:
+                    cfg = pending_cfgs.pop(0)
+                    if cfg.is_empty():
+                        continue
+                    cfg_output_filename = os.path.join(temp_dir, hex(hash(cfg)))
+                    if cfg_output_filename not in filenames:
+                        self._export_cfg(cfg, cfg_output_filename)
+                        filenames.append(cfg_output_filename)
+                    pending_cfgs.extend(cfg.next)
 
-            merger.write(output)
-            merger.close()
+                """ Join temp files """
+                merger = PyPDF2.PdfMerger()
+                for filename in filenames:
+                    merger.append(f'{filename}.gv.pdf')
+
+                merger.write(output)
+                merger.close()
