@@ -1,3 +1,4 @@
+import os
 import copy
 import json
 import binascii
@@ -172,8 +173,20 @@ class ProtocolFSM:
                     graph.attr('node', shape='circle')
                     graph.edge(state.id, trans.next.id, label=label)
 
+
         """ Generate Graphviz DOT file (.gv) """
         graph.render()
+
+        """ Rename output files """
+        pdf_file = f'{output}.gv.pdf'
+        os.rename(pdf_file, output)
+        """ Eliminate output file extension """
+        gv_file = f'{output}.gv'
+        (gv_output, _) = os.path.splitext(output)
+        gv_output = f'{gv_output}.gv'
+        os.rename(gv_file, gv_output)
+
+        return (output, gv_output)
 
     def __len__(self):
         return len(self.states)

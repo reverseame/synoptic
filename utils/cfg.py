@@ -9,11 +9,11 @@ logging.getLogger('graphviz').setLevel(logging.WARNING)
 import graphviz
 
 """ Ins type """
-INS_TYPE_JUMP = 0        # Direct and indirect jump
-INS_TYPE_BRANCH = 1      # Conditional jump
+INS_TYPE_JUMP = 0       # Direct and indirect jump
+INS_TYPE_BRANCH = 1     # Conditional jump
 INS_TYPE_CALL = 2
 INS_TYPE_RETURN = 3
-INS_TYPE_STANDARD = 4    # Any other instruction
+INS_TYPE_STANDARD = 4   # Any other instruction
 
 """ Graphviz colors """
 COLOR_BRANCH_TAKEN = 'chartreuse3'
@@ -25,7 +25,7 @@ md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
 md.detail = True
 
 class Ins:
-    def __init__(self, addr, opcodes, tainted=False, routine='', comment=''):
+    def __init__(self, addr, opcodes, tainted=False, routine='', routine_addr=0x0, comment=''):
         self.addr = addr
         self.opcodes = opcodes
         self.size = len(opcodes)
@@ -34,6 +34,7 @@ class Ins:
         self.type = self._get_ins_type()
         self.info = self._get_ins_info()
         self.routine = routine
+        self.routine_addr = routine_addr
         self.comment = comment
 
     def _get_ins_type(self):
@@ -106,6 +107,9 @@ class Ins:
 
         return False
 
+    def get_ins_offset(self):
+        return self.addr - self.routine_addr
+
     def dumps(self, opcodes_padding=0):
         tab_padding = ' ' * 5
 
@@ -126,8 +130,9 @@ class Ins:
         return False
 
 class Group:
-    def __init__(self, routine=''):
+    def __init__(self, routine='', routine_addr=0x0):
         self.routine = routine
+        self.routine_addr = routine_addr
         self.inss = []
         self.leader = None
         self.tail = None
@@ -184,9 +189,6 @@ class Node:
     def taint(self, node):
         """ Preserve if node was tainted at some time """
         self.tainted = self.tainted or node.tainted
-
-    def set_diff(self, node):
-        self.diff = (self.group.leader.addr - node.group.leader.addr)
 
     def __eq__(self, other):
         if isinstance(other, Node):
@@ -265,9 +267,6 @@ class CFG:
             else:
                 self._add_node_transition(node)
                 self.nodes.append(node)
-
-            """ Calculate last_inserted node distance from entry node """
-            self.last_inserted.set_diff(self.entry_node)
 
     def __hash__(self):
         return self.entry_node.group.leader.addr
@@ -373,10 +372,9 @@ class DynamicCFG:
                     padding = max([len(ins.opcodes.hex()) for ins in edge.dst.group.inss])
                     """ Label with routine offset """
                     label = f'; {edge.dst.group.leader.routine}'
-                    if edge.dst.diff > 0:
-                        label += f' + {edge.dst.diff:#x}'
-                    else:
-                        label += f' - {abs(edge.dst.diff):#x}'
+                    offset = edge.dst.group.leader.get_ins_offset()
+                    if offset > 0:
+                        label += f' + {offset:#x}'
                     label += '\l\l'
                     label += '\l'.join([ins.dumps(padding) for ins in edge.dst.group.inss])
                     label += '\l'                                      # '\l' means left-aligned, last one is mandatory to ensure alignment of label last line

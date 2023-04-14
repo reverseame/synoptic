@@ -51,8 +51,8 @@ def main():
                 print(str_protocol_fsm)
 
         if args.export:
-            protocol_fsm.export_graph(args.export)
-            debug.info(f'{args.export}.gv: Graphviz file exported')
-            debug.info(f'{args.export}.gv.pdf: PDF exported')
+            (pdf_file, gv_file) = protocol_fsm.export_graph(args.export)
+            debug.info(f'{pdf_file}: PDF exported')
+            debug.info(f'{gv_file}: Graphviz file exported')
     else:
         debug.warning('Could not generate a FSM')

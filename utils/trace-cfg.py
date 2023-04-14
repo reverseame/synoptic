@@ -100,6 +100,7 @@ def analyze_net_trace(dynamic_cfg, net_trace):
 
     for item in net_trace:
         if 'ins-opcodes' in item:
+            routine_addr = int(item['routine-addr'], 16)
             routine = item['routine']
             addr = int(item['ins-addr'], 16)
             opcodes = binascii.unhexlify(item['ins-opcodes'])
@@ -107,9 +108,9 @@ def analyze_net_trace(dynamic_cfg, net_trace):
             """ Get call target """
             if (item['action'] == 'direct-call') or (item['action'] == 'indirect-call'):
                 comment = item['target']
-                ins = cfg.Ins(addr, opcodes, routine=routine, comment=comment)
+                ins = cfg.Ins(addr, opcodes, routine=routine, routine_addr=routine_addr, comment=comment)
             else:
-                ins = cfg.Ins(addr, opcodes, routine=routine)
+                ins = cfg.Ins(addr, opcodes, routine=routine, routine_addr=routine_addr)
 
             if item['level'] == 'taint':
                 ins.tainted = True
