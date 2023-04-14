@@ -18,6 +18,8 @@
 */
 #define SPATIAL_THRESHOLD 1000
 std::set<ADDRINT> visitedAddrs;
+ADDRINT MAIN_MODULE_LOW_ADDRESS = 0;
+ADDRINT MAIN_MODULE_HIGH_ADDRESS = 0;
 
 /* Command line options */
 KNOB<bool> KnobDebug(KNOB_MODE_WRITEONCE, "pintool", "debug", "0", "Enable debug messages");
@@ -70,6 +72,11 @@ void followForkInChild(THREADID threadid, const CONTEXT *ctxt, VOID *v) {
 }
 
 bool addrIsTraceable(ADDRINT insAddr) {
+    /* Just analyze main module */
+    if (insAddr < MAIN_MODULE_LOW_ADDRESS || insAddr > MAIN_MODULE_HIGH_ADDRESS) {
+        return false;
+    }
+
     if (visitedAddrs.size() >= SPATIAL_THRESHOLD) {
         return false;
     }
@@ -509,15 +516,14 @@ void instrumentTrace(TRACE trace, void *v) {
     }
 
     /* Just analyze the main executable */
-    ADDRINT traceAddr = TRACE_Address(trace);
-    IMG img = IMG_FindByAddress(traceAddr);
+    /*IMG img = IMG_FindByAddress(TRACE_Address(trace));
     if (!IMG_Valid(img) || !IMG_IsMainExecutable(img)) {
         return;
-    }
+    }*/
 
     const char *routine = "unknown";
     ADDRINT routineAddr = 0;
-    RTN rtn = RTN_FindByAddress(traceAddr);
+    RTN rtn = TRACE_Rtn(trace);
     if (RTN_Valid(rtn)) {
         routine = RTN_Name(rtn).c_str();
         routineAddr = RTN_Address(rtn);
@@ -555,6 +561,8 @@ void moduleLoad(IMG img, void *v) {
             PRINT_DEBUG("Main module loaded\t\t: %s (%s)\n", IMG_Name(img).c_str(), hexaddr(image_low).c_str());
         }
         LOG_INFO("action=relocate image-low=%s image-high=%s main-executable=\"%s\"\n", hexaddr(image_low).c_str(), hexaddr(image_high).c_str(), IMG_Name(img).c_str());
+        MAIN_MODULE_LOW_ADDRESS = image_low;
+        MAIN_MODULE_HIGH_ADDRESS = image_high;
         return;
     }
 

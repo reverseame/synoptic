@@ -124,4 +124,4 @@ class Analyzer:
         if message is not None:
             self.fsm.append(message)
 
-            import pdb; pdb.set_trace()
+            #import pdb; pdb.set_trace()
