@@ -232,12 +232,16 @@ class CFG:
             self.last_nodes.append(self.last_inserted)
 
     def _add_node_transition(self, node):
-        new_edge = Edge(node)
-        """ Check if new branch edge transition follows true or false predicate """
-        if self.last_inserted.group.tail.is_branch():
-            new_edge.branch_taken = self.last_inserted.group.tail.is_branch_taken(node.group.leader)
-        self.last_inserted.edges.append(new_edge)
-        self.last_inserted = node
+        """ Fallthrough after a call if it is not a plt jmp """
+        if self.last_inserted.group.tail.is_call() and not node.group.tail.is_plt_jmp():
+            self.last_inserted.group.extend(node.group)
+        else:
+            new_edge = Edge(node)
+            """ Check if new branch edge transition follows true or false predicate """
+            if self.last_inserted.group.tail.is_branch():
+                new_edge.branch_taken = self.last_inserted.group.tail.is_branch_taken(node.group.leader)
+            self.last_inserted.edges.append(new_edge)
+            self.last_inserted = node
 
     def add(self, group):
         node = Node(group)
@@ -322,7 +326,6 @@ class DynamicCFG:
                 if self.last_cfg.previous is None:
                     group.tail.comment = 'unknown return address'
 
-                #self.last_cfg.last_inserted.group.extend(group)
                 self.last_cfg.add(group)
 
                 """ Return to previous CFG """
@@ -345,7 +348,11 @@ class DynamicCFG:
         """ CFG node style """
         entry_node_id = hex(cfg.entry_node.group.leader.addr)
         padding = max([len(ins.opcodes.hex()) for ins in cfg.entry_node.group.inss])
-        label = '; ' + cfg.entry_node.group.leader.routine + '\l\l' + '\l'.join([ins.dumps(padding) for ins in cfg.entry_node.group.inss]) + '\l'     # '\l' means left-aligned, last one is mandatory to ensure alignment of label last line
+        label = f'; {cfg.entry_node.group.leader.routine}'
+        offset = cfg.entry_node.group.leader.get_ins_offset()
+        if offset > 0:
+            label += f' + {offset:#x}'
+        label += '\l\l' + '\l'.join([ins.dumps(padding) for ins in cfg.entry_node.group.inss]) + '\l'     # '\l' means left-aligned, last one is mandatory to ensure alignment of label last line
 
         if cfg.entry_node.tainted:
             graph.node(entry_node_id, label=label, style='filled', fillcolor=COLOR_TAINTED)
