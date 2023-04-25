@@ -303,7 +303,7 @@ void traceCall(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routin
 
     LOG_INFO("action=%s routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", callType, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
     logInsOpcodes(insAddr, insSize);
-    LOG_RAW(" target=\"%s\"\n", target.c_str());
+    LOG_RAW(" target-addr=%s target=\"%s\"\n", hexaddr(targetAddr).c_str(), target.c_str());
 }
 
 /* Analyzes mov instructions */

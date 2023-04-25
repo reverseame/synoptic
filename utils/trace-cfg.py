@@ -107,8 +107,9 @@ def analyze_net_trace(dynamic_cfg, net_trace):
 
             """ Get call target """
             if (item['action'] == 'direct-call') or (item['action'] == 'indirect-call'):
+                target_addr = int(item['target-addr'], 16)
                 comment = item['target']
-                ins = cfg.Ins(addr, opcodes, routine=routine, routine_addr=routine_addr, comment=comment)
+                ins = cfg.Ins(addr, opcodes, routine=routine, routine_addr=routine_addr, target_addr=target_addr, comment=comment)
             else:
                 ins = cfg.Ins(addr, opcodes, routine=routine, routine_addr=routine_addr)
 
@@ -123,7 +124,7 @@ def analyze_net_trace(dynamic_cfg, net_trace):
                 dynamic_cfg.add(group)
                 group = cfg.Group()
 
-    """ Add last group if last instruction is standard """
+    """ Add last group if we finished CFG construction and last instruction is standard """
     if (ins is not None) and (ins.is_standard()):
         dynamic_cfg.add(group)
 
@@ -135,12 +136,14 @@ def analyze(data):
     for session in split_sessions(data):
         net_traces = split_network_activity(session)
         for (i, net_trace) in enumerate(net_traces):
-            if i == 1:
+            try:
+                print_info(f'CFG refinement {i}')
                 dynamic_cfg.initialize()
                 dynamic_cfg = analyze_net_trace(dynamic_cfg, net_trace)
+            except cfg.CFGException as error:
+                print_warning(str(error))
+            finally:
                 dynamic_cfg.finalize()
-                print_info(f'CFG refinement {i}')
-                return dynamic_cfg
 
     return dynamic_cfg
 

@@ -9,11 +9,11 @@ logging.getLogger('graphviz').setLevel(logging.WARNING)
 import graphviz
 
 """ Ins type """
-INS_TYPE_JUMP = 0       # Direct and indirect jump
-INS_TYPE_BRANCH = 1     # Conditional jump
+INS_TYPE_JUMP = 0           # Direct and indirect jump
+INS_TYPE_BRANCH = 1         # Conditional jump
 INS_TYPE_CALL = 2
 INS_TYPE_RETURN = 3
-INS_TYPE_STANDARD = 4   # Any other instruction
+INS_TYPE_STANDARD = 4       # Any other instruction
 
 """ Graphviz colors """
 COLOR_BRANCH_TAKEN = 'chartreuse3'
@@ -24,18 +24,22 @@ COLOR_TAINTED = 'lightblue'
 md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
 md.detail = True
 
+class CFGException(Exception):
+    pass
+
 class Ins:
-    def __init__(self, addr, opcodes, tainted=False, routine='', routine_addr=0x0, comment=''):
+    def __init__(self, addr, opcodes, tainted=False, routine='', routine_addr=0x0, target_addr=0x0, comment=''):
         self.addr = addr
         self.opcodes = opcodes
         self.size = len(opcodes)
-        self.dis = next(md.disasm(opcodes, addr))                # Just dissasemble one instruction
+        self.dis = next(md.disasm(opcodes, addr))       # Just dissasemble one instruction
         self.tainted = tainted
-        self.type = self._get_ins_type()
-        self.info = self._get_ins_info()
         self.routine = routine
         self.routine_addr = routine_addr
+        self.target_addr = target_addr
         self.comment = comment
+        self.type = self._get_ins_type()
+        self.info = self._get_ins_info()
 
     def _get_ins_type(self):
         if capstone.x86.X86_GRP_JUMP in self.dis.groups:
@@ -54,20 +58,26 @@ class Ins:
     def _get_ins_info(self):
         ret = {}
 
-        if (self.type == INS_TYPE_STANDARD) or (self.type == INS_TYPE_RETURN):
-            return ret
-
-        if self.dis.operands[0].type == capstone.x86.X86_OP_IMM:
-            ret['target'] = self.dis.operands[0].value.imm
-            ret['mode'] = 'direct'
-        elif self.dis.operands[0].type == capstone.x86.X86_OP_MEM:
-            ret['target'] = 'unknown'
-            ret['mode'] = 'indirect'
-        else:
-            raise NotImplementedError(f'{self.dis.mnemonic} {self.dis.op_str}\t: Ins not supported')
-
-        if (self.type == INS_TYPE_BRANCH) or (self.type == INS_TYPE_CALL):
+        if (self.type == INS_TYPE_STANDARD) or (self.type == INS_TYPE_BRANCH) or (self.type == INS_TYPE_CALL):
             ret['fallthrough'] = self.addr + self.size
+        
+        if (self.type == INS_TYPE_CALL) or (self.type == INS_TYPE_JUMP):
+            if self.dis.operands[0].type == capstone.x86.X86_OP_IMM:
+                ret['target'] = self.dis.operands[0].value.imm
+                ret['mode'] = 'direct'
+            elif self.dis.operands[0].type == capstone.x86.X86_OP_MEM:
+                ret['target'] = 'unknown'
+                ret['mode'] = 'indirect'
+            elif self.dis.operands[0].type == capstone.x86.X86_OP_REG:
+                ret['target'] = self.target_addr
+                ret['mode'] = 'indirect'
+            else:
+                raise NotImplementedError(f'{self.dis.mnemonic} {self.dis.op_str}\t: Ins not supported')
+
+        if self.type == INS_TYPE_BRANCH:
+            operand = self.dis.operands[0]
+            if operand.type == capstone.x86.X86_OP_IMM:
+                ret['branch-target'] = operand.imm
 
         return ret
 
@@ -100,15 +110,16 @@ class Ins:
 
     def is_branch_taken(self, ins):
         if self.is_branch():
-            operand = self.dis.operands[0]
-            if operand.type == capstone.x86.X86_OP_IMM:
-                """ Branch is taken if target addr is the same to ins addr """
-                return operand.imm == ins.addr
+            return self.info['branch-target'] == ins.addr
 
         return False
 
     def get_ins_offset(self):
         return self.addr - self.routine_addr
+
+    def check_next_ins(self, ins):
+        if ins.addr != self.info['fallthrough']:
+            raise CFGException(f'"{str(self)}" does not fallthrough to "{str(ins)}"')
 
     def dumps(self, opcodes_padding=0):
         tab_padding = ' ' * 5
@@ -141,6 +152,9 @@ class Group:
     def add(self, ins):
         if self.leader is None:
             self.leader = ins
+        
+        if self.tail is not None:
+            self.tail.check_next_ins(ins)
 
         self.tail = ins
 
@@ -150,6 +164,12 @@ class Group:
         for ins in group:
             if ins not in self.inss:
                 self.add(ins)
+        
+        self.taint(group)
+
+    def taint(self, group):
+        """ Preserve if group was tainted at some time """
+        self.tainted = self.tainted or group.tainted
 
     def __str__(self):
         return '\n'.join([str(ins) for ins in self.inss])
@@ -190,6 +210,28 @@ class Node:
         """ Preserve if node was tainted at some time """
         self.tainted = self.tainted or node.tainted
 
+    def check_next_node(self, node):
+        if self.group.tail.is_return():
+            return
+
+        if self.group.tail.is_jump():
+            if self.group.tail.info['target'] == node.group.leader.addr:
+                return
+
+        if self.group.tail.is_branch():
+            if (self.group.tail.info['branch-target'] == node.group.leader.addr) or (self.group.tail.info['fallthrough'] == node.group.leader.addr):
+                return
+
+        """ We can't know either fallthrough or target address during plt jmp """ 
+        if self.group.tail.is_plt_jmp():
+            return
+
+        if self.group.tail.info['fallthrough'] == node.group.leader.addr:
+            return
+
+    
+        raise CFGException(f'"{self.group.tail}" cannot be followed by "{node.group.leader}"')
+
     def __eq__(self, other):
         if isinstance(other, Node):
             return self.group == other.group
@@ -208,13 +250,15 @@ class Node:
 
 class CFG:
     def __init__(self):
-        self.nodes = []
-        self.entry_node = None
-        self.last_inserted = None
-        self.last_nodes = []
-        self.tainted = False
-        self.next = []
-        self.previous = None
+        self.nodes = []                 # List of nodes withouth any order
+        self.entry_node = None          # Entry node of the CFG
+        self.last_inserted = None       # Last node visited in the CFG
+        self.next = []                  # CFGs reached from this CFG
+        self.final_nodes = []           # List of nodes that finalize CFG
+        self.tainted = False            # CFG contains a tainted node?
+        self.previous = None            # Previous CFG that calls this CFG
+        self.refine = False             # Do we need to refine an already constructed CFG?
+        self.branch_node = None         # Last node with a branch instruction
 
     def taint(self, node):
         """ Preserve if one of nodes was tainted at some time """
@@ -226,15 +270,35 @@ class CFG:
     def initialize(self):
         if not self.is_empty():
             self.last_inserted = self.entry_node
+            self.refine = True
 
     def finalize(self):
         if not self.is_empty():
-            self.last_nodes.append(self.last_inserted)
+            self.final_nodes.append(self.last_inserted)
 
     def _add_node_transition(self, node):
-        """ Fallthrough after a call if it is not a plt jmp """
-        if self.last_inserted.group.tail.is_call() and not node.group.tail.is_plt_jmp():
-            self.last_inserted.group.extend(node.group)
+        self.last_inserted.check_next_node(node)
+
+        """ Search if node is already defined """
+        if node in self.nodes:
+            """ Check if transition is already defined to the new node """
+            for edge in self.last_inserted.edges:
+                """ Check if transition is already defined and cosume its destination """
+                if edge.dst == node:
+                    edge.count += 1
+                    self.last_inserted = edge.dst
+                    """ Keep taint info """
+                    self.last_inserted.taint(node)
+                    self.taint(node)
+                    break
+            else:
+                node_found = self.nodes[self.nodes.index(node)]
+                new_edge = Edge(node_found)
+                """ Check if new branch edge transition follows true or false predicate """
+                if self.last_inserted.group.tail.is_branch():
+                    new_edge.branch_taken = self.last_inserted.group.tail.is_branch_taken(node.group.leader)
+                self.last_inserted.edges.append(new_edge)
+                self.last_inserted = node_found
         else:
             new_edge = Edge(node)
             """ Check if new branch edge transition follows true or false predicate """
@@ -251,26 +315,88 @@ class CFG:
             self.last_inserted = self.entry_node
             self.nodes.append(node)
         else:
-            """ Search if node is already defined """
-            if node in self.nodes:
-                """ Check if transition is already defined to the new node """
-                for edge in self.last_inserted.edges:
-                    """ Check if transition is already defined and cosume its destination """
-                    if edge.dst == node:
-                        edge.count += 1
-                        self.last_inserted = edge.dst
-                        """ Keep taint info """
+            if self.refine:
+                if self.last_inserted == node:
+                    """ Only transition if it its not a final node """
+                    if self.last_inserted not in self.final_nodes:
+                        if self.last_inserted.edges:
+                            """ Keep track of last branch node """
+                            self.branch_node = self.last_inserted if self.last_inserted.group.tail.is_branch() else None
+                            edge = self.last_inserted.edges[0]
+                            edge.count += 1
+                            """ Keep taint info """
+                            self.last_inserted.taint(node)
+                            self.taint(node)
+                            self.last_inserted = edge.dst
+                        else:
+                            raise CFGException(f'Node "{self.last_inserted.group.leader}" without transitions defined')
+                elif self.branch_node is not None:
+                    """ Revert branch decision """
+                    self.branch_node.edges[0].count -= 1
+                    if len(self.branch_node.edges) == 2:
+                        """ Take second branch """
+                        edge = self.branch_node.edges[1]
+                        if edge.dst == node:
+                            edge.count += 1
+                            self.last_inserted = edge.dst
+                            """ Keep taint info """
+                            self.last_inserted.taint(node)
+                            self.taint(node)
+                            if self.last_inserted not in self.final_nodes:
+                                if self.last_inserted.edges:
+                                    """ Keep track of last branch node """
+                                    self.branch_node = self.last_inserted if self.last_inserted.group.tail.is_branch() else None
+                                    edge = self.last_inserted.edges[0]
+                                    edge.count += 1
+                                    """ Keep taint info """
+                                    self.last_inserted.taint(node)
+                                    self.taint(node)
+                                    self.last_inserted = edge.dst
+                                else:
+                                    raise CFGException(f'Node "{self.last_inserted.group.leader}" without transitions defined')
+                        else:
+                            raise CFGException(f'Unkown transition from "{self.branch_node.group.tail}" to "{node.group.leader}"')
+                    else:
+                        """ Add this transition to branch node because is not yet defined """
+                        try:
+                            temp = self.last_inserted
+                            self.last_inserted = self.branch_node
+                            self._add_node_transition(node)
+                            self.nodes.append(node)
+                            self.branch_node = None
+                        except CFGException:
+                            """
+                            Revert to real last_inserted because insertion in
+                            branch_node failed and raised exception
+                            """
+                            self.branch_node.edges[0].count += 1
+                            self.last_inserted = temp
+                            raise
+                else:
+                    self._add_node_transition(node)
+                    self.nodes.append(node)
+                    self.branch_node = None
+            else:
+                """ Search if node is already defined """
+                if node in self.nodes:
+                    """ Check if transition is already defined to the new node """
+                    for edge in self.last_inserted.edges:
+                        """ Check if transition is already defined and cosume its destination """
+                        if edge.dst == node:
+                            edge.count += 1
+                            self.last_inserted = edge.dst
+                            """ Keep taint info """
+                            self.last_inserted.taint(node)
+                            self.taint(node)
+                            break
+                    else:
+                        node_found = self.nodes[self.nodes.index(node)]
+                        self._add_node_transition(node_found)
                         self.last_inserted.taint(node)
                         self.taint(node)
-                        break
                 else:
-                    node_found = self.nodes[self.nodes.index(node)]
-                    self._add_node_transition(node_found)
-                    self.last_inserted.taint(node)
-                    self.taint(node)
-            else:
-                self._add_node_transition(node)
-                self.nodes.append(node)
+                    self._add_node_transition(node)
+                    self.nodes.append(node)
 
     def __hash__(self):
         return self.entry_node.group.leader.addr
@@ -283,8 +409,10 @@ class CFG:
 
 class DynamicCFG:
     def __init__(self):
-        self.entry_cfg = None
-        self.last_cfg = None
+        self.cfgs = []              # List of all CFGs without any order
+        self.entry_cfg = None       # First CFG
+        self.last_cfg = None        # Last CFG constructed
+        self.final_cfgs = []        # List of all CFGs that finalize the DynamicCFG
 
     def is_empty(self):
         return self.entry_cfg is None
@@ -292,10 +420,12 @@ class DynamicCFG:
     def initialize(self):
         if not self.is_empty():
             self.last_cfg = self.entry_cfg
+            self.last_cfg.initialize()
 
     def finalize(self):
         if not self.is_empty():
             self.last_cfg.finalize()
+            self.final_cfgs.append(self.last_cfg)
 
     def add(self, group):
         if self.is_empty():
@@ -303,21 +433,32 @@ class DynamicCFG:
             cfg.add(group)
             self.entry_cfg = cfg
             self.last_cfg = self.entry_cfg
+            self.cfgs.append(self.entry_cfg)
             if group.tail.is_return():
                 group.tail.comment = 'unknown return address'
         else:
             """ Create a new CFG due to call function """
             if group.tail.is_call():
                 self.last_cfg.add(group)
-                cfg = CFG()
-                self.last_cfg.next.append(cfg)
-                temp = self.last_cfg
-                self.last_cfg = cfg
-                self.last_cfg.previous = temp
+                next_cfg = self.get_next(group)
+
+                """ Next CFG not defined yet """
+                if next_cfg is None:
+                    cfg = CFG()
+                    self.last_cfg.next.append(cfg)
+                    temp = self.last_cfg
+                    self.last_cfg = cfg
+                    self.last_cfg.previous = temp
+                    self.cfgs.append(self.last_cfg)
+                else:
+                    next_cfg.previous = self.last_cfg
+                    self.last_cfg = next_cfg
+                    self.last_cfg.initialize()
             elif group.tail.is_plt_jmp():
                 """ plt jmp, fallthrough to the previous CFG """
-                self.last_cfg = self.last_cfg.previous
                 self.last_cfg.add(group)
+                self.last_cfg.finalize()
+                self.last_cfg = self.last_cfg.previous
             elif group.tail.is_return():
                 """
                 Fallthrough to the same CFG if there is no information about the
@@ -330,11 +471,24 @@ class DynamicCFG:
 
                 """ Return to previous CFG """
                 if self.last_cfg.previous is not None:
+                    self.last_cfg.finalize()
                     self.last_cfg = self.last_cfg.previous
             else:
                 self.last_cfg.add(group)
 
-    def _export_cfg(self, cfg, cfg_output_filename, first=False):
+    def get_next(self, group):
+        if not group.tail.is_call():
+            raise CFGException(f'Could not retrieve next CFG, "{str(group.tail)}" is not a call ins')
+        
+        addr = group.tail.info['target']
+        for cfg in self.cfgs:
+            if not cfg.is_empty():
+                if addr == hash(cfg):
+                    return cfg
+
+        return None
+
+    def _export_cfg(self, cfg, cfg_output_filename, first=False, last=False):
         graph = graphviz.Digraph(cfg_output_filename)
 
         """ General CFG Style """
@@ -404,13 +558,14 @@ class DynamicCFG:
                     pending_edges.append(new_edges)
 
         """ CFG last transition """
-        if len(cfg.last_nodes):
-            graph.node('final', label='', shape='doublecircle', style='filled', color='black', fixedsize='true')
+        if last:
+            if len(cfg.final_nodes):
+                graph.node('final', label='', shape='doublecircle', style='filled', color='black', fixedsize='true')
 
-            for last_node in cfg.last_nodes:
-                last_node_id = hex(last_node.group.leader.addr)
-                graph.edge(last_node_id, 'final')
-                graph.node(last_node_id)
+                for last_node in cfg.final_nodes:
+                    last_node_id = hex(last_node.group.leader.addr)
+                    graph.edge(last_node_id, 'final')
+                    graph.node(last_node_id)
 
         """ Generate Graphviz DOT file (.gv) """
         graph.render()
@@ -430,11 +585,12 @@ class DynamicCFG:
 
                 while pending_cfgs:
                     cfg = pending_cfgs.pop(0)
-                    if cfg.is_empty():
-                        continue
+                    #if cfg.is_empty():
+                    #    continue
                     cfg_output_filename = os.path.join(temp_dir, hex(hash(cfg)))
                     if cfg_output_filename not in filenames:
-                        self._export_cfg(cfg, cfg_output_filename)
+                        last = cfg in self.final_cfgs
+                        self._export_cfg(cfg, cfg_output_filename, last=last)
                         filenames.append(cfg_output_filename)
                     pending_cfgs.extend(cfg.next)
 
