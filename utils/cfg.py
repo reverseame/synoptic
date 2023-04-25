@@ -276,36 +276,97 @@ class CFG:
         if not self.is_empty():
             self.final_nodes.append(self.last_inserted)
 
+    def _transition_to_first_edge(self, node):
+        if self.last_inserted not in self.final_nodes:
+            if self.last_inserted.edges:
+                """ Keep track of last branch node """
+                self.branch_node = self.last_inserted if self.last_inserted.group.tail.is_branch() else None
+                edge = self.last_inserted.edges[0]
+                edge.count += 1
+                """ Keep taint info """
+                self.last_inserted.taint(node)
+                self.taint(node)
+                self.last_inserted = edge.dst
+            else:
+                raise CFGException(f'Node "{self.last_inserted.group.leader}" without transitions defined')
+
+    def _transition_to_second_edge(self, node):
+        """ Revert previous branch decision """
+        self.branch_node.edges[0].count -= 1
+        if len(self.branch_node.edges) == 2:
+            """ Take second branch """
+            edge = self.branch_node.edges[1]
+            if edge.dst == node:
+                edge.count += 1
+                self.last_inserted = edge.dst
+                """ Keep taint info """
+                self.last_inserted.taint(node)
+                self.taint(node)
+                """ Assume transition by the first edge again """
+                self._transition_to_first_edge(node)
+            else:
+                raise CFGException(f'Unkown transition from "{self.branch_node.group.tail}" to "{node.group.leader}"')
+        else:
+            """ Add this transition to branch_node because is not yet defined """
+            try:
+                temp = self.last_inserted
+                self.last_inserted = self.branch_node
+                self._add_node(node)
+            except CFGException:
+                """
+                Revert to real last_inserted because insertion in
+                branch_node failed and raised exception
+                """
+                self.branch_node.edges[0].count += 1
+                self.last_inserted = temp
+                raise
+
+    def _transition_to_node(self, node):
+        """ Check if transition is already defined to the incoming node """
+        for edge in self.last_inserted.edges:
+            """ Check if transition is already defined and cosume its destination """
+            if edge.dst == node:
+                edge.count += 1
+                self.last_inserted = edge.dst
+                """ Keep taint info """
+                self.last_inserted.taint(node)
+                self.taint(node)
+                return True
+
+        return False
+
     def _add_node_transition(self, node):
+        new_edge = Edge(node)
+
+        """ Check if new branch edge transition follows true or false predicate """
+        if self.last_inserted.group.tail.is_branch():
+            new_edge.branch_taken = self.last_inserted.group.tail.is_branch_taken(node.group.leader)
+
+        self.last_inserted.edges.append(new_edge)
+        self.last_inserted = node
+
+        """ Keep track of all nodes """
+        if node not in self.nodes:
+            self.nodes.append(node)
+
+    def _add_node(self, node):
         self.last_inserted.check_next_node(node)
 
         """ Search if node is already defined """
         if node in self.nodes:
-            """ Check if transition is already defined to the new node """
-            for edge in self.last_inserted.edges:
-                """ Check if transition is already defined and cosume its destination """
-                if edge.dst == node:
-                    edge.count += 1
-                    self.last_inserted = edge.dst
-                    """ Keep taint info """
-                    self.last_inserted.taint(node)
-                    self.taint(node)
-                    break
-            else:
+            """
+            Transition to the already defined node if current last_inserted does not
+            containg a valid transition to node
+            """
+            if not self._transition_to_node(node):
                 node_found = self.nodes[self.nodes.index(node)]
-                new_edge = Edge(node_found)
-                """ Check if new branch edge transition follows true or false predicate """
-                if self.last_inserted.group.tail.is_branch():
-                    new_edge.branch_taken = self.last_inserted.group.tail.is_branch_taken(node.group.leader)
-                self.last_inserted.edges.append(new_edge)
-                self.last_inserted = node_found
+                self._add_node_transition(node_found)
         else:
-            new_edge = Edge(node)
-            """ Check if new branch edge transition follows true or false predicate """
-            if self.last_inserted.group.tail.is_branch():
-                new_edge.branch_taken = self.last_inserted.group.tail.is_branch_taken(node.group.leader)
-            self.last_inserted.edges.append(new_edge)
-            self.last_inserted = node
+            """ New transition to node """
+            self._add_node_transition(node)
+
+        """ We added a new node, so we donnot need to keep track of last branch_node """
+        self.branch_node = None
 
     def add(self, group):
         node = Node(group)
@@ -317,86 +378,23 @@ class CFG:
         else:
             if self.refine:
                 if self.last_inserted == node:
-                    """ Only transition if it its not a final node """
-                    if self.last_inserted not in self.final_nodes:
-                        if self.last_inserted.edges:
-                            """ Keep track of last branch node """
-                            self.branch_node = self.last_inserted if self.last_inserted.group.tail.is_branch() else None
-                            edge = self.last_inserted.edges[0]
-                            edge.count += 1
-                            """ Keep taint info """
-                            self.last_inserted.taint(node)
-                            self.taint(node)
-                            self.last_inserted = edge.dst
-                        else:
-                            raise CFGException(f'Node "{self.last_inserted.group.leader}" without transitions defined')
+                    """
+                    Always assume transition by first edge, even if it is branch_node
+                    with two transitions. At the moment we cannot tell which edge
+                    should we take
+                    """
+                    self._transition_to_first_edge(node)
                 elif self.branch_node is not None:
-                    """ Revert branch decision """
-                    self.branch_node.edges[0].count -= 1
-                    if len(self.branch_node.edges) == 2:
-                        """ Take second branch """
-                        edge = self.branch_node.edges[1]
-                        if edge.dst == node:
-                            edge.count += 1
-                            self.last_inserted = edge.dst
-                            """ Keep taint info """
-                            self.last_inserted.taint(node)
-                            self.taint(node)
-                            if self.last_inserted not in self.final_nodes:
-                                if self.last_inserted.edges:
-                                    """ Keep track of last branch node """
-                                    self.branch_node = self.last_inserted if self.last_inserted.group.tail.is_branch() else None
-                                    edge = self.last_inserted.edges[0]
-                                    edge.count += 1
-                                    """ Keep taint info """
-                                    self.last_inserted.taint(node)
-                                    self.taint(node)
-                                    self.last_inserted = edge.dst
-                                else:
-                                    raise CFGException(f'Node "{self.last_inserted.group.leader}" without transitions defined')
-                        else:
-                            raise CFGException(f'Unkown transition from "{self.branch_node.group.tail}" to "{node.group.leader}"')
-                    else:
-                        """ Add this transition to branch node because is not yet defined """
-                        try:
-                            temp = self.last_inserted
-                            self.last_inserted = self.branch_node
-                            self._add_node_transition(node)
-                            self.nodes.append(node)
-                            self.branch_node = None
-                        except CFGException:
-                            """
-                            Revert to real last_inserted because insertion in
-                            branch_node failed and raised exception
-                            """
-                            self.branch_node.edges[0].count += 1
-                            self.last_inserted = temp
-                            raise
+                    """
+                    Assuming first transition of branch_node was wrong. So,
+                    if branch_node is defined, revert transition and take the
+                    second one
+                    """
+                    self._transition_to_second_edge(node)
                 else:
-                    self._add_node_transition(node)
-                    self.nodes.append(node)
-                    self.branch_node = None
+                    self._add_node(node)
             else:
-                """ Search if node is already defined """
-                if node in self.nodes:
-                    """ Check if transition is already defined to the new node """
-                    for edge in self.last_inserted.edges:
-                        """ Check if transition is already defined and cosume its destination """
-                        if edge.dst == node:
-                            edge.count += 1
-                            self.last_inserted = edge.dst
-                            """ Keep taint info """
-                            self.last_inserted.taint(node)
-                            self.taint(node)
-                            break
-                    else:
-                        node_found = self.nodes[self.nodes.index(node)]
-                        self._add_node_transition(node_found)
-                        self.last_inserted.taint(node)
-                        self.taint(node)
-                else:
-                    self._add_node_transition(node)
-                    self.nodes.append(node)
+                self._add_node(node)
 
     def __hash__(self):
         return self.entry_node.group.leader.addr
