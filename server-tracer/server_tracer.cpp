@@ -12,13 +12,20 @@
 #include "moduleload_windows.h"
 #endif
 
+/* Number of I/O iteractions */
+int IOCounter = 0;
+
 /*
 * Rely on spatial location to minimize runtime overhead. Usually,
 * message parsing is done just after receiving data over the network
 */
 #define SPATIAL_THRESHOLD 1000
 bool thresholdTriggered = false;
+
+/* Keep track of visited addresses during tracing */
 std::set<ADDRINT> visitedAddrs;
+
+/* Main executable limit addresses */
 ADDRINT MAIN_MODULE_LOW_ADDRESS = 0;
 ADDRINT MAIN_MODULE_HIGH_ADDRESS = 0;
 
@@ -108,7 +115,7 @@ void logInsOpcodes(ADDRINT insAddr, USIZE insSize) {
 }
 
 void logIns(ADDRINT insAddr, USIZE insSize, std::string *insDis, const char *routine, ADDRINT routineAddr) {
-    LOG_INFO("action=log-ins routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
+    LOG_INFO("io-counter=%d action=log-ins routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
     logInsOpcodes(insAddr, insSize);
     LOG_RAW("\n");
 }
@@ -128,7 +135,7 @@ void regToAddr(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routin
     }
 
     if (taintedRegs[reg]) {
-        LOG_TAINT("action=taint-addr routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
+        LOG_TAINT("io-counter=%d action=taint-addr routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
         logInsOpcodes(insAddr, insSize);
         LOG_RAW(" origin=reg addr=%s reg-addr=%s reg=%s\n", hexaddr(addr).c_str(), REG_StringShort(regAddr).c_str(), REG_StringShort(reg).c_str());
         taintedAdddrs.insert(addr);
@@ -136,7 +143,7 @@ void regToAddr(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routin
         /* reg not tainted --> mem not tainted */
         /* if mem is already not tainted, nothing to do */
         if (taintedAdddrs.count(addr)) {
-            LOG_TAINT("action=free-addr routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
+            LOG_TAINT("io-counter=%d action=free-addr routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
             logInsOpcodes(insAddr, insSize);
             LOG_RAW(" origin=reg addr=%s reg-addr=%s reg=%s\n", hexaddr(addr).c_str(), REG_StringShort(regAddr).c_str(), REG_StringShort(reg).c_str());
             taintedAdddrs.erase(taintedAdddrs.find(addr));
@@ -153,13 +160,13 @@ void addrToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routin
     }
 
     if (taintedAdddrs.count(mem_r)) {
-        LOG_TAINT("action=taint-reg routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
+        LOG_TAINT("io-counter=%d action=taint-reg routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
         logInsOpcodes(insAddr, insSize);
         LOG_RAW(" origin=addr reg=%s addr=%s\n", REG_StringShort(reg_w).c_str(), hexaddr(mem_r).c_str());
         taintedRegs[reg_w] = true;
     } else if (taintedRegs[reg_w]) {
         /* mem is clean -> reg is cleaned */
-        LOG_TAINT("action=free-reg routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
+        LOG_TAINT("io-counter=%d action=free-reg routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter , routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
         logInsOpcodes(insAddr, insSize);
         LOG_RAW(" origin=addr reg=%s addr=%s\n", REG_StringShort(reg_w).c_str(), hexaddr(mem_r).c_str());
         taintedRegs[reg_w] = false;
@@ -175,12 +182,12 @@ void regToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine
     }
 
     if (taintedRegs[reg_r]) {
-        LOG_TAINT("action=taint-reg routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
+        LOG_TAINT("io-counter=%d action=taint-reg routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
         logInsOpcodes(insAddr, insSize);
         LOG_RAW(" origin=reg reg-taint=%s reg-origin=%s\n", REG_StringShort(reg_w).c_str(), REG_StringShort(reg_r).c_str());
         taintedRegs[reg_w] = true;
     } else if (taintedRegs[reg_w]) {
-        LOG_TAINT("action=free-reg routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
+        LOG_TAINT("io-counter=%d action=free-reg routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
         logInsOpcodes(insAddr, insSize);
         LOG_RAW(" origin=reg reg-free=%s reg-origin=%s\n", REG_StringShort(reg_w).c_str(), REG_StringShort(reg_r).c_str());
         taintedRegs[reg_w] = false;
@@ -196,7 +203,7 @@ void immToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine
     }
 
     if (taintedRegs[reg_w]) {
-        LOG_TAINT("action=free-reg routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
+        LOG_TAINT("io-counter=%d action=free-reg routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
         logInsOpcodes(insAddr, insSize);
         LOG_RAW(" reg=%s\n", REG_StringShort(reg_w).c_str());
         taintedRegs[reg_w] = false;
@@ -213,7 +220,7 @@ void immToAddr(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routin
 
     /* if mem is not tainted nothing to do */
     if (taintedAdddrs.count(mem_w)) {
-        LOG_TAINT("action=free-addr routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
+        LOG_TAINT("io-counter=%d action=free-addr routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter,routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
         logInsOpcodes(insAddr, insSize);
         LOG_RAW(" addr=%s\n", hexaddr(mem_w).c_str());
         taintedAdddrs.erase(taintedAdddrs.find(mem_w));
@@ -302,7 +309,7 @@ void traceCall(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routin
         target = "unknown";
     }
 
-    LOG_INFO("action=%s routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", callType, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
+    LOG_INFO("io-counter=%d action=%s routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, callType, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
     logInsOpcodes(insAddr, insSize);
     LOG_RAW(" target-addr=%s target=\"%s\"\n", hexaddr(targetAddr).c_str(), target.c_str());
 }
@@ -418,7 +425,7 @@ void compareImmToAddr(ADDRINT insAddr, USIZE insSize, std::string *insDis, char 
     }
 
     if (taintedAdddrs.count(mem_r)) {
-        LOG_TAINT("action=compare routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
+        LOG_TAINT("io-counter=%d action=compare routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
         logInsOpcodes(insAddr, insSize);
         LOG_RAW(" origin=imm-addr addr=%s reg=%s imm=%s\n", hexaddr(mem_r).c_str(), REG_StringShort(reg_r).c_str(), hexaddr(imm).c_str());
     } else {
@@ -433,9 +440,9 @@ void compareImmToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *
     }
 
     if (taintedRegs[reg]) {
-        LOG_TAINT("routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
+        LOG_TAINT("io-counter=%d action=compare routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
         logInsOpcodes(insAddr, insSize);
-        LOG_RAW(" action=compare origin=imm-reg reg=%s reg-value=%s imm=%s\n", REG_StringShort(reg).c_str(), hexaddr(regValue).c_str(), hexaddr(imm).c_str());
+        LOG_RAW(" origin=imm-reg reg=%s reg-value=%s imm=%s\n", REG_StringShort(reg).c_str(), hexaddr(regValue).c_str(), hexaddr(imm).c_str());
     } else {
         logIns(insAddr, insSize, insDis, routine, routineAddr);
     }
@@ -448,9 +455,9 @@ void compareRegToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *
     }
 
     if (taintedRegs[reg1] || taintedRegs[reg2]) {
-        LOG_TAINT("routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
+        LOG_TAINT("io-counter=%d action=compare outine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
         logInsOpcodes(insAddr, insSize);
-        LOG_RAW(" action=compare origin=reg-reg reg1=%s reg2=%s\n", REG_StringShort(reg1).c_str(), REG_StringShort(reg2).c_str());
+        LOG_RAW(" origin=reg-reg reg1=%s reg2=%s\n", REG_StringShort(reg1).c_str(), REG_StringShort(reg2).c_str());
     } else {
         logIns(insAddr, insSize, insDis, routine, routineAddr);
     }
@@ -530,7 +537,7 @@ void instrumentTrace(TRACE trace, void *v) {
     /* Or we surprassed the spatial location threshold */
     if (visitedAddrs.size() >= SPATIAL_THRESHOLD) {
         if (!thresholdTriggered) {
-            LOG_INFO("action=spacial-threshold-triggered\n");
+            LOG_INFO("io-counter=%d action=spatial-threshold-triggered\n", IOCounter);
             thresholdTriggered = true;
         }
         return;
@@ -585,7 +592,7 @@ void moduleLoad(IMG img, void *v) {
         PRINT_DEBUG("Module loaded\t\t\t: %s (%s)\n", IMG_Name(img).c_str(), hexaddr(image_low).c_str());
     }
 
-    replaceSignatures(KnobDebug, img, taintedAdddrs, taintedRegs, visitedAddrs, thresholdTriggered);
+    replaceSignatures(KnobDebug, img, taintedAdddrs, taintedRegs, visitedAddrs, thresholdTriggered, IOCounter);
 }
 
 int usage() {
