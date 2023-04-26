@@ -17,6 +17,7 @@
 * message parsing is done just after receiving data over the network
 */
 #define SPATIAL_THRESHOLD 1000
+bool thresholdTriggered = false;
 std::set<ADDRINT> visitedAddrs;
 ADDRINT MAIN_MODULE_LOW_ADDRESS = 0;
 ADDRINT MAIN_MODULE_HIGH_ADDRESS = 0;
@@ -521,11 +522,17 @@ void analyzeComparison(INS ins, const char *routine, ADDRINT routineAddr) {
 * This function is called every time a new trace is encountered.
 */
 void instrumentTrace(TRACE trace, void *v) {
-    /*
-    * Return inmediatly if there are no buffers of interest or we surprassed the
-    * spatial location threshold
-    */
-    if (taintedAdddrs.empty() || visitedAddrs.size() >= SPATIAL_THRESHOLD) {
+    /* Return inmediatly if there are no buffers of interest */
+    if (taintedAdddrs.empty()) {
+        return;
+    }
+
+    /* Or we surprassed the spatial location threshold */
+    if (visitedAddrs.size() >= SPATIAL_THRESHOLD) {
+        if (!thresholdTriggered) {
+            LOG_INFO("action=spacial-threshold-triggered\n");
+            thresholdTriggered = true;
+        }
         return;
     }
 
@@ -578,7 +585,7 @@ void moduleLoad(IMG img, void *v) {
         PRINT_DEBUG("Module loaded\t\t\t: %s (%s)\n", IMG_Name(img).c_str(), hexaddr(image_low).c_str());
     }
 
-    replaceSignatures(KnobDebug, img, taintedAdddrs, taintedRegs, visitedAddrs);
+    replaceSignatures(KnobDebug, img, taintedAdddrs, taintedRegs, visitedAddrs, thresholdTriggered);
 }
 
 int usage() {

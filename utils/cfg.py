@@ -392,6 +392,7 @@ class CFG:
                     """
                     self._transition_to_second_edge(node)
                 else:
+                    """ Otherwise assume the node was not yet visited in the CFG """
                     self._add_node(node)
             else:
                 self._add_node(node)
