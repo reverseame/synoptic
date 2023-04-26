@@ -25,6 +25,9 @@ bool thresholdTriggered = false;
 /* Keep track of visited addresses during tracing */
 std::set<ADDRINT> visitedAddrs;
 
+/* Last addr visited */
+ADDRINT lastVisitedAddr = -1;
+
 /* Main executable limit addresses */
 ADDRINT MAIN_MODULE_LOW_ADDRESS = 0;
 ADDRINT MAIN_MODULE_HIGH_ADDRESS = 0;
@@ -79,6 +82,16 @@ void followForkInChild(THREADID threadid, const CONTEXT *ctxt, VOID *v) {
     LOG_INFO("action=new-process-forked\n");
 }
 
+/*bool isSignalAddr(ADDRINT insAddr, USIZE insSize) {
+    if (lastVisitedAddr == -1) {
+        return false;
+    }
+
+    lastVisitedAddr
+
+    return true;
+}*/
+
 bool addrIsTraceable(ADDRINT insAddr) {
     /*
     * Just analyze main module. Pin IMG_IsMainExecutable() with TRACE_Address()
@@ -92,7 +105,12 @@ bool addrIsTraceable(ADDRINT insAddr) {
         return false;
     }
 
-    visitedAddrs.insert(insAddr);
+    /*if (isSignalAddr(insAddr, insSize)) {
+        return true;
+    }*/
+
+    lastVisitedAddr = insAddr;
+    visitedAddrs.insert(lastVisitedAddr);
 
     return true;
 }
@@ -297,8 +315,8 @@ REG getMemoryReg(INS ins) {
     return REG_INVALID();
 }
 
-/* Print in/direct call instruction with  */
-void traceCall(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT routineAddr, char *callType, ADDRINT targetAddr) {
+/* Print in/direct control flow instruction */
+void traceControlFlow(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT routineAddr, const char *controlFlowType, ADDRINT targetAddr) {
     if (!addrIsTraceable(insAddr)) {
         return;
     }
@@ -309,7 +327,7 @@ void traceCall(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routin
         target = "unknown";
     }
 
-    LOG_INFO("io-counter=%d action=%s routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, callType, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
+    LOG_INFO("io-counter=%d action=%s routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, controlFlowType, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
     logInsOpcodes(insAddr, insSize);
     LOG_RAW(" target-addr=%s target=\"%s\"\n", hexaddr(targetAddr).c_str(), target.c_str());
 }
@@ -388,34 +406,38 @@ void propagateTaint(INS ins, const char *routine, ADDRINT routineAddr) {
     }
 }
 
-void analyzeCall(INS ins, const char *routine, ADDRINT routineAddr) {
-    /* call addr */
-    if (INS_IsDirectControlFlow(ins)) {
-        INS_InsertCall(
-            ins, IPOINT_BEFORE, (AFUNPTR)traceCall,
-            IARG_INST_PTR,
-            IARG_UINT32, INS_Size(ins),
-            IARG_PTR, new std::string(INS_Disassemble(ins)),
-            IARG_PTR, routine,
-            IARG_ADDRINT, routineAddr,
-            IARG_PTR, "direct-call",
-            IARG_BRANCH_TARGET_ADDR,
-            IARG_END);
-    } else if (INS_IsIndirectControlFlow(ins)) {
-        /* call [reg] */
-        INS_InsertCall(
-            ins, IPOINT_BEFORE, (AFUNPTR)traceCall,
-            IARG_INST_PTR,
-            IARG_UINT32, INS_Size(ins),
-            IARG_PTR, new std::string(INS_Disassemble(ins)),
-            IARG_PTR, routine,
-            IARG_ADDRINT, routineAddr,
-            IARG_PTR, "indirect-call",
-            IARG_BRANCH_TARGET_ADDR,
-            IARG_END);
-    } else {
-        PRINT_WARNING("Unknown call: %s\n", INS_Disassemble(ins).c_str());
+void analyzeControlFlow(INS ins, const char *routine, ADDRINT routineAddr) {
+    const char* controlFlowType = "unknown";
+
+    if (INS_IsCall(ins)) {
+        /* call addr */
+        if (INS_IsDirectCall(ins)) {
+            controlFlowType = "direct-call";
+        } else {
+            /* call [reg] */
+            controlFlowType = "indirect-call";
+        }
+    } else if (INS_IsBranch(ins)) {
+        if (INS_IsDirectBranch(ins)) {
+            /* jmp addr */
+            controlFlowType = "direct-jmp";
+        } else {
+            /* jmp [reg] */
+            controlFlowType = "indirect-jmp";
+        }
+    } else if (INS_IsRet(ins)) {
+        controlFlowType = "ret";
     }
+
+    INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)traceControlFlow,
+        IARG_INST_PTR,
+        IARG_UINT32, INS_Size(ins),
+        IARG_PTR, new std::string(INS_Disassemble(ins)),
+        IARG_PTR, routine,
+        IARG_ADDRINT, routineAddr,
+        IARG_PTR, controlFlowType,
+        IARG_BRANCH_TARGET_ADDR,
+        IARG_END);
 }
 
 /* Immediate compared to memory address */
@@ -555,8 +577,8 @@ void instrumentTrace(TRACE trace, void *v) {
         for (INS ins = BBL_InsHead(bbl); INS_Valid(ins); ins = INS_Next(ins)) {
             if ((INS_Opcode(ins) >= XED_ICLASS_MOV) && (INS_Opcode(ins) <= XED_ICLASS_MOVZX)) {
                 propagateTaint(ins, routine, routineAddr);
-            } else if (INS_IsCall(ins)) {
-                analyzeCall(ins, routine, routineAddr);
+            } else if (INS_IsControlFlow(ins)) {
+                analyzeControlFlow(ins, routine, routineAddr);
             } else if ((INS_Opcode(ins) == XED_ICLASS_CMP) || (INS_Opcode(ins) == XED_ICLASS_TEST)) {
                 analyzeComparison(ins, routine, routineAddr);
             } else {
