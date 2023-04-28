@@ -25,8 +25,10 @@ bool thresholdTriggered = false;
 /* Keep track of visited addresses during tracing */
 std::set<ADDRINT> visitedAddrs;
 
-/* Last addr visited */
-ADDRINT lastVisitedAddr = -1;
+/* Look up for signal handlers or timers that interrupts normal execution flow */
+bool executionInterrupted = false;
+ADDRINT insFallthrough = 0;
+ADDRINT insTargetAddr = 0;
 
 /* Main executable limit addresses */
 ADDRINT MAIN_MODULE_LOW_ADDRESS = 0;
@@ -82,22 +84,12 @@ void followForkInChild(THREADID threadid, const CONTEXT *ctxt, VOID *v) {
     LOG_INFO("action=new-process-forked\n");
 }
 
-/*bool isSignalAddr(ADDRINT insAddr, USIZE insSize) {
-    if (lastVisitedAddr == -1) {
-        return false;
-    }
-
-    lastVisitedAddr
-
-    return true;
-}*/
-
-bool addrIsTraceable(ADDRINT insAddr) {
+bool addrIsTraceable(ADDRINT insAddr, USIZE insSize) {
     /*
     * Just analyze main module. Pin IMG_IsMainExecutable() with TRACE_Address()
     * fails to resolve main executable after glibc local symbols
     */
-    if (insAddr > MAIN_MODULE_HIGH_ADDRESS || insAddr < MAIN_MODULE_LOW_ADDRESS) {
+    if ((insAddr > MAIN_MODULE_HIGH_ADDRESS) || (insAddr < MAIN_MODULE_LOW_ADDRESS)) {
         return false;
     }
 
@@ -105,12 +97,37 @@ bool addrIsTraceable(ADDRINT insAddr) {
         return false;
     }
 
-    /*if (isSignalAddr(insAddr, insSize)) {
-        return true;
-    }*/
+    //LOG_RAW("*** ins-counter=%ld/%d insFallthrough=%s, insTargetAddr=%s, insAddr=%s ***\n", visitedAddrs.size(), SPATIAL_THRESHOLD, hexaddr(insFallthrough).c_str(), hexaddr(insTargetAddr).c_str(), hexaddr(insAddr).c_str());
 
-    lastVisitedAddr = insAddr;
-    visitedAddrs.insert(lastVisitedAddr);
+    /* Only check for signal handler if there is a fallthrough defined */
+    if (insFallthrough == 0) {
+        executionInterrupted = false;
+        insFallthrough = insAddr + insSize;
+        visitedAddrs.insert(insAddr);
+    } else {
+        /*
+        * If new instruction is a signal handler or a timer, do not count its execution
+        * for spatial space. We consider that a signal handler is executed when current
+        * ins address does not match neither the fallthrough or the target address of a
+        * previous ins
+        */
+        if ((insAddr == insFallthrough) || (insAddr == insTargetAddr)) {
+            insFallthrough = insAddr + insSize;
+            if (executionInterrupted) {
+                LOG_RAW("*** Control flow recovered from signal! ***\n");
+                executionInterrupted = false;
+            }
+            visitedAddrs.insert(insAddr);
+        } else {
+            /* Singal function*/
+            if (!executionInterrupted) {
+                LOG_RAW("*** Signal detected! ***\n");
+                executionInterrupted = true;
+            }
+            /* Do not trace signal addresses */
+            return false;
+        }
+    }
 
     return true;
 }
@@ -139,7 +156,7 @@ void logIns(ADDRINT insAddr, USIZE insSize, std::string *insDis, const char *rou
 }
 
 void traceIns(ADDRINT insAddr, USIZE insSize, std::string *insDis, const char *routine, ADDRINT routineAddr) {
-    if (!addrIsTraceable(insAddr)) {
+    if (!addrIsTraceable(insAddr, insSize)) {
         return;
     }
 
@@ -148,7 +165,7 @@ void traceIns(ADDRINT insAddr, USIZE insSize, std::string *insDis, const char *r
 
 /* Register copied to memory */
 void regToAddr(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT routineAddr, REG regAddr, ADDRINT addr, REG reg) {
-    if (!addrIsTraceable(insAddr)) {
+    if (!addrIsTraceable(insAddr, insSize)) {
         return;
     }
 
@@ -173,7 +190,7 @@ void regToAddr(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routin
 
 /* Memory copied to register */
 void addrToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT routineAddr, ADDRINT mem_r, REG reg_w) {
-    if (!addrIsTraceable(insAddr)) {
+    if (!addrIsTraceable(insAddr, insSize)) {
         return;
     }
 
@@ -195,7 +212,7 @@ void addrToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routin
 
 /* Reg copied to another reg */
 void regToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT routineAddr, REG reg_r, REG reg_w) {
-    if (!addrIsTraceable(insAddr)) {
+    if (!addrIsTraceable(insAddr, insSize)) {
         return;
     }
 
@@ -216,7 +233,7 @@ void regToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine
 
 /* Immediate copied to a register */
 void immToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT routineAddr, REG reg_w) {
-    if (!addrIsTraceable(insAddr)) {
+    if (!addrIsTraceable(insAddr, insSize)) {
         return;
     }
 
@@ -232,7 +249,7 @@ void immToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine
 
 /* Immediate copied to memory address */
 void immToAddr(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT routineAddr, ADDRINT mem_w) {
-    if (!addrIsTraceable(insAddr)) {
+    if (!addrIsTraceable(insAddr, insSize)) {
         return;
     }
 
@@ -317,7 +334,7 @@ REG getMemoryReg(INS ins) {
 
 /* Print in/direct control flow instruction */
 void traceControlFlow(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT routineAddr, const char *controlFlowType, ADDRINT targetAddr) {
-    if (!addrIsTraceable(insAddr)) {
+    if (!addrIsTraceable(insAddr, insSize)) {
         return;
     }
 
@@ -325,6 +342,16 @@ void traceControlFlow(ADDRINT insAddr, USIZE insSize, std::string *insDis, char 
 
     if (target.empty()) {
         target = "unknown";
+    }
+
+    /* Do not update insTargetAddr if execution was interruped due to a signal or a timer */
+    if (!executionInterrupted) {
+        /* Delete ins info if control flow is changed outside main executable */
+        if ((targetAddr > MAIN_MODULE_HIGH_ADDRESS) || (targetAddr < MAIN_MODULE_LOW_ADDRESS)) {
+            insFallthrough = 0;
+        } else {
+            insTargetAddr = targetAddr;
+        }
     }
 
     LOG_INFO("io-counter=%d action=%s routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, controlFlowType, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
@@ -442,7 +469,7 @@ void analyzeControlFlow(INS ins, const char *routine, ADDRINT routineAddr) {
 
 /* Immediate compared to memory address */
 void compareImmToAddr(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT routineAddr, ADDRINT mem_r, REG reg_r, ADDRINT imm) {
-    if (!addrIsTraceable(insAddr)) {
+    if (!addrIsTraceable(insAddr, insSize)) {
         return;
     }
 
@@ -457,7 +484,7 @@ void compareImmToAddr(ADDRINT insAddr, USIZE insSize, std::string *insDis, char 
 
 /* Immediate compared to register */
 void compareImmToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT routineAddr, REG reg, ADDRINT regValue, ADDRINT imm) {
-    if (!addrIsTraceable(insAddr)) {
+    if (!addrIsTraceable(insAddr, insSize)) {
         return;
     }
 
@@ -472,7 +499,7 @@ void compareImmToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *
 
 /* Register compared to register */
 void compareRegToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT routineAddr, REG reg1, REG reg2) {
-    if (!addrIsTraceable(insAddr)) {
+    if (!addrIsTraceable(insAddr, insSize)) {
         return;
     }
 
@@ -614,7 +641,7 @@ void moduleLoad(IMG img, void *v) {
         PRINT_DEBUG("Module loaded\t\t\t: %s (%s)\n", IMG_Name(img).c_str(), hexaddr(image_low).c_str());
     }
 
-    replaceSignatures(KnobDebug, img, taintedAdddrs, taintedRegs, visitedAddrs, thresholdTriggered, IOCounter);
+    replaceSignatures(KnobDebug, img, taintedAdddrs, taintedRegs, visitedAddrs, thresholdTriggered, IOCounter, insFallthrough);
 }
 
 int usage() {
