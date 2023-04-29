@@ -105,8 +105,12 @@ def analyze_net_trace(dynamic_cfg, net_trace):
             addr = int(item['ins-addr'], 16)
             opcodes = binascii.unhexlify(item['ins-opcodes'])
 
-            """ Get call target """
-            if (item['action'] == 'direct-call') or (item['action'] == 'indirect-call'):
+            """ Get control flow target """
+            if (item['action'] == 'direct-call') or\
+                    (item['action'] == 'indirect-call') or\
+                    (item['action'] == 'direct-jmp') or\
+                    (item['action'] == 'indirect-jmp') or\
+                    (item['action'] == 'ret'):
                 target_addr = int(item['target-addr'], 16)
                 comment = item['target']
                 ins = cfg.Ins(addr, opcodes, routine=routine, routine_addr=routine_addr, target_addr=target_addr, comment=comment)

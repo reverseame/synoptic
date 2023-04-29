@@ -62,17 +62,17 @@ class Ins:
             ret['fallthrough'] = self.addr + self.size
         
         if (self.type == INS_TYPE_CALL) or (self.type == INS_TYPE_JUMP):
-            if self.dis.operands[0].type == capstone.x86.X86_OP_IMM:
-                ret['target'] = self.dis.operands[0].value.imm
+            operand = self.dis.operands[0] 
+            ret['target'] = self.target_addr
+            if operand.type == capstone.x86.X86_OP_IMM:
                 ret['mode'] = 'direct'
-            elif self.dis.operands[0].type == capstone.x86.X86_OP_MEM:
-                ret['target'] = 'unknown'
-                ret['mode'] = 'indirect'
-            elif self.dis.operands[0].type == capstone.x86.X86_OP_REG:
-                ret['target'] = self.target_addr
+            elif (operand.type == capstone.x86.X86_OP_MEM) or (operand.type == capstone.x86.X86_OP_REG):
                 ret['mode'] = 'indirect'
             else:
                 raise NotImplementedError(f'{self.dis.mnemonic} {self.dis.op_str}\t: Ins not supported')
+
+        if self.type == INS_TYPE_RETURN:
+            ret['target'] == self.target_addr
 
         if self.type == INS_TYPE_BRANCH:
             operand = self.dis.operands[0]
@@ -226,9 +226,11 @@ class Node:
         if self.group.tail.is_plt_jmp():
             return
 
-        if self.group.tail.info['fallthrough'] == node.group.leader.addr:
-            return
-
+        try:
+            if self.group.tail.info['fallthrough'] == node.group.leader.addr:
+                return
+        except KeyError:
+            import pdb; pdb.set_trace()
     
         raise CFGException(f'"{self.group.tail}" cannot be followed by "{node.group.leader}"')
 

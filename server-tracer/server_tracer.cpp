@@ -85,19 +85,24 @@ void followForkInChild(THREADID threadid, const CONTEXT *ctxt, VOID *v) {
 }
 
 bool addrIsTraceable(ADDRINT insAddr, USIZE insSize) {
-    /*
-    * Just analyze main module. Pin IMG_IsMainExecutable() with TRACE_Address()
-    * fails to resolve main executable after glibc local symbols
-    */
+    /* There is not tainted information */
+    if (taintedAdddrs.empty()) {
+        return false;
+    }
+
+    /* Address is not in the main module */
     if ((insAddr > MAIN_MODULE_HIGH_ADDRESS) || (insAddr < MAIN_MODULE_LOW_ADDRESS)) {
         return false;
     }
 
+    /* We surprassed the spatial location threshold */
     if (visitedAddrs.size() >= SPATIAL_THRESHOLD) {
+        if (!thresholdTriggered) {
+            LOG_INFO("io-counter=%d action=spatial-threshold-triggered\n", IOCounter);
+            thresholdTriggered = true;
+        }
         return false;
-    }
-
-    //LOG_RAW("*** ins-counter=%ld/%d insFallthrough=%s, insTargetAddr=%s, insAddr=%s ***\n", visitedAddrs.size(), SPATIAL_THRESHOLD, hexaddr(insFallthrough).c_str(), hexaddr(insTargetAddr).c_str(), hexaddr(insAddr).c_str());
+    } 
 
     /* Only check for signal handler if there is a fallthrough defined */
     if (insFallthrough == 0) {
@@ -123,9 +128,8 @@ bool addrIsTraceable(ADDRINT insAddr, USIZE insSize) {
             if (!executionInterrupted) {
                 LOG_RAW("*** Signal detected! ***\n");
                 executionInterrupted = true;
+                /* Do not count signal address for spatial location */
             }
-            /* Do not trace signal addresses */
-            return false;
         }
     }
 
@@ -504,7 +508,7 @@ void compareRegToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *
     }
 
     if (taintedRegs[reg1] || taintedRegs[reg2]) {
-        LOG_TAINT("io-counter=%d action=compare outine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
+        LOG_TAINT("io-counter=%d action=compare routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
         logInsOpcodes(insAddr, insSize);
         LOG_RAW(" origin=reg-reg reg1=%s reg2=%s\n", REG_StringShort(reg1).c_str(), REG_StringShort(reg2).c_str());
     } else {
@@ -572,26 +576,9 @@ void analyzeComparison(INS ins, const char *routine, ADDRINT routineAddr) {
 }
 
 /*
-* This function checks for each instruction if it does a mov that can potentially
-* transfer taint and if true adds the approriate analysis routine to check
-* and propogate taint at run-time if needed
 * This function is called every time a new trace is encountered.
 */
 void instrumentTrace(TRACE trace, void *v) {
-    /* Return inmediatly if there are no buffers of interest */
-    if (taintedAdddrs.empty()) {
-        return;
-    }
-
-    /* Or we surprassed the spatial location threshold */
-    if (visitedAddrs.size() >= SPATIAL_THRESHOLD) {
-        if (!thresholdTriggered) {
-            LOG_INFO("io-counter=%d action=spatial-threshold-triggered\n", IOCounter);
-            thresholdTriggered = true;
-        }
-        return;
-    }
-
     const char *routine = "unknown";
     ADDRINT routineAddr = 0;
     RTN rtn = TRACE_Rtn(trace);
