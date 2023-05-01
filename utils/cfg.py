@@ -72,7 +72,7 @@ class Ins:
                 raise NotImplementedError(f'{self.dis.mnemonic} {self.dis.op_str}\t: Ins not supported')
 
         if self.type == INS_TYPE_RETURN:
-            ret['target'] == self.target_addr
+            ret['target'] = self.target_addr
 
         if self.type == INS_TYPE_BRANCH:
             operand = self.dis.operands[0]
@@ -226,19 +226,22 @@ class Node:
         if self.group.tail.is_plt_jmp():
             return
 
-        try:
-            if self.group.tail.info['fallthrough'] == node.group.leader.addr:
-                return
-        except KeyError:
-            import pdb; pdb.set_trace()
+        if self.group.tail.info['fallthrough'] == node.group.leader.addr:
+            return
     
         raise CFGException(f'"{self.group.tail}" cannot be followed by "{node.group.leader}"')
+
+    def extend(self, node):
+        self.group.extend(node.group)
 
     def __eq__(self, other):
         if isinstance(other, Node):
             return self.group == other.group
 
         return False
+
+    def __len__(self):
+        return len(self.group)
 
     def __str__(self):
         return str(self.group)
@@ -290,7 +293,19 @@ class CFG:
                 self.taint(node)
                 self.last_inserted = edge.dst
             else:
-                raise CFGException(f'Node "{self.last_inserted.group.leader}" without transitions defined')
+                """
+                CFG node ends here because it does not have a transition defined,
+                so we deactivate refinement
+                """
+                self.refine = False
+                #raise CFGException(f'Node "{self.last_inserted.group.leader}" without transitions defined')
+        elif len(node) > len(self.last_inserted):
+            """
+            If incoming node length is greater than last_inserted, it means the
+            previous trace was stopped at this node. So, we need to extend the
+            node to match its actual defined instructions
+            """
+            self.last_inserted.extend(node)
 
     def _transition_to_second_edge(self, node):
         """ Revert previous branch decision """
@@ -367,7 +382,7 @@ class CFG:
             """ New transition to node """
             self._add_node_transition(node)
 
-        """ We added a new node, so we donnot need to keep track of last branch_node """
+        """ We added a new node, so we do not need to keep track of last branch_node """
         self.branch_node = None
 
     def add(self, group):
@@ -392,7 +407,12 @@ class CFG:
                     if branch_node is defined, revert transition and take the
                     second one
                     """
-                    self._transition_to_second_edge(node)
+                    try:
+                        self._transition_to_second_edge(node)
+                    except CFGException:
+                        """ Add new node, we are not refining the CFG anymore """
+                        self.refine = False
+                        self._add_node(node)
                 else:
                     """ Otherwise assume the node was not yet visited in the CFG """
                     self._add_node(node)

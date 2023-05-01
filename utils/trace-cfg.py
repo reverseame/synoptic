@@ -95,10 +95,15 @@ def split_sessions(data):
     return ret
 
 def analyze_net_trace(dynamic_cfg, net_trace):
+    print_debug = False
     group = cfg.Group()
     ins = None
 
     for item in net_trace:
+        if not print_debug:
+            if 'io-counter' in item:
+                print_info(f'CFG refinement {item["io-counter"]}...')
+                print_debug = True
         if 'ins-opcodes' in item:
             routine_addr = int(item['routine-addr'], 16)
             routine = item['routine']
@@ -140,14 +145,9 @@ def analyze(data):
     for session in split_sessions(data):
         net_traces = split_network_activity(session)
         for (i, net_trace) in enumerate(net_traces):
-            try:
-                print_info(f'CFG refinement {i}')
-                dynamic_cfg.initialize()
-                dynamic_cfg = analyze_net_trace(dynamic_cfg, net_trace)
-            except cfg.CFGException as error:
-                print_warning(str(error))
-            finally:
-                dynamic_cfg.finalize()
+            dynamic_cfg.initialize()
+            dynamic_cfg = analyze_net_trace(dynamic_cfg, net_trace)
+            dynamic_cfg.finalize()
 
     return dynamic_cfg
 
