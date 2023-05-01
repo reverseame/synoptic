@@ -259,6 +259,7 @@ class CFG:
         self.entry_node = None          # Entry node of the CFG
         self.last_inserted = None       # Last node visited in the CFG
         self.next = []                  # CFGs reached from this CFG
+        self.final_cfg = False          # CFG is the last executed
         self.final_nodes = []           # List of nodes that finalize CFG
         self.tainted = False            # CFG contains a tainted node?
         self.previous = None            # Previous CFG that calls this CFG
@@ -276,6 +277,12 @@ class CFG:
         if not self.is_empty():
             self.last_inserted = self.entry_node
             self.refine = True
+
+    def set_final(self):
+        self.final_cfg = True
+
+    def is_final(self):
+        return self.final_cfg
 
     def finalize(self):
         if not self.is_empty():
@@ -298,6 +305,7 @@ class CFG:
                 so we deactivate refinement
                 """
                 self.refine = False
+                self.final_cfg = False
                 #raise CFGException(f'Node "{self.last_inserted.group.leader}" without transitions defined')
         elif len(node) > len(self.last_inserted):
             """
@@ -306,6 +314,7 @@ class CFG:
             node to match its actual defined instructions
             """
             self.last_inserted.extend(node)
+            self.final_cfg = False
 
     def _transition_to_second_edge(self, node):
         """ Revert previous branch decision """
@@ -412,6 +421,7 @@ class CFG:
                     except CFGException:
                         """ Add new node, we are not refining the CFG anymore """
                         self.refine = False
+                        self.final_cfg = False
                         self._add_node(node)
                 else:
                     """ Otherwise assume the node was not yet visited in the CFG """
@@ -433,7 +443,6 @@ class DynamicCFG:
         self.cfgs = []              # List of all CFGs without any order
         self.entry_cfg = None       # First CFG
         self.last_cfg = None        # Last CFG constructed
-        self.final_cfgs = []        # List of all CFGs that finalize the DynamicCFG
 
     def is_empty(self):
         return self.entry_cfg is None
@@ -446,7 +455,7 @@ class DynamicCFG:
     def finalize(self):
         if not self.is_empty():
             self.last_cfg.finalize()
-            self.final_cfgs.append(self.last_cfg)
+            self.last_cfg.set_final()
 
     def add(self, group):
         if self.is_empty():
@@ -509,7 +518,7 @@ class DynamicCFG:
 
         return None
 
-    def _export_cfg(self, cfg, cfg_output_filename, first=False, last=False):
+    def _export_cfg(self, cfg, cfg_output_filename, first=False):
         graph = graphviz.Digraph(cfg_output_filename)
 
         """ General CFG Style """
@@ -579,14 +588,16 @@ class DynamicCFG:
                     pending_edges.append(new_edges)
 
         """ CFG last transition """
-        if last:
-            if len(cfg.final_nodes):
-                graph.node('final', label='', shape='doublecircle', style='filled', color='black', fixedsize='true')
+        if cfg.is_final() and len(cfg.final_nodes):
+            graph.node('final', label='', shape='doublecircle', style='filled', color='black', fixedsize='true')
 
-                for last_node in cfg.final_nodes:
-                    last_node_id = hex(last_node.group.leader.addr)
-                    graph.edge(last_node_id, 'final')
+            already_seen = []
+            for last_node in cfg.final_nodes:
+                last_node_id = hex(last_node.group.leader.addr)
+                if last_node_id not in already_seen:
+                    graph.edge(last_node_id, 'final', label=f'{len(cfg.final_nodes)}')
                     graph.node(last_node_id)
+                    already_seen.append(last_node_id)
 
         """ Generate Graphviz DOT file (.gv) """
         graph.render()
@@ -606,12 +617,9 @@ class DynamicCFG:
 
                 while pending_cfgs:
                     cfg = pending_cfgs.pop(0)
-                    #if cfg.is_empty():
-                    #    continue
                     cfg_output_filename = os.path.join(temp_dir, hex(hash(cfg)))
                     if cfg_output_filename not in filenames:
-                        last = cfg in self.final_cfgs
-                        self._export_cfg(cfg, cfg_output_filename, last=last)
+                        self._export_cfg(cfg, cfg_output_filename)
                         filenames.append(cfg_output_filename)
                     pending_cfgs.extend(cfg.next)
 
