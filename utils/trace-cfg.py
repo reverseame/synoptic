@@ -122,7 +122,7 @@ def analyze_net_trace(dynamic_cfg, net_trace):
 
             if (item['level'] == 'taint') and (item['action'] in ['compare', 'taint-reg', 'taint-addr']):
                     """ Update comment with taint information """
-                    ins.update_comment(f'{item["action"]} {item["origin"]}')
+                    ins.update_comment(f'{item["action"].replace("-", " ")} {item["origin"].replace("-", " ")}')
                     ins.tainted = True
                     """ Two or more taint info in the same group means only one taint """
                     group.taint_count = 1
