@@ -146,9 +146,13 @@ def analyze(data):
     for session in split_sessions(data):
         net_traces = split_network_activity(session)
         for (i, net_trace) in enumerate(net_traces):
-            dynamic_cfg.initialize()
-            dynamic_cfg = analyze_net_trace(dynamic_cfg, net_trace)
-            dynamic_cfg.finalize()
+            try:
+                dynamic_cfg.initialize()
+                dynamic_cfg = analyze_net_trace(dynamic_cfg, net_trace)
+            except cfg.CFGException as e:
+                print_warning(str(e))
+            finally:
+                dynamic_cfg.finalize()
 
     return dynamic_cfg
 
