@@ -106,7 +106,7 @@ class Ins:
         return self.type == INS_TYPE_STANDARD
 
     def is_control_flow(self):
-        return self.is_return() or self.is_call()
+        return not self.is_standard()
 
     def is_branch_taken(self, ins):
         if self.is_branch():
@@ -153,7 +153,7 @@ class Group:
         self.inss = []
         self.leader = None
         self.tail = None
-        self.tainted = False
+        self.taint_count = 0
 
     def add(self, ins):
         if self.leader is None:
@@ -174,8 +174,8 @@ class Group:
         self.taint(group)
 
     def taint(self, group):
-        """ Preserve if group was tainted at some time """
-        self.tainted = self.tainted or group.tainted
+        """ Preserve taint count """
+        self.taint_count += group.taint_count
 
     def __str__(self):
         return '\n'.join([str(ins) for ins in self.inss])
@@ -208,13 +208,20 @@ class Edge:
 class Node:
     def __init__(self, group):
         self.group = group
-        self.tainted = group.tainted
+        self.visit_count = 1
+        self.taint_count = group.taint_count
         self.edges = []
         self.diff = 0
 
     def taint(self, node):
-        """ Preserve if node was tainted at some time """
-        self.tainted = self.tainted or node.tainted
+        """ Preserve taint count """
+        self.taint_count += node.taint_count
+
+    def visit(self):
+        self.visit_count += 1
+
+    def is_tainted(self):
+        return self.taint_count > 0
 
     def check_next_node(self, node):
         if self.group.tail.is_return():
@@ -274,7 +281,7 @@ class CFG:
 
     def taint(self, node):
         """ Preserve if one of nodes was tainted at some time """
-        self.tainted = self.tainted or node.tainted
+        self.tainted = self.tainted or node.is_tainted() 
 
     def is_empty(self):
         return self.entry_node is None
@@ -295,14 +302,27 @@ class CFG:
             self.final_nodes.append(self.last_inserted)
 
     def _transition_to_first_edge(self, node):
-        if self.last_inserted not in self.final_nodes:
+        if self.last_inserted in self.final_nodes:
+            self.last_inserted.visit()
+            if len(node) > len(self.last_inserted):
+                """
+                If incoming node length is greater than last_inserted, it means the
+                previous trace was stopped at this node. So, we need to extend the
+                node to match its actual defined instructions
+                """
+                self.last_inserted.extend(node)
+                """ We are updating the CFG, so do not store last_inserted as final node """
+                self.final_nodes.remove(self.last_inserted)
+                self.final_cfg = False
+        else:
             if self.last_inserted.edges:
                 """ Keep track of last branch node """
                 self.branch_node = self.last_inserted if self.last_inserted.group.tail.is_branch() else None
                 edge = self.last_inserted.edges[0]
                 edge.count += 1
-                """ Keep taint info """
+                """ Update node info """
                 self.last_inserted.taint(node)
+                self.last_inserted.visit()
                 self.taint(node)
                 self.last_inserted = edge.dst
             else:
@@ -312,15 +332,7 @@ class CFG:
                 """
                 self.refine = False
                 self.final_cfg = False
-                #raise CFGException(f'Node "{self.last_inserted.group.leader}" without transitions defined')
-        elif len(node) > len(self.last_inserted):
-            """
-            If incoming node length is greater than last_inserted, it means the
-            previous trace was stopped at this node. So, we need to extend the
-            node to match its actual defined instructions
-            """
-            self.last_inserted.extend(node)
-            self.final_cfg = False
+                self.last_inserted.visit()
 
     def _transition_to_second_edge(self, node):
         """ Revert previous branch decision """
@@ -331,9 +343,6 @@ class CFG:
             if edge.dst == node:
                 edge.count += 1
                 self.last_inserted = edge.dst
-                """ Keep taint info """
-                self.last_inserted.taint(node)
-                self.taint(node)
                 """ Assume transition by the first edge again """
                 self._transition_to_first_edge(node)
             else:
@@ -360,8 +369,9 @@ class CFG:
             if edge.dst == node:
                 edge.count += 1
                 self.last_inserted = edge.dst
-                """ Keep taint info """
+                """ Update node info """
                 self.last_inserted.taint(node)
+                self.last_inserted.visit()
                 self.taint(node)
                 return True
 
@@ -392,6 +402,9 @@ class CFG:
             """
             if not self._transition_to_node(node):
                 node_found = self.nodes[self.nodes.index(node)]
+                """ Update info of previous defined node """
+                node_found.visit()
+                node_found.taint(node)
                 self._add_node_transition(node_found)
         else:
             """ New transition to node """
@@ -473,12 +486,12 @@ class DynamicCFG:
             if group.tail.is_return():
                 group.tail.comment = 'return to undefined CFG'
         else:
-            """ Create a new CFG due to call function """
+            """ Go to another CFG due to call function """
             if group.tail.is_call():
                 self.last_cfg.add(group)
                 next_cfg = self.get_next(group)
 
-                """ Next CFG not defined yet """
+                """ Next CFG is not defined yet, so we create a new one """
                 if next_cfg is None:
                     cfg = CFG()
                     self.last_cfg.next.append(cfg)
@@ -543,9 +556,11 @@ class DynamicCFG:
         offset = cfg.entry_node.group.leader.get_ins_offset()
         if offset > 0:
             label += f' + {offset:#x}'
+        if cfg.entry_node.taint_count > 0:
+            label += f' [taint {cfg.entry_node.taint_count}/{cfg.entry_node.visit_count}]'
         label += '\l\l' + '\l'.join([ins.dumps(opcodes_padding=opcodes_padding, comment_padding=comment_padding) for ins in cfg.entry_node.group.inss]) + '\l'     # '\l' means left-aligned, last one is mandatory to ensure alignment of label last line
 
-        if cfg.entry_node.tainted:
+        if cfg.entry_node.is_tainted():
             graph.node(entry_node_id, label=label, style='filled', fillcolor=COLOR_TAINTED)
         else:
             graph.node(entry_node_id, label=label)
@@ -574,11 +589,13 @@ class DynamicCFG:
                     offset = edge.dst.group.leader.get_ins_offset()
                     if offset > 0:
                         label += f' + {offset:#x}'
+                    if edge.dst.taint_count > 0:
+                        label += f' [taint {edge.dst.taint_count}/{edge.dst.visit_count}]'
                     label += '\l\l'
                     label += '\l'.join([ins.dumps(opcodes_padding=opcodes_padding, comment_padding=comment_padding) for ins in edge.dst.group.inss])
                     label += '\l'                                      # '\l' means left-aligned, last one is mandatory to ensure alignment of label last line
                     """ Light blue for taint information """
-                    if edge.dst.tainted:
+                    if edge.dst.is_tainted():
                         graph.node(edge_node_id, label=label, style='filled', fillcolor=COLOR_TAINTED)
                     else:
                         graph.node(edge_node_id, label=label)

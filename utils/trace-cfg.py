@@ -124,7 +124,8 @@ def analyze_net_trace(dynamic_cfg, net_trace):
                     """ Update comment with taint information """
                     ins.update_comment(f'{item["action"]} {item["origin"]}')
                     ins.tainted = True
-                    group.tainted = True
+                    """ Two or more taint info in the same group means only one taint """
+                    group.taint_count = 1
 
             group.add(ins)
 
