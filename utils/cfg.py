@@ -312,7 +312,8 @@ class CFG:
                 """
                 self.last_inserted.extend(node)
                 """ We are updating the CFG, so do not store last_inserted as final node """
-                self.final_nodes.remove(self.last_inserted)
+                while self.last_inserted in self.final_nodes:
+                    self.final_nodes.remove(self.last_inserted)
                 self.final_cfg = False
         else:
             if self.last_inserted.edges:

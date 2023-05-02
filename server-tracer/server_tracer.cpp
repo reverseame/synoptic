@@ -119,14 +119,14 @@ bool addrIsTraceable(ADDRINT insAddr, USIZE insSize) {
         if ((insAddr == insFallthrough) || (insAddr == insTargetAddr)) {
             insFallthrough = insAddr + insSize;
             if (executionInterrupted) {
-                LOG_RAW("*** Control flow recovered from signal! ***\n");
+                LOG_INFO("io-counter=%d action=signal-finished\n", IOCounter);
                 executionInterrupted = false;
             }
             visitedAddrs.insert(insAddr);
         } else {
             /* Singal function*/
             if (!executionInterrupted) {
-                LOG_RAW("*** Signal detected! ***\n");
+                LOG_INFO("io-counter=%d action=signal-detected\n", IOCounter);
                 executionInterrupted = true;
                 /* Do not count signal address for spatial location */
             }
