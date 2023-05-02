@@ -121,13 +121,19 @@ class Ins:
         if ins.addr != self.info['fallthrough']:
             raise CFGException(f'"{str(self)}" does not fallthrough to "{str(ins)}"')
 
-    def dumps(self, opcodes_padding=0):
+    def update_comment(self, comment):
+        if self.comment:
+            self.comment += ', '
+        
+        self.comment += comment
+
+    def dumps(self, opcodes_padding=0, comment_padding=0):
         tab_padding = ' ' * 5
 
         string = f'{hex(self.addr)}{tab_padding}{self.opcodes.hex().ljust(opcodes_padding)}{tab_padding}{self.dis.mnemonic} {self.dis.op_str}'
 
         if self.comment:
-            string += f'{tab_padding}; {self.comment}'
+            string = f'{string.ljust(comment_padding)} ; {self.comment}'
 
         return string
 
@@ -465,7 +471,7 @@ class DynamicCFG:
             self.last_cfg = self.entry_cfg
             self.cfgs.append(self.entry_cfg)
             if group.tail.is_return():
-                group.tail.comment = 'unknown return address'
+                group.tail.comment = 'return to undefined CFG'
         else:
             """ Create a new CFG due to call function """
             if group.tail.is_call():
@@ -495,7 +501,7 @@ class DynamicCFG:
                 previous CFG (we started tracing in the middle of a function)
                 """
                 if self.last_cfg.previous is None:
-                    group.tail.comment = 'unknown return address'
+                    group.tail.comment = 'return to undefined CFG'
 
                 self.last_cfg.add(group)
 
@@ -531,12 +537,13 @@ class DynamicCFG:
 
         """ CFG node style """
         entry_node_id = hex(cfg.entry_node.group.leader.addr)
-        padding = max([len(ins.opcodes.hex()) for ins in cfg.entry_node.group.inss])
+        opcodes_padding = max([len(ins.opcodes.hex()) for ins in cfg.entry_node.group.inss])
+        comment_padding = max([len(ins.dumps(opcodes_padding=opcodes_padding).split(';')[0]) for ins in cfg.entry_node.group.inss])
         label = f'; {cfg.entry_node.group.leader.routine}'
         offset = cfg.entry_node.group.leader.get_ins_offset()
         if offset > 0:
             label += f' + {offset:#x}'
-        label += '\l\l' + '\l'.join([ins.dumps(padding) for ins in cfg.entry_node.group.inss]) + '\l'     # '\l' means left-aligned, last one is mandatory to ensure alignment of label last line
+        label += '\l\l' + '\l'.join([ins.dumps(opcodes_padding=opcodes_padding, comment_padding=comment_padding) for ins in cfg.entry_node.group.inss]) + '\l'     # '\l' means left-aligned, last one is mandatory to ensure alignment of label last line
 
         if cfg.entry_node.tainted:
             graph.node(entry_node_id, label=label, style='filled', fillcolor=COLOR_TAINTED)
@@ -559,15 +566,16 @@ class DynamicCFG:
                 edge_node_id = hex(edge.dst.group.leader.addr)
 
                 if (node_id, edge_node_id) not in already_seen:
-                    """ Opcodes padding """
-                    padding = max([len(ins.opcodes.hex()) for ins in edge.dst.group.inss])
+                    """ Calculate padding """
+                    opcodes_padding = max([len(ins.opcodes.hex()) for ins in edge.dst.group.inss])
+                    comment_padding = max([len(ins.dumps(opcodes_padding=opcodes_padding).split(';')[0]) for ins in edge.dst.group.inss])
                     """ Label with routine offset """
                     label = f'; {edge.dst.group.leader.routine}'
                     offset = edge.dst.group.leader.get_ins_offset()
                     if offset > 0:
                         label += f' + {offset:#x}'
                     label += '\l\l'
-                    label += '\l'.join([ins.dumps(padding) for ins in edge.dst.group.inss])
+                    label += '\l'.join([ins.dumps(opcodes_padding=opcodes_padding, comment_padding=comment_padding) for ins in edge.dst.group.inss])
                     label += '\l'                                      # '\l' means left-aligned, last one is mandatory to ensure alignment of label last line
                     """ Light blue for taint information """
                     if edge.dst.tainted:

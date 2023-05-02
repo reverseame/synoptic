@@ -111,20 +111,20 @@ def analyze_net_trace(dynamic_cfg, net_trace):
             opcodes = binascii.unhexlify(item['ins-opcodes'])
 
             """ Get control flow target """
-            if (item['action'] == 'direct-call') or\
-                    (item['action'] == 'indirect-call') or\
-                    (item['action'] == 'direct-jmp') or\
-                    (item['action'] == 'indirect-jmp') or\
-                    (item['action'] == 'ret'):
+            if item['action'] in ['direct-call', 'indirect-call', 'direct-jmp', 'indirect-jmp', 'ret']:
                 target_addr = int(item['target-addr'], 16)
-                comment = item['target']
+                comment = ''
+                if item['action'] in ['direct-call', 'indirect-call']:
+                    comment = item['target']
                 ins = cfg.Ins(addr, opcodes, routine=routine, routine_addr=routine_addr, target_addr=target_addr, comment=comment)
             else:
                 ins = cfg.Ins(addr, opcodes, routine=routine, routine_addr=routine_addr)
 
-            if item['level'] == 'taint':
-                ins.tainted = True
-                group.tainted = True
+            if (item['level'] == 'taint') and (item['action'] in ['compare', 'taint-reg', 'taint-addr']):
+                    """ Update comment with taint information """
+                    ins.update_comment(f'{item["action"]} {item["origin"]}')
+                    ins.tainted = True
+                    group.tainted = True
 
             group.add(ins)
 
