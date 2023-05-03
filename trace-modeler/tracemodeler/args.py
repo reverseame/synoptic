@@ -4,42 +4,27 @@ import ipaddress
 
 import tracemodeler.debug as debug
 
-description = 'This tool analyze a server execution trace to model a server protocol and generate new messages based in this model'
+description = 'This tool analyze server execution traces to infer its protocol model'
 
 usage_examples = '''usage examples:
-    Print generated model:
-        $ python trace-modeler/modeler.py --trace /path/to/trace.log
-
-    Export a model to an output file:
-        $ python trace-modeler/modeler.py --trace /path/to/trace.log --output /path/to/model.json
-
-    Replay messages to a host based on a model generated from a trace file:
-        $ python trace-modeler/modeler.py --trace /path/to/trace.log --replay --host 127.0.0.1 --port 21
-
-    Replay messages to a host based on an already generated model:
-        $ python trace-modeler/modeler.py --model /path/to/model.json --replay --host 127.0.0.1 --port 21
-
-    Export a model and also replay messages to a host:
-        $ python trace-modeler/modeler.py --trace /path/to/trace.log --output /path/to/model.json --replay --host 127.0.0.1 --port 21
-
-    Export graphviz .gv and .pdf files:
-        $ python trace-modeler/modeler.py --trace /path/to/trace.log --export /path/to/filename
+    Export CFG:
+        $ python trace-modeler/modeler.py --log /path/to/trace.log --export /path/to/cfg.pdf
     '''
 
 class ArgumentParser:
     def __init__(self):
         self.argparser = argparse.ArgumentParser(description=description, epilog=usage_examples, formatter_class=argparse.RawDescriptionHelpFormatter)
         self.argparser.add_argument('-v', '--version',  action='store_true', help=f'display version and exit')
-        self.argparser.add_argument('--trace', type=str, metavar='<log>', help='specify the server execution trace')
+        """ CFG related """
+        self.argparser.add_argument('--log', type=str, nargs='+', metavar='<file>', help='a list of .log files')
+        self.argparser.add_argument('--dirlog', type=str, metavar='<folder>', help='folder containing .log files')
+        self.argparser.add_argument('--export', type=str, metavar='<file>', help='PDF file to save generated CFG')
         self.argparser.add_argument('--m32', action='store_true', help='trace of a 32-bit program (64-bit by default)')
-        self.argparser.add_argument('--output', type=str, metavar='<file>', help='output protocol model file')
+        """ Network interaction with server """
         self.argparser.add_argument('--replay', action='store_true', help='replay messages based in a model')
-        self.argparser.add_argument('--fsm', type=str, metavar='<file>', help='specify the protocol FSM')
-        self.argparser.add_argument('--export', type=str, metavar='<file>', help='export Graphviz file (.gv) representing the protocol FSM')
         self.argparser.add_argument('--host', type=str, metavar='<ip>', help='server IP')
         self.argparser.add_argument('--port', type=int, metavar='<port>', help='server listening port')
         self.argparser.add_argument('--udp', action='store_true', help='UDP transport protocol (TCP by default)')
-        self.argparser.add_argument('--delay', type=float, default=0.5 ,help='delay between send calls (default to 0.5 s)')
 
     def parse_args(self, arguments):
         args = self.argparser.parse_args(arguments)
@@ -49,9 +34,18 @@ class ArgumentParser:
         return args
 
     def _check_args(self, args):
-        if args.trace:
-            if not os.path.isfile(args.trace):
-                debug.error(f'{os.path.abspath(args.trace)}: Unable to locate file')
+        if args.log:
+            for filename in args.log:
+                if not os.path.isfile(filename):
+                    debug.error(f'{os.path.abspath(filename)}: Not a file')
+        elif args.dirlog:
+            if not os.path.isdir(args.dirlog):
+                debug.error(f'{os.path.abspath(args.dirlog)}: Not a directory')
+        else:
+            debug.error('You need to provide log files (--log or --dirlog)')
+
+        if not args.export:
+            debug.error('You need to provide a file to CFG PDF (--export)')
 
         if args.replay:
             if args.host:
@@ -70,23 +64,3 @@ class ArgumentParser:
 
             if (args.delay < 0):
                 debug.error(f'{args.delay}: Delay must be positive (--help)')
-
-        if args.fsm:
-            if not os.path.isfile(args.fsm):
-                debug.error(f'{os.path.abspath(args.fsm)}: Unable to locate file')
-            if args.trace:
-                debug.error(f'You need to provide either a trace (--trace) or a model (--fsm)')
-
-        if args.replay:
-            if (args.trace and args.fsm) or (not args.trace and not args.fsm):
-                debug.error('You need to provide either a trace (--trace) or a model (--fsm)')
-
-        if args.output:
-            if not args.trace:
-                debug.error('You need to provide a trace to create an model output file (--trace or --help)')
-
-        if not args.trace and not args.replay and not args.version:
-            if args.fsm:
-                debug.error('You need to specify a host to replay messages (--replay)')
-            else:
-                debug.error('You need to either analyze a trace to create a model (--trace) or replay messages (--replay)')

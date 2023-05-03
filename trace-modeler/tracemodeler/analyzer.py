@@ -3,76 +3,37 @@ import shlex
 import binascii
 import capstone
 
-""" Set auto local for user messages """
-import locale
-locale.setlocale(locale.LC_ALL, '')     # '' means auto
-
-import tracemodeler.model
+import tracemodeler.cfg as cfg
 import tracemodeler.debug as debug
 
 class Analyzer:
-    def __init__(self, trace, arch_mode=capstone.CS_MODE_64):
-        self.tracefile = os.path.abspath(trace)
-        self.traces = self.read_traces()
+    def __init__(self, arch_mode=capstone.CS_MODE_64):
         self.md = capstone.Cs(capstone.CS_ARCH_X86, arch_mode)
-        self.fsm = tracemodeler.model.ProtocolFSM()
+        self.md.detail = True
 
-    def read_traces(self):
-        content = self.read_file()
-        debug.info(f'Parsing {len(content):n} records...')
+    def analyze(self, traces):
+        dynamic_cfg = cfg.DynamicCFG()
 
-        return self.trace_to_dict(content)
+        for session in self.split_sessions(traces):
+            net_traces = self.split_network_activity(session)
+            for net_trace in net_traces:
+                try:
+                    dynamic_cfg.initialize()
+                    dynamic_cfg = self.analyze_net_trace(dynamic_cfg, net_trace)
+                except cfg.CFGException as e:
+                    debug.warning(str(e))
+                finally:
+                    dynamic_cfg.finalize()
 
-    def read_file(self):
-        with open(self.tracefile, 'r') as f:
-            return f.read().splitlines()
+        return dynamic_cfg
 
-    def trace_to_dict(self, traces):
-        ret = []
-
-        for (i, trace) in enumerate(traces, start=1):
-            try:
-                new_dict = {}
-                splitted = shlex.split(trace)
-                for (key, value) in [item.split('=') for item in splitted]:
-                    new_dict[key] = value
-                ret.append(new_dict)
-            except ValueError as e:
-                debug.error(f'Parsing error: {str(e)}: line {i}: "{trace}"')
-
-        return ret
-
-    def analyze(self):
-        """
-        Traces are divided by:
-            1. Session trace: each client session delimited by accepting a new connection
-                                and closing its corresponding socket
-            2. Network trace: each recv and send action during a session trace
-        
-        We restart the FSM construction for every new session
-        """
-        sessions = self.split_sessions()
-        debug.info(f'{len(sessions)} session/s found')
-
-        for session in sessions:
-            """ Start construction of FSM by each session """
-            self.fsm.initialize()
-
-            """ Only use taint information """
-            # session_trace = [item for item in session if item['level'] == 'taint']
-
-            for (i, net_trace) in enumerate(self.split_network_activity(session)):
-                self.analyze_net_trace(net_trace)
-
-        return self.fsm
-
-    def split_sessions(self):
+    def split_sessions(self, data):
         ret = []
 
         (index, fd) = (None, None)
 
         """ Asume there will be always a close call matching the file descriptor of a accept call """
-        for (i, trace) in enumerate(self.traces):
+        for (i, trace) in enumerate(data):
             if 'action' in trace:
                 if (fd is None) and (trace['action'] == 'accept'):
                     (index, fd) = (i, trace['return'])
@@ -81,7 +42,7 @@ class Analyzer:
                     if (trace['action'] == 'dup2') and (trace['file-descriptor'] == fd):
                         fd = trace['return']
                     elif (trace['action'] == 'close') and (fd == trace['file-descriptor']):
-                        ret.append(self.traces[index:i])
+                        ret.append(data[index:i])
                         (index, fd) = (None, None)
 
         return ret
@@ -106,22 +67,49 @@ class Analyzer:
 
         return ret
 
-    def create_message(self, trace):
-        if (trace['level'] == 'taint') and (trace['action'] in ['recv', 'read']):
-            if int(trace['return']) >= 0:
-                buffer_content = binascii.unhexlify(trace['buffer-content'])
-                buffer_addr = int(trace['buffer-address'], 16)
-                message = tracemodeler.model.Message(msg_bytes=buffer_content, msg_addr=buffer_addr)
-                return message
+    def analyze_net_trace(self, dynamic_cfg, net_trace):
+        print_debug = False
+        group = cfg.Group()
+        ins = None
 
-        return None
+        for item in net_trace:
+            if not print_debug:
+                if 'io-counter' in item:
+                    debug.info(f'CFG refinement {item["io-counter"]}...')
+                    print_debug = True
+            if 'ins-opcodes' in item:
+                routine_addr = int(item['routine-addr'], 16)
+                routine = item['routine']
+                addr = int(item['ins-addr'], 16)
+                opcodes = binascii.unhexlify(item['ins-opcodes'])
+                dis = next(self.md.disasm(opcodes, addr))           # Just dissasemble one instruction
 
-    def analyze_net_trace(self, net_trace):
-        """ Create message of recv data """
-        (message_trace, traces) = (net_trace[0], net_trace[1:])     # Asumme recv trace is in first position
-        message = self.create_message(message_trace)
+                """ Get control flow target """
+                if item['action'] in ['direct-call', 'indirect-call', 'direct-jmp', 'indirect-jmp', 'ret']:
+                    target_addr = int(item['target-addr'], 16)
+                    comment = ''
+                    if item['action'] in ['direct-call', 'indirect-call']:
+                        comment = item['target']
+                    ins = cfg.Ins(dis, addr, opcodes, routine=routine, routine_addr=routine_addr, target_addr=target_addr, comment=comment)
+                else:
+                    ins = cfg.Ins(dis, addr, opcodes, routine=routine, routine_addr=routine_addr)
 
-        if message is not None:
-            self.fsm.append(message)
+                if (item['level'] == 'taint') and (item['action'] in ['compare', 'taint-reg', 'taint-addr']):
+                        """ Update comment with taint information """
+                        ins.update_comment(f'{item["action"].replace("-", " ")} {item["origin"].replace("-", " ")}')
+                        ins.tainted = True
+                        """ Two or more taint info in the same group means only one taint """
+                        group.taint_count = 1
 
-            #import pdb; pdb.set_trace()
+                group.add(ins)
+
+                """ End of group if last ins is either call, ret, or jump """
+                if not ins.is_standard():
+                    dynamic_cfg.add(group)
+                    group = cfg.Group()
+
+        """ Add last group if we finished CFG construction and last instruction is standard """
+        if (ins is not None) and (ins.is_standard()):
+            dynamic_cfg.add(group)
+
+        return dynamic_cfg

@@ -4,7 +4,7 @@ import logging
 logger = logging.getLogger('trace-modeler')
 
 """ Log format """
-logging.basicConfig(level=logging.DEBUG, format='%(name)s: %(levelname)s: %(message)s')
+logging.basicConfig(level=logging.DEBUG, format='%(name)s\t: %(levelname)s\t: %(message)s')
 
 def debug(msg):
     log(logging.DEBUG, msg)

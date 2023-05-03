@@ -20,19 +20,15 @@ COLOR_BRANCH_TAKEN = 'chartreuse3'
 COLOR_BRANCH_NOT_TAKEN = 'firebrick3'
 COLOR_TAINTED = 'lightblue'
 
-""" Capstone Dissasembler """
-md = capstone.Cs(capstone.CS_ARCH_X86, capstone.CS_MODE_64)
-md.detail = True
-
 class CFGException(Exception):
     pass
 
 class Ins:
-    def __init__(self, addr, opcodes, tainted=False, routine='', routine_addr=0x0, target_addr=0x0, comment=''):
+    def __init__(self, dis, addr, opcodes, tainted=False, routine='', routine_addr=0x0, target_addr=0x0, comment=''):
+        self.dis = dis
         self.addr = addr
         self.opcodes = opcodes
         self.size = len(opcodes)
-        self.dis = next(md.disasm(opcodes, addr))       # Just dissasemble one instruction
         self.tainted = tainted
         self.routine = routine
         self.routine_addr = routine_addr
