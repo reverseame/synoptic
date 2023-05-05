@@ -20,6 +20,7 @@ class ArgumentParser:
         self.argparser.add_argument('--dirlog', type=str, metavar='<folder>', help='folder containing .log files')
         self.argparser.add_argument('--export', type=str, metavar='<file>', help='PDF file to save generated CFG')
         self.argparser.add_argument('--m32', action='store_true', help='trace of a 32-bit program (64-bit by default)')
+        self.argparser.add_argument('--binary', type=str, metavar='<file>', help='binary file to complement the CFG')
         """ Network interaction with server """
         self.argparser.add_argument('--replay', action='store_true', help='replay messages based in a model')
         self.argparser.add_argument('--host', type=str, metavar='<ip>', help='server IP')
@@ -37,15 +38,19 @@ class ArgumentParser:
         if args.log:
             for filename in args.log:
                 if not os.path.isfile(filename):
-                    debug.error(f'{os.path.abspath(filename)}: Not a file')
+                    debug.error(f'{os.path.abspath(filename)}\t: Not a file')
         elif args.dirlog:
             if not os.path.isdir(args.dirlog):
-                debug.error(f'{os.path.abspath(args.dirlog)}: Not a directory')
+                debug.error(f'{os.path.abspath(args.dirlog)}\t: Not a directory')
         else:
             debug.error('You need to provide log files (--log or --dirlog)')
 
         if not args.export:
             debug.error('You need to provide a file to CFG PDF (--export)')
+
+        if args.binary:
+            if not os.path.isfile(args.binary):
+                debug.error(f'{os.path.abspath(args.binary)}\t: Not a file')
 
         if args.replay:
             if args.host:

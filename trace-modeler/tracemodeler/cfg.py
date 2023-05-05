@@ -59,9 +59,9 @@ class Ins:
         
         if (self.type == INS_TYPE_CALL) or (self.type == INS_TYPE_JUMP):
             operand = self.dis.operands[0] 
-            ret['target'] = self.target_addr
             if operand.type == capstone.x86.X86_OP_IMM:
                 ret['mode'] = 'direct'
+                ret['target'] = self.target_addr if self.target_addr else operand.imm
             elif (operand.type == capstone.x86.X86_OP_MEM) or (operand.type == capstone.x86.X86_OP_REG):
                 ret['mode'] = 'indirect'
             else:
@@ -235,7 +235,7 @@ class Node:
         if self.group.tail.is_plt_jmp():
             return
 
-        if self.group.tail.info['fallthrough'] == node.group.leader.addr:
+        if ('fallthrough' in self.group.tail.info) and (self.group.tail.info['fallthrough'] == node.group.leader.addr):
             return
     
         raise CFGException(f'"{self.group.tail}" cannot be followed by "{node.group.leader}"')
@@ -296,6 +296,19 @@ class CFG:
     def finalize(self):
         if not self.is_empty():
             self.final_nodes.append(self.last_inserted)
+
+    def reset_to_node(self, node):
+        if node in self.nodes:
+            self.last_inserted = self.nodes[self.nodes.index(node)]
+        else:
+            raise CFGException(f'{str(node.group.leader)}\t: Node not found in CFG')
+
+    def get_node_by_addr(self, addr):
+        for node in self.nodes:
+            if node.group.leader.addr == addr:
+                return node
+
+        return None
 
     def _transition_to_first_edge(self, node):
         if self.last_inserted in self.final_nodes:
@@ -445,6 +458,96 @@ class CFG:
             else:
                 self._add_node(node)
 
+    def export_graph(self, output, first=False):
+        graph = graphviz.Digraph(output)
+
+        """ General CFG Style """
+        graph.attr('node', shape='box', fontname='monospace')
+        graph.attr('edge', fontname='monospace')
+
+        """ CFG first transition """
+        if first:
+            graph.node('entry', label='', shape='circle', style='filled', color='black', fixedsize='true')
+
+        """ CFG node style """
+        entry_node_id = hex(self.entry_node.group.leader.addr)
+        opcodes_padding = max([len(ins.opcodes.hex()) for ins in self.entry_node.group.inss])
+        comment_padding = max([len(ins.dumps(opcodes_padding=opcodes_padding).split(';')[0]) for ins in self.entry_node.group.inss])
+        label = f'; {self.entry_node.group.leader.routine}'
+        offset = self.entry_node.group.leader.get_ins_offset()
+        if offset > 0:
+            label += f' + {offset:#x}'
+        if self.entry_node.taint_count > 0:
+            label += f' [taint {self.entry_node.taint_count}/{self.entry_node.visit_count}]'
+        label += '\l\l' + '\l'.join([ins.dumps(opcodes_padding=opcodes_padding, comment_padding=comment_padding) for ins in self.entry_node.group.inss]) + '\l'     # '\l' means left-aligned, last one is mandatory to ensure alignment of label last line
+
+        if self.entry_node.is_tainted():
+            graph.node(entry_node_id, label=label, style='filled', fillcolor=COLOR_TAINTED)
+        else:
+            graph.node(entry_node_id, label=label)
+
+        if first:
+            graph.edge('entry', entry_node_id)
+
+
+        """ Iterate """
+        node = self.entry_node
+        pending_edges = [(node, node.edges)]
+        already_seen =  []
+        
+        while pending_edges:
+            (node, edges) = pending_edges.pop(0)    # Get first tuple
+            for edge in edges:
+                node_id = hex(node.group.leader.addr)
+                edge_node_id = hex(edge.dst.group.leader.addr)
+
+                if (node_id, edge_node_id) not in already_seen:
+                    """ Calculate padding """
+                    opcodes_padding = max([len(ins.opcodes.hex()) for ins in edge.dst.group.inss])
+                    comment_padding = max([len(ins.dumps(opcodes_padding=opcodes_padding).split(';')[0]) for ins in edge.dst.group.inss])
+                    """ Label with routine offset """
+                    label = f'; {edge.dst.group.leader.routine}'
+                    offset = edge.dst.group.leader.get_ins_offset()
+                    if offset > 0:
+                        label += f' + {offset:#x}'
+                    if edge.dst.taint_count > 0:
+                        label += f' [taint {edge.dst.taint_count}/{edge.dst.visit_count}]'
+                    label += '\l\l'
+                    label += '\l'.join([ins.dumps(opcodes_padding=opcodes_padding, comment_padding=comment_padding) for ins in edge.dst.group.inss])
+                    label += '\l'                                      # '\l' means left-aligned, last one is mandatory to ensure alignment of label last line
+                    """ Light blue for taint information """
+                    if edge.dst.is_tainted():
+                        graph.node(edge_node_id, label=label, style='filled', fillcolor=COLOR_TAINTED)
+                    else:
+                        graph.node(edge_node_id, label=label)
+                    """ True or false branch jump """
+                    if node.group.tail.is_branch():
+                        if edge.branch_taken:
+                            graph.edge(node_id, edge_node_id, label=f't / {edge.count}', color=COLOR_BRANCH_TAKEN)
+                        else:
+                            graph.edge(node_id, edge_node_id, label=f'f / {edge.count}', color=COLOR_BRANCH_NOT_TAKEN)
+                    else:
+                        graph.edge(node_id, edge_node_id, label=str(edge.count))
+                    already_seen.append((node_id, edge_node_id))
+
+                    new_edges = (edge.dst, edge.dst.edges)
+                    pending_edges.append(new_edges)
+
+        """ CFG last transition """
+        if self.is_final() and len(self.final_nodes):
+            graph.node('final', label='', shape='doublecircle', style='filled', color='black', fixedsize='true')
+
+            already_seen = []
+            for last_node in self.final_nodes:
+                last_node_id = hex(last_node.group.leader.addr)
+                if last_node_id not in already_seen:
+                    graph.edge(last_node_id, 'final', label=f'{len(self.final_nodes)}')
+                    graph.node(last_node_id)
+                    already_seen.append(last_node_id)
+
+        """ Generate Graphviz DOT file (.gv) """
+        graph.render()
+
     def __hash__(self):
         return self.entry_node.group.leader.addr
 
@@ -534,96 +637,6 @@ class DynamicCFG:
 
         return None
 
-    def _export_cfg(self, cfg, cfg_output_filename, first=False):
-        graph = graphviz.Digraph(cfg_output_filename)
-
-        """ General CFG Style """
-        graph.attr('node', shape='box', fontname='monospace')
-        graph.attr('edge', fontname='monospace')
-
-        """ CFG first transition """
-        if first:
-            graph.node('entry', label='', shape='circle', style='filled', color='black', fixedsize='true')
-
-        """ CFG node style """
-        entry_node_id = hex(cfg.entry_node.group.leader.addr)
-        opcodes_padding = max([len(ins.opcodes.hex()) for ins in cfg.entry_node.group.inss])
-        comment_padding = max([len(ins.dumps(opcodes_padding=opcodes_padding).split(';')[0]) for ins in cfg.entry_node.group.inss])
-        label = f'; {cfg.entry_node.group.leader.routine}'
-        offset = cfg.entry_node.group.leader.get_ins_offset()
-        if offset > 0:
-            label += f' + {offset:#x}'
-        if cfg.entry_node.taint_count > 0:
-            label += f' [taint {cfg.entry_node.taint_count}/{cfg.entry_node.visit_count}]'
-        label += '\l\l' + '\l'.join([ins.dumps(opcodes_padding=opcodes_padding, comment_padding=comment_padding) for ins in cfg.entry_node.group.inss]) + '\l'     # '\l' means left-aligned, last one is mandatory to ensure alignment of label last line
-
-        if cfg.entry_node.is_tainted():
-            graph.node(entry_node_id, label=label, style='filled', fillcolor=COLOR_TAINTED)
-        else:
-            graph.node(entry_node_id, label=label)
-
-        if first:
-            graph.edge('entry', entry_node_id)
-
-
-        """ Iterate """
-        node = cfg.entry_node
-        pending_edges = [(node, node.edges)]
-        already_seen =  []
-        
-        while pending_edges:
-            (node, edges) = pending_edges.pop(0)    # Get first tuple
-            for edge in edges:
-                node_id = hex(node.group.leader.addr)
-                edge_node_id = hex(edge.dst.group.leader.addr)
-
-                if (node_id, edge_node_id) not in already_seen:
-                    """ Calculate padding """
-                    opcodes_padding = max([len(ins.opcodes.hex()) for ins in edge.dst.group.inss])
-                    comment_padding = max([len(ins.dumps(opcodes_padding=opcodes_padding).split(';')[0]) for ins in edge.dst.group.inss])
-                    """ Label with routine offset """
-                    label = f'; {edge.dst.group.leader.routine}'
-                    offset = edge.dst.group.leader.get_ins_offset()
-                    if offset > 0:
-                        label += f' + {offset:#x}'
-                    if edge.dst.taint_count > 0:
-                        label += f' [taint {edge.dst.taint_count}/{edge.dst.visit_count}]'
-                    label += '\l\l'
-                    label += '\l'.join([ins.dumps(opcodes_padding=opcodes_padding, comment_padding=comment_padding) for ins in edge.dst.group.inss])
-                    label += '\l'                                      # '\l' means left-aligned, last one is mandatory to ensure alignment of label last line
-                    """ Light blue for taint information """
-                    if edge.dst.is_tainted():
-                        graph.node(edge_node_id, label=label, style='filled', fillcolor=COLOR_TAINTED)
-                    else:
-                        graph.node(edge_node_id, label=label)
-                    """ True or false branch jump """
-                    if node.group.tail.is_branch():
-                        if edge.branch_taken:
-                            graph.edge(node_id, edge_node_id, label=f't / {edge.count}', color=COLOR_BRANCH_TAKEN)
-                        else:
-                            graph.edge(node_id, edge_node_id, label=f'f / {edge.count}', color=COLOR_BRANCH_NOT_TAKEN)
-                    else:
-                        graph.edge(node_id, edge_node_id, label=str(edge.count))
-                    already_seen.append((node_id, edge_node_id))
-
-                    new_edges = (edge.dst, edge.dst.edges)
-                    pending_edges.append(new_edges)
-
-        """ CFG last transition """
-        if cfg.is_final() and len(cfg.final_nodes):
-            graph.node('final', label='', shape='doublecircle', style='filled', color='black', fixedsize='true')
-
-            already_seen = []
-            for last_node in cfg.final_nodes:
-                last_node_id = hex(last_node.group.leader.addr)
-                if last_node_id not in already_seen:
-                    graph.edge(last_node_id, 'final', label=f'{len(cfg.final_nodes)}')
-                    graph.node(last_node_id)
-                    already_seen.append(last_node_id)
-
-        """ Generate Graphviz DOT file (.gv) """
-        graph.render()
-
     def export_graph(self, output):
         if not self.is_empty():
             filenames = []
@@ -633,7 +646,7 @@ class DynamicCFG:
                 pending_cfgs = []
                 cfg = self.entry_cfg
                 cfg_output_filename = os.path.join(temp_dir, hex(hash(cfg)))
-                self._export_cfg(cfg, cfg_output_filename, first=True)
+                cfg.export_graph(cfg_output_filename, first=True)
                 filenames.append(cfg_output_filename)
                 pending_cfgs.extend(cfg.next)
 
@@ -641,7 +654,7 @@ class DynamicCFG:
                     cfg = pending_cfgs.pop(0)
                     cfg_output_filename = os.path.join(temp_dir, hex(hash(cfg)))
                     if cfg_output_filename not in filenames:
-                        self._export_cfg(cfg, cfg_output_filename)
+                        cfg.export_graph(cfg_output_filename)
                         filenames.append(cfg_output_filename)
                     pending_cfgs.extend(cfg.next)
 

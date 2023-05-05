@@ -1,6 +1,4 @@
-import os
 import sys
-import json
 import capstone
 
 import tracemodeler.args
@@ -29,7 +27,11 @@ def main():
 
     traces = utils.get_traces(filenames)
     arch_mode = capstone.CS_MODE_32 if args.m32 else capstone.CS_MODE_64
-    dynamic_cfg = analyzer.Analyzer(arch_mode=arch_mode).analyze(traces)
+
+    if not args.binary:
+        debug.warning('Binary file not provided, unable to update CFG with static information')
+
+    dynamic_cfg = analyzer.Analyzer(binary=args.binary, arch_mode=arch_mode).analyze(traces)
 
     if dynamic_cfg.is_empty():
         debug.warning('Empty CFG')

@@ -1,5 +1,7 @@
 import os
-import shlex
+import sys
+import json
+import r2pipe
 import binascii
 import capstone
 
@@ -7,7 +9,8 @@ import tracemodeler.cfg as cfg
 import tracemodeler.debug as debug
 
 class Analyzer:
-    def __init__(self, arch_mode=capstone.CS_MODE_64):
+    def __init__(self, binary=None, arch_mode=capstone.CS_MODE_64):
+        self.binary = binary
         self.md = capstone.Cs(capstone.CS_ARCH_X86, arch_mode)
         self.md.detail = True
 
@@ -15,8 +18,7 @@ class Analyzer:
         dynamic_cfg = cfg.DynamicCFG()
 
         for session in self.split_sessions(traces):
-            net_traces = self.split_network_activity(session)
-            for net_trace in net_traces:
+            for net_trace in self.split_network_activity(session):
                 try:
                     dynamic_cfg.initialize()
                     dynamic_cfg = self.analyze_net_trace(dynamic_cfg, net_trace)
@@ -24,6 +26,9 @@ class Analyzer:
                     debug.warning(str(e))
                 finally:
                     dynamic_cfg.finalize()
+
+        binary_base_addr = self.get_base_addr(traces)
+        dynamic_cfg = self.analyze_taint_loops(dynamic_cfg, binary_base_addr)
 
         return dynamic_cfg
 
@@ -75,7 +80,7 @@ class Analyzer:
         for item in net_trace:
             if not print_debug:
                 if 'io-counter' in item:
-                    debug.info(f'CFG refinement {item["io-counter"]}...')
+                    debug.info(f'Dynamic CFG refinement {item["io-counter"]}...')
                     print_debug = True
             if 'ins-opcodes' in item:
                 routine_addr = int(item['routine-addr'], 16)
@@ -103,7 +108,7 @@ class Analyzer:
 
                 group.add(ins)
 
-                """ End of group if last ins is either call, ret, or jump """
+                """ End group if last ins is either call, ret, or jump """
                 if not ins.is_standard():
                     dynamic_cfg.add(group)
                     group = cfg.Group()
@@ -113,3 +118,87 @@ class Analyzer:
             dynamic_cfg.add(group)
 
         return dynamic_cfg
+
+    def get_base_addr(self, traces):
+        for trace in traces:
+            if trace['action'] == 'relocate':
+                return trace['image-low']
+
+    def analyze_taint_loops(self, dynamic_cfg, binary_base_addr):
+        function_addrs = ['0x555811ef2020']
+
+        if self.binary is not None:
+            for function_addr in function_addrs:
+                dynamic_cfg = self.update_function_with_static(dynamic_cfg, binary_base_addr, function_addr)
+
+        return dynamic_cfg
+
+    def update_function_with_static(self, dynamic_cfg, binary_base_addr, function_addr):
+        debug.info(f'Updating function at {function_addr} with static information...')
+
+        """ Open binary at base address and close stderr """
+        r2 = r2pipe.open(self.binary, flags=['-B', binary_base_addr, '-2'])
+        """ Check radare2 version """
+        version = r2.cmd('?Vq')
+        version = int(version.rstrip().replace('.', ''))
+        """ Version below 5.8.4 not supported """
+        if version < 584:
+            print('radare2 version not supported, please, update your system', file=sys.stderr)
+            sys.exit(-1)
+        """ Seek to the start of the function """
+        r2.cmd(f's {function_addr}')
+        """ Define function at current address """
+        r2.cmd('af')
+        """ List function basic blocks """
+        bbs = json.loads(r2.cmd('afbj'))
+
+        nodes = []
+
+        for bb in bbs:
+            group = cfg.Group()
+            """ Loop every ins addr """
+            for ins_addr in bb['instrs']:
+                """ Disassemble one instruction """
+                ins_info = json.loads(r2.cmd(f'pdj 1 @ {ins_addr}'))[0]
+                opcodes = binascii.unhexlify(ins_info["bytes"])
+                dis = next(self.md.disasm(opcodes, ins_addr))
+                ins = cfg.Ins(dis, ins_addr, opcodes)
+                group.add(ins)
+
+            node = cfg.Node(group)
+            nodes.append(node)
+
+        r2.quit()
+
+        function_cfg = cfg.CFG()
+        function_cfg.nodes = nodes
+
+        for bb in bbs:
+            if function_cfg.is_empty():
+                node = function_cfg.get_node_by_addr(bb['addr'])
+                function_cfg.entry_node = node
+                function_cfg.reset_to_node(node)
+            self._set_next_nodes(function_cfg, bb)
+
+        function_cfg.export_graph('/tmp/cfg.pdf')
+
+        return dynamic_cfg
+
+    def _set_next_nodes(self, cfg, bb):
+        node = cfg.get_node_by_addr(bb['addr'])
+        cfg.reset_to_node(node)
+
+        """ Node that ends CFG because does not have ouput tranisitions """
+        if bb['outputs'] == 0:
+            cfg.finalize()
+        elif bb['outputs'] == 1:
+            group = cfg.get_node_by_addr(bb['jump']).group
+            cfg.add(group)
+        elif bb['outputs'] == 2:
+            """ Control flow change """
+            group = cfg.get_node_by_addr(bb['jump']).group
+            cfg.add(group)
+            cfg.reset_to_node(node)
+            """ Fallthrough """
+            group = cfg.get_node_by_addr(bb['fail']).group
+            cfg.add(group)
