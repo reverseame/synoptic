@@ -173,6 +173,8 @@ class Analyzer:
         bbs = json.loads(r2.cmd('afbj'))
 
         nodes = []
+        routine = ''
+        routine_addr = 0
 
         """ Create CFG groups based in basic block information """
         for bb in bbs:
@@ -183,7 +185,11 @@ class Analyzer:
                 ins_info = json.loads(r2.cmd(f'pdj 1 @ {ins_addr}'))[0]
                 opcodes = binascii.unhexlify(ins_info["bytes"])
                 dis = next(self.md.disasm(opcodes, ins_addr))
-                ins = cfg.Ins(dis, ins_addr, opcodes)
+                """ Get routine name, only in the first ins """
+                if not routine:
+                    routine = ins_info['flags'][0]
+                    routine_addr = ins_info['fcn_addr']
+                ins = cfg.Ins(dis, ins_addr, opcodes, routine=routine, routine_addr=routine_addr)
                 group.add(ins)
 
             node = cfg.Node(group)
@@ -204,6 +210,8 @@ class Analyzer:
         output = f'/tmp/func-{function_addr}'
         function_cfg.export_graph(output)
         debug.debug(f'{output}.gv.pdf saved')
+
+        return tainted_cfg
 
     def _set_next_nodes(self, cfg, bb):
         """ Each basic block has several ouput transitions """

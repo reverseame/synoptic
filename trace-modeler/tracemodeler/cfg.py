@@ -111,7 +111,10 @@ class Ins:
         return False
 
     def get_ins_offset(self):
-        return self.addr - self.routine_addr
+        if self.routine_addr:
+            return self.addr - self.routine_addr
+        else:
+            return 0
 
     def check_next_ins(self, ins):
         if ins.addr != self.info['fallthrough']:
@@ -183,8 +186,7 @@ class Group:
 
     def __eq__(self, other):
         if isinstance(other, Group):
-            # TODO check tail too
-            return self.leader == other.leader
+            return (self.leader == other.leader) and (self.tail == other.tail)
 
         return False
 
@@ -310,23 +312,23 @@ class CFG:
         return None
 
     def contains_tainted_loop(self):
-        """ TODO search tainted loops following pre-header, header, tail, structure """
+        """ TODO search tainted loops following the {pre-header, header, tail} structure """
         return True
+
+    def _extend_last_node(self, node):
+        """ We are updating the CFG, so do not store last_inserted as final node """
+        while self.last_inserted in self.final_nodes:
+            self.final_nodes.remove(self.last_inserted)
+
+        self.last_inserted.extend(node)
+
+        """ CFG is not final until we end CFG construction again """
+        self.refine = False
+        self.final_cfg = False
 
     def _transition_to_first_edge(self, node):
         if self.last_inserted in self.final_nodes:
             self.last_inserted.visit()
-            if len(node) > len(self.last_inserted):
-                """
-                If incoming node length is greater than last_inserted, it means the
-                previous trace was stopped at this node. So, we need to extend the
-                node to match its actual defined instructions
-                """
-                self.last_inserted.extend(node)
-                """ We are updating the CFG, so do not store last_inserted as final node """
-                while self.last_inserted in self.final_nodes:
-                    self.final_nodes.remove(self.last_inserted)
-                self.final_cfg = False
         else:
             if self.last_inserted.edges:
                 """ Keep track of last branch node """
@@ -442,22 +444,30 @@ class CFG:
                     should we take
                     """
                     self._transition_to_first_edge(node)
-                elif self.branch_node is not None:
-                    """
-                    Assuming first transition of branch_node was wrong. So,
-                    if branch_node is defined, revert transition and take the
-                    second one
-                    """
-                    try:
-                        self._transition_to_second_edge(node)
-                    except CFGException:
-                        """ Add new node, we are not refining the CFG anymore """
-                        self.refine = False
-                        self.final_cfg = False
-                        self._add_node(node)
                 else:
-                    """ Otherwise assume the node was not yet visited in the CFG """
-                    self._add_node(node)
+                    """
+                    Could be that last_inserted was interrupted during dynamic
+                    analysis and it was no complete, in that case, extend node
+                    with new node instructions
+                    """
+                    if self.last_inserted.group.leader.addr == node.group.leader.addr:
+                        self._extend_last_node(node)
+                    elif self.branch_node is not None:
+                        """
+                        Assuming first transition of branch_node was wrong. So,
+                        if branch_node is defined, revert transition and take the
+                        second one
+                        """
+                        try:
+                            self._transition_to_second_edge(node)
+                        except CFGException:
+                            """ Add new node, we are not refining the CFG anymore """
+                            self.refine = False
+                            self.final_cfg = False
+                            self._add_node(node)
+                    else:
+                        """ Otherwise assume the node was not yet visited in the CFG """
+                        self._add_node(node)
             else:
                 self._add_node(node)
 
@@ -480,7 +490,7 @@ class CFG:
         offset = self.entry_node.group.leader.get_ins_offset()
         if offset > 0:
             label += f' + {offset:#x}'
-        if self.entry_node.taint_count > 0:
+        if self.entry_node.is_tainted():
             label += f' [taint {self.entry_node.taint_count}/{self.entry_node.visit_count}]'
         label += '\l\l' + '\l'.join([ins.dumps(opcodes_padding=opcodes_padding, comment_padding=comment_padding) for ins in self.entry_node.group.inss]) + '\l'     # '\l' means left-aligned, last one is mandatory to ensure alignment of label last line
 
@@ -513,7 +523,7 @@ class CFG:
                     offset = edge.dst.group.leader.get_ins_offset()
                     if offset > 0:
                         label += f' + {offset:#x}'
-                    if edge.dst.taint_count > 0:
+                    if edge.dst.is_tainted():
                         label += f' [taint {edge.dst.taint_count}/{edge.dst.visit_count}]'
                     label += '\l\l'
                     label += '\l'.join([ins.dumps(opcodes_padding=opcodes_padding, comment_padding=comment_padding) for ins in edge.dst.group.inss])
@@ -576,8 +586,8 @@ class DynamicCFG:
 
     def finalize(self):
         if not self.is_empty():
-            self.last_cfg.finalize()
             self.last_cfg.set_final()
+            self.last_cfg.finalize()
 
     def add(self, group):
         if self.is_empty():
