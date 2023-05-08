@@ -10,10 +10,14 @@ locale.setlocale(locale.LC_ALL, '')     # '' means auto
 
 import tracemodeler.debug as debug
 
+""" Tool version """
 MAJOR = 0
 MINOR = 1
 PATCH = 0
 VERSION = f'{MAJOR}.{MINOR}.{PATCH}'
+
+""" Miminum radare2 version supported """
+MIN_R2_VERSION = '5.8.4'
 
 def get_logs(path):
     ret = []

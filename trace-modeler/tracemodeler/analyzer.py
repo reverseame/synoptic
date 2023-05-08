@@ -7,6 +7,7 @@ import capstone
 
 import tracemodeler.cfg as cfg
 import tracemodeler.debug as debug
+import tracemodeler.utils as utils
 
 class Analyzer:
     def __init__(self, binary=None, arch_mode=capstone.CS_MODE_64):
@@ -28,7 +29,7 @@ class Analyzer:
                     dynamic_cfg.finalize()
 
         binary_base_addr = self.get_base_addr(traces)
-        dynamic_cfg = self.analyze_taint_loops(dynamic_cfg, binary_base_addr)
+        self.analyze_tainted_loops(dynamic_cfg, binary_base_addr)
 
         return dynamic_cfg
 
@@ -124,27 +125,46 @@ class Analyzer:
             if trace['action'] == 'relocate':
                 return trace['image-low']
 
-    def analyze_taint_loops(self, dynamic_cfg, binary_base_addr):
-        function_addrs = ['0x555811ef2020']
+    def analyze_tainted_loops(self, dynamic_cfg, binary_base_addr):
+        tainted_cfgs = dynamic_cfg.get_tainted_cfgs()
 
         if self.binary is not None:
-            for function_addr in function_addrs:
-                dynamic_cfg = self.update_function_with_static(dynamic_cfg, binary_base_addr, function_addr)
+            r2 = self._open_radare2(binary_base_addr)
 
-        return dynamic_cfg
+        for tainted_cfg in tainted_cfgs:
+            if tainted_cfg.contains_tainted_loop():
+                target_cfg = tainted_cfg
+                if self.binary is not None:
+                    target_cfg = self.update_cfg_with_static(r2, tainted_cfg)
+                """ Create .ini file for Binsec symbolic execution """
+                self.create_binsec_file(target_cfg)
 
-    def update_function_with_static(self, dynamic_cfg, binary_base_addr, function_addr):
-        debug.info(f'Updating function at {function_addr} with static information...')
+        if self.binary is not None:
+            r2.quit()
 
+    def _open_radare2(self, binary_base_addr):
         """ Open binary at base address and close stderr """
         r2 = r2pipe.open(self.binary, flags=['-B', binary_base_addr, '-2'])
         """ Check radare2 version """
-        version = r2.cmd('?Vq')
-        version = int(version.rstrip().replace('.', ''))
-        """ Version below 5.8.4 not supported """
-        if version < 584:
-            print('radare2 version not supported, please, update your system', file=sys.stderr)
+        version_str = r2.cmd('?Vq').rstrip()
+
+        """ Transform '5.8.4' into 584 """
+        min_r2_supported = int(utils.MIN_R2_VERSION.replace('.', ''))
+        version = int(version_str.replace('.', ''))
+        if version < min_r2_supported:
+            r2.quit()
+            debug.error(f'radare2 version found ({version_str}) older than minimun supported ({utils.MIN_R2_VERSION})')
             sys.exit(-1)
+
+        return r2
+
+    def update_cfg_with_static(self, r2, tainted_cfg):
+        """ Function address pointed by ins leader of the entry node """
+        function_name = tainted_cfg.entry_node.group.leader.routine
+        function_addr = hex(tainted_cfg.entry_node.group.leader.routine_addr)
+
+        debug.info(f'Updating function at {function_addr} ({function_name}) with static information...')
+
         """ Seek to the start of the function """
         r2.cmd(f's {function_addr}')
         """ Define function at current address """
@@ -154,9 +174,10 @@ class Analyzer:
 
         nodes = []
 
+        """ Create CFG groups based in basic block information """
         for bb in bbs:
             group = cfg.Group()
-            """ Loop every ins addr """
+            """ Loop every ins addr in basic block """
             for ins_addr in bb['instrs']:
                 """ Disassemble one instruction """
                 ins_info = json.loads(r2.cmd(f'pdj 1 @ {ins_addr}'))[0]
@@ -168,11 +189,11 @@ class Analyzer:
             node = cfg.Node(group)
             nodes.append(node)
 
-        r2.quit()
-
+        """ Create CFG and define all its nodes without transitions """
         function_cfg = cfg.CFG()
         function_cfg.nodes = nodes
 
+        """ Set transitions based in basic blocks """
         for bb in bbs:
             if function_cfg.is_empty():
                 node = function_cfg.get_node_by_addr(bb['addr'])
@@ -180,15 +201,16 @@ class Analyzer:
                 function_cfg.reset_to_node(node)
             self._set_next_nodes(function_cfg, bb)
 
-        function_cfg.export_graph('/tmp/cfg.pdf')
-
-        return dynamic_cfg
+        output = f'/tmp/func-{function_addr}'
+        function_cfg.export_graph(output)
+        debug.debug(f'{output}.gv.pdf saved')
 
     def _set_next_nodes(self, cfg, bb):
+        """ Each basic block has several ouput transitions """
         node = cfg.get_node_by_addr(bb['addr'])
         cfg.reset_to_node(node)
 
-        """ Node that ends CFG because does not have ouput tranisitions """
+        """ Node that ends CFG because does not have output tranisitions """
         if bb['outputs'] == 0:
             cfg.finalize()
         elif bb['outputs'] == 1:
@@ -198,7 +220,11 @@ class Analyzer:
             """ Control flow change """
             group = cfg.get_node_by_addr(bb['jump']).group
             cfg.add(group)
+            """ Reset to node containing two outputs """
             cfg.reset_to_node(node)
             """ Fallthrough """
             group = cfg.get_node_by_addr(bb['fail']).group
             cfg.add(group)
+
+    def create_binsec_file(self, target_cfg):
+        debug.warning(f'Binsec file for {hex(target_cfg.entry_node.group.leader.routine_addr)} ({target_cfg.entry_node.group.leader.routine}) not created')

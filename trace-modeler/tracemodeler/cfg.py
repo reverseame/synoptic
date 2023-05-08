@@ -143,9 +143,7 @@ class Ins:
         return False
 
 class Group:
-    def __init__(self, routine='', routine_addr=0x0):
-        self.routine = routine
-        self.routine_addr = routine_addr
+    def __init__(self):
         self.inss = []
         self.leader = None
         self.tail = None
@@ -185,6 +183,7 @@ class Group:
 
     def __eq__(self, other):
         if isinstance(other, Group):
+            # TODO check tail too
             return self.leader == other.leader
 
         return False
@@ -273,7 +272,7 @@ class CFG:
         self.tainted = False            # CFG contains a tainted node?
         self.previous = None            # Previous CFG that calls this CFG
         self.refine = False             # Do we need to refine an already constructed CFG?
-        self.branch_node = None         # Last node with a branch instruction
+        self.branch_node = None         # Last node visited with a branch instruction
 
     def taint(self, node):
         """ Preserve if one of nodes was tainted at some time """
@@ -309,6 +308,10 @@ class CFG:
                 return node
 
         return None
+
+    def contains_tainted_loop(self):
+        """ TODO search tainted loops following pre-header, header, tail, structure """
+        return True
 
     def _transition_to_first_edge(self, node):
         if self.last_inserted in self.final_nodes:
@@ -459,7 +462,7 @@ class CFG:
                 self._add_node(node)
 
     def export_graph(self, output, first=False):
-        graph = graphviz.Digraph(output)
+        graph = graphviz.Digraph(name=output, format='pdf')
 
         """ General CFG Style """
         graph.attr('node', shape='box', fontname='monospace')
@@ -589,7 +592,7 @@ class DynamicCFG:
             """ Go to another CFG due to call function """
             if group.tail.is_call():
                 self.last_cfg.add(group)
-                next_cfg = self.get_next(group)
+                next_cfg = self.get_next_cfg(group)
 
                 """ Next CFG is not defined yet, so we create a new one """
                 if next_cfg is None:
@@ -625,7 +628,7 @@ class DynamicCFG:
             else:
                 self.last_cfg.add(group)
 
-    def get_next(self, group):
+    def get_next_cfg(self, group):
         if not group.tail.is_call():
             raise CFGException(f'Could not retrieve next CFG, "{str(group.tail)}" is not a call ins')
         
@@ -636,6 +639,9 @@ class DynamicCFG:
                     return cfg
 
         return None
+
+    def get_tainted_cfgs(self):
+        return [cfg for cfg in self.cfgs if cfg.tainted]
 
     def export_graph(self, output):
         if not self.is_empty():
