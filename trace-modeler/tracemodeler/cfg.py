@@ -516,6 +516,17 @@ class CFG:
             node_id = hex(node.group.leader.addr)
 
             if node_id not in already_seen:
+                """
+                Extend node to fallthrough to next node if it ends in a call
+                instruction
+                """
+                while node.group.tail.is_call() and edges:
+                    """ A call node only have one edge defined, the fallthrough """
+                    fallthrough_node = edges[0].dst
+                    node.extend(fallthrough_node)
+                    """ Update edges with the edges of the fallthrough """
+                    edges = fallthrough_node.edges
+
                 label = self._generate_node_label(node)
 
                 if node.is_tainted():
