@@ -289,14 +289,25 @@ class CFG:
             self.refine = True
 
     def set_final(self):
-        self.final_cfg = True
+        """
+        Only set CFG as final if there are not already defined edges at last_inserted, that is,
+        current CFG is less complete compared to previous interations
+        """
+        if not self.last_inserted.edges:
+            self.final_cfg = True
 
     def is_final(self):
         return self.final_cfg
 
     def finalize(self):
         if not self.is_empty():
-            self.final_nodes.append(self.last_inserted)
+            """
+            Only set CFG last_inserted as final node if there are not already defined
+            edges at last_inserted, that is, current CFG is more incomplete than
+            previous interations
+            """
+            if not self.last_inserted.edges:
+                self.final_nodes.append(self.last_inserted)
 
     def reset_to_node(self, node):
         if node in self.nodes:
