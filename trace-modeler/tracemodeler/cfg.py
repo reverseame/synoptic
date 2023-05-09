@@ -507,36 +507,32 @@ class CFG:
         graph.attr('node', shape='box', fontname='monospace')
         graph.attr('edge', fontname='monospace')
 
-        """ CFG first transition """
-        if first:
-            graph.node('entry', label='', shape='circle', style='filled', color='black', fixedsize='true')
-
-        entry_node_id = hex(self.entry_node.group.leader.addr)
-        label = self._generate_node_label(self.entry_node)
-
-        """ CFG first node """
-        if self.entry_node.is_tainted():
-            graph.node(entry_node_id, label=label, style='filled', fillcolor=COLOR_TAINTED)
-        else:
-            graph.node(entry_node_id, label=label)
-
-        if first:
-            graph.edge('entry', entry_node_id)
-
         """ Iterate """
-        node = self.entry_node
-        pending_edges = [(node, node.edges)]
+        pending_edges = [(self.entry_node, self.entry_node.edges)]
         already_seen =  []
-        
+
         while pending_edges:
-            (node, edges) = pending_edges.pop(0)    # Get first tuple
-            for edge in edges:
-                node_id = hex(node.group.leader.addr)
-                edge_node_id = hex(edge.dst.group.leader.addr)
+            (node, edges) = pending_edges.pop(0)        # Get first tuple
+            node_id = hex(node.group.leader.addr)
 
-                if (node_id, edge_node_id) not in already_seen:
+            if node_id not in already_seen:
+                label = self._generate_node_label(node)
+
+                if node.is_tainted():
+                    graph.node(node_id, label=label, style='filled', fillcolor=COLOR_TAINTED)
+                else:
+                    graph.node(node_id, label=label)
+
+                """ CFG first transition """
+                if first:
+                    graph.node('entry', label='', shape='circle', style='filled', color='black', fixedsize='true')
+                    graph.edge('entry', node_id)
+                    first = False
+
+                for edge in edges:
+                    edge_node_id = hex(edge.dst.group.leader.addr)
+
                     label = self._generate_node_label(edge.dst)
-
                     if edge.dst.is_tainted():
                         graph.node(edge_node_id, label=label, style='filled', fillcolor=COLOR_TAINTED)
                     else:
@@ -551,10 +547,10 @@ class CFG:
                     else:
                         graph.edge(node_id, edge_node_id, label=str(edge.count))
 
-                    already_seen.append((node_id, edge_node_id))
-
                     new_edges = (edge.dst, edge.dst.edges)
                     pending_edges.append(new_edges)
+
+                already_seen.append(node_id)
 
         """ CFG last transition """
         if self.is_final() and len(self.final_nodes):
@@ -564,7 +560,7 @@ class CFG:
             for last_node in self.final_nodes:
                 last_node_id = hex(last_node.group.leader.addr)
                 if last_node_id not in already_seen:
-                    graph.edge(last_node_id, 'final', label=f'{len(self.final_nodes)}')
+                    graph.edge(last_node_id, 'final', label=f'{self.final_nodes.count(last_node)}')
                     graph.node(last_node_id)
                     already_seen.append(last_node_id)
 
