@@ -143,6 +143,7 @@ class Analyzer:
             r2.quit()
 
     def _open_radare2(self, binary_base_addr):
+        debug.info(f'Opening {os.path.basename(self.binary)} with radare2...')
         """ Open binary at base address and close stderr """
         r2 = r2pipe.open(self.binary, flags=['-B', binary_base_addr, '-2'])
         """ Check radare2 version """

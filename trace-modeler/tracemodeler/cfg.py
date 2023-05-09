@@ -482,6 +482,24 @@ class CFG:
             else:
                 self._add_node(node)
 
+    def _generate_node_label(self, node):
+        label = f'; {node.group.leader.routine}'
+
+        offset = node.group.leader.get_ins_offset()
+        if offset > 0:
+            label += f' + {offset:#x}'
+
+        if node.is_tainted():
+            label += f' [taint {node.taint_count}/{node.visit_count}]'
+
+        """ Calculate paddings """
+        opcodes_padding = max([len(ins.opcodes.hex()) for ins in node.group.inss])
+        comment_padding = max([len(ins.dumps(opcodes_padding=opcodes_padding).split(';')[0]) for ins in node.group.inss])
+
+        label += '\l\l' + '\l'.join([ins.dumps(opcodes_padding=opcodes_padding, comment_padding=comment_padding) for ins in node.group.inss]) + '\l'     # '\l' means left-aligned, last one is mandatory to ensure alignment of label last line
+
+        return label
+
     def export_graph(self, output, first=False):
         graph = graphviz.Digraph(name=output, format='pdf')
 
@@ -493,18 +511,10 @@ class CFG:
         if first:
             graph.node('entry', label='', shape='circle', style='filled', color='black', fixedsize='true')
 
-        """ CFG node style """
         entry_node_id = hex(self.entry_node.group.leader.addr)
-        opcodes_padding = max([len(ins.opcodes.hex()) for ins in self.entry_node.group.inss])
-        comment_padding = max([len(ins.dumps(opcodes_padding=opcodes_padding).split(';')[0]) for ins in self.entry_node.group.inss])
-        label = f'; {self.entry_node.group.leader.routine}'
-        offset = self.entry_node.group.leader.get_ins_offset()
-        if offset > 0:
-            label += f' + {offset:#x}'
-        if self.entry_node.is_tainted():
-            label += f' [taint {self.entry_node.taint_count}/{self.entry_node.visit_count}]'
-        label += '\l\l' + '\l'.join([ins.dumps(opcodes_padding=opcodes_padding, comment_padding=comment_padding) for ins in self.entry_node.group.inss]) + '\l'     # '\l' means left-aligned, last one is mandatory to ensure alignment of label last line
+        label = self._generate_node_label(self.entry_node)
 
+        """ CFG first node """
         if self.entry_node.is_tainted():
             graph.node(entry_node_id, label=label, style='filled', fillcolor=COLOR_TAINTED)
         else:
@@ -512,7 +522,6 @@ class CFG:
 
         if first:
             graph.edge('entry', entry_node_id)
-
 
         """ Iterate """
         node = self.entry_node
@@ -526,24 +535,13 @@ class CFG:
                 edge_node_id = hex(edge.dst.group.leader.addr)
 
                 if (node_id, edge_node_id) not in already_seen:
-                    """ Calculate padding """
-                    opcodes_padding = max([len(ins.opcodes.hex()) for ins in edge.dst.group.inss])
-                    comment_padding = max([len(ins.dumps(opcodes_padding=opcodes_padding).split(';')[0]) for ins in edge.dst.group.inss])
-                    """ Label with routine offset """
-                    label = f'; {edge.dst.group.leader.routine}'
-                    offset = edge.dst.group.leader.get_ins_offset()
-                    if offset > 0:
-                        label += f' + {offset:#x}'
-                    if edge.dst.is_tainted():
-                        label += f' [taint {edge.dst.taint_count}/{edge.dst.visit_count}]'
-                    label += '\l\l'
-                    label += '\l'.join([ins.dumps(opcodes_padding=opcodes_padding, comment_padding=comment_padding) for ins in edge.dst.group.inss])
-                    label += '\l'                                      # '\l' means left-aligned, last one is mandatory to ensure alignment of label last line
-                    """ Light blue for taint information """
+                    label = self._generate_node_label(edge.dst)
+
                     if edge.dst.is_tainted():
                         graph.node(edge_node_id, label=label, style='filled', fillcolor=COLOR_TAINTED)
                     else:
                         graph.node(edge_node_id, label=label)
+
                     """ True or false branch jump """
                     if node.group.tail.is_branch():
                         if edge.branch_taken:
@@ -552,6 +550,7 @@ class CFG:
                             graph.edge(node_id, edge_node_id, label=f'f / {edge.count}', color=COLOR_BRANCH_NOT_TAKEN)
                     else:
                         graph.edge(node_id, edge_node_id, label=str(edge.count))
+
                     already_seen.append((node_id, edge_node_id))
 
                     new_edges = (edge.dst, edge.dst.edges)
