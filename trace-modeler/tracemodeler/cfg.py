@@ -243,6 +243,29 @@ class Node:
 
     def extend(self, node):
         self.group.extend(node.group)
+        self.taint(node)
+
+    def is_subset(self, node):
+        """
+        A node is a subset of another if both have same end, but leaders are
+        different
+        """
+        if (self.group.tail == node.group.tail) and (self.group.leader != node.group.leader):
+            return True
+
+        return False
+
+    def strip(self, node):
+        ins_length = len(node.group)
+        """
+        Delete remaining instructions because current node is a subset of incoming
+        node. That is, incoming node already define our last instructions
+        """
+        if not self.group.inss[:-ins_length]:
+            import pdb; pdb.set_trace()
+        self.group.inss = self.group.inss[:-ins_length]
+        """ Override tail ins """
+        self.group.tail = self.group.inss[-1]
 
     def __eq__(self, other):
         if isinstance(other, Node):
@@ -433,8 +456,19 @@ class CFG:
                 node_found.taint(node)
                 self._add_node_transition(node_found)
         else:
-            """ New transition to node """
-            self._add_node_transition(node)
+            """ Check if any of the defined nodes is a subset of a new node """
+            for n in self.nodes:
+                if node.is_subset(n):
+                    """ Strip node to not containg an already defined node """
+                    node.strip(n)
+                    """ Add the stripped node """
+                    self._add_node_transition(node)
+                    """ And transition to the already defined node """
+                    self._add_node_transition(n)
+                    break
+            else:
+                """ New transition to node """
+                self._add_node_transition(node)
 
         """ We added a new node, so we do not need to keep track of last branch_node """
         self.branch_node = None
