@@ -255,17 +255,21 @@ class Node:
 
         return False
 
-    def strip(self, node):
-        ins_length = len(node.group)
+    def strip(self, where):
         """
         Delete remaining instructions because current node is a subset of incoming
         node. That is, incoming node already define our last instructions
         """
-        if not self.group.inss[:-ins_length]:
-            import pdb; pdb.set_trace()
-        self.group.inss = self.group.inss[:-ins_length]
-        """ Override tail ins """
-        self.group.tail = self.group.inss[-1]
+        group = Group()
+
+        for ins in self.group:
+            if ins == where:
+                break
+            else:
+                group.add(ins)
+
+        """ Swap one group for another """
+        self.group = group
 
     def __eq__(self, other):
         if isinstance(other, Node):
@@ -440,6 +444,31 @@ class CFG:
         if node not in self.nodes:
             self.nodes.append(node)
 
+    def _split_node(self, node, where):
+        """ Create new node with the reamining inss """
+        group = Group()
+        for ins in node.group.inss[node.group.inss.index(where):]:
+            group.add(ins)
+        new_node = Node(group)
+
+        """ Delete already defined node """
+        self.nodes.remove(node)
+        """ Modify current node group to only contain instructions until next one leader """
+        node.strip(where)
+
+        """ Copy already defined edges from old node to new one """
+        new_node.edges = node.edges
+        """ Delete defined edges, and create new edge to new node """
+        node.edges = []
+
+        """ Create transition from node to new one """
+        temp = self.last_inserted
+        self.last_inserted = node
+        self._add_node_transition(new_node)
+        self.last_inserted = temp
+
+        return (node, new_node)
+
     def _add_node(self, node):
         self.last_inserted.check_next_node(node)
 
@@ -459,15 +488,27 @@ class CFG:
             """ Check if any of the defined nodes is a subset of a new node """
             for n in self.nodes:
                 if node.is_subset(n):
-                    """ Strip node to not containg an already defined node """
-                    node.strip(n)
-                    """ Add the stripped node """
-                    self._add_node_transition(node)
-                    """ And transition to the already defined node """
-                    self._add_node_transition(n)
-                    break
+                    if len(node) > len(n):
+                        """ Strip node to not containg an already defined node """
+                        node.strip(n.group.leader)
+                        """ Add the stripped node """
+                        self._add_node_transition(node)
+                        """ And transition to the already defined node """
+                        self._add_node_transition(n)
+                        break
+                    else:
+                        """
+                        We need to split an already defined node into two, that is,
+                        transition from equal subset to node
+                        """
+                        (_, new_node) = self._split_node(n, node.group.leader)
+                        self._add_node_transition(new_node)
+                        break
             else:
-                """ New transition to node """
+                """
+                New transition to node, we looped every node in CFG witouth finding
+                a subset
+                """
                 self._add_node_transition(node)
 
         """ We added a new node, so we do not need to keep track of last branch_node """
