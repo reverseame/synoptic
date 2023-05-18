@@ -208,7 +208,6 @@ class Node:
         self.visit_count = 1
         self.taint_count = group.taint_count
         self.edges = []
-        self.diff = 0
 
     def taint(self, node):
         """ Preserve taint count """
@@ -257,8 +256,8 @@ class Node:
 
     def strip(self, where):
         """
-        Delete remaining instructions because current node is a subset of incoming
-        node. That is, incoming node already define our last instructions
+        Create a new group because the actual one is already contained in another
+        node
         """
         group = Group()
 
@@ -268,8 +267,13 @@ class Node:
             else:
                 group.add(ins)
 
-        """ Swap one group for another """
+        """ Swap one group for the new one """
         self.group = group
+
+    def copy_info_from(self, node):
+        self.visit_count = node.visit_count
+        self.taint_count = node.taint_count
+        self.edges = node.edges
 
     def __eq__(self, other):
         if isinstance(other, Node):
@@ -430,8 +434,9 @@ class CFG:
 
         return False
 
-    def _add_node_transition(self, node):
+    def _add_node_transition(self, node, count=1):
         new_edge = Edge(node)
+        new_edge.count = count
 
         """ Check if new branch edge transition follows true or false predicate """
         if self.last_inserted.group.tail.is_branch():
@@ -456,16 +461,21 @@ class CFG:
         """ Modify current node group to only contain instructions until next one leader """
         node.strip(where)
 
-        """ Copy already defined edges from old node to new one """
-        new_node.edges = node.edges
+        """ Replicate node information into new_node """
+        new_node.copy_info_from(node)
         """ Delete defined edges, and create new edge to new node """
         node.edges = []
 
         """ Create transition from node to new one """
-        temp = self.last_inserted
+        node_index = self.last_inserted
         self.last_inserted = node
         self._add_node_transition(new_node)
-        self.last_inserted = temp
+        self.last_inserted = node_index
+
+        """ Mantain previous edge count """
+        for edge in node.edges:
+            if edge.dst == new_node:
+                edge.count = node.visit_count
 
         return (node, new_node)
 
@@ -498,10 +508,13 @@ class CFG:
                         break
                     else:
                         """
-                        We need to split an already defined node into two, that is,
-                        transition from equal subset to node
+                        We need to split an already defined node into two and transition
+                        to the already defined
                         """
-                        (_, new_node) = self._split_node(n, node.group.leader)
+                        (stripped_node, new_node) = self._split_node(n, node.group.leader)
+                        """ Update new node info """
+                        new_node.visit()
+                        new_node.taint(node)
                         self._add_node_transition(new_node)
                         break
             else:
@@ -522,7 +535,7 @@ class CFG:
             self.last_inserted = self.entry_node
             self.nodes.append(node)
         else:
-            if self.refine:
+            if self.refine: 
                 if self.last_inserted == node:
                     """
                     Always assume transition by first edge, even if it is branch_node
