@@ -19,7 +19,7 @@ class Analyzer:
         dynamic_cfg = cfg.DynamicCFG()
 
         for session in self.split_sessions(traces):
-            for (i, net_trace) in enumerate(self.split_network_activity(session)):
+            for net_trace in self.split_network_activity(session):
                 try:
                     dynamic_cfg.initialize()
                     dynamic_cfg = self.analyze_net_trace(dynamic_cfg, net_trace)

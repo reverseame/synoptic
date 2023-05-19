@@ -424,9 +424,15 @@ class CFG:
         else:
             """ Add this transition to branch_node because is not yet defined """
             try:
-                temp = self.last_inserted
-                self.last_inserted = self.branch_node
-                self._add_node(node)
+                """
+                If incoming node ends in a standard instruction (incomplete
+                node) and is a subset of the current index node, it means that
+                trace was halted here, so don't add an incomplete node
+                """
+                if not(node.group.tail.is_standard() and node.is_subset(self.last_inserted)):
+                    temp = self.last_inserted
+                    self.last_inserted = self.branch_node
+                    self._add_node(node)
             except CFGException:
                 """
                 Revert to real last_inserted because insertion in
@@ -598,8 +604,15 @@ class CFG:
                             self.final_cfg = False
                             self._add_node(node)
                     else:
-                        """ Otherwise assume the node was not yet visited in the CFG """
-                        self._add_node(node)
+                        """
+                        Otherwise assume the node was not yet visited in the CFG
+
+                        If incoming node ends in a standard instruction (incomplete
+                        node) and is a subset of the current index node, it means that
+                        trace was halted here, so don't add an incomplete node
+                        """
+                        if not(node.group.tail.is_standard() and node.is_subset(self.last_inserted)):
+                            self._add_node(node)
             else:
                 self._add_node(node)
 
