@@ -211,10 +211,12 @@ class Edge:
 
 class Node:
     def __init__(self, group):
+        self.id = group.leader.addr
         self.group = group
         self.visit_count = 1
         self.taint_count = group.taint_count
         self.edges = []
+        self.predecessors = []
 
     def taint(self, node):
         """ Preserve taint count """
@@ -299,10 +301,11 @@ class Node:
             yield edge
 
     def __hash__(self):
-        return self.group.leader.addr
+        return self.id
 
 class CFG:
     def __init__(self):
+        self.id = None                  # Unique ID of the CFG
         self.nodes = []                 # List of nodes withouth any order
         self.entry_node = None          # Entry node of the CFG
         self.last_inserted = None       # Last node visited in the CFG
@@ -360,9 +363,62 @@ class CFG:
 
         return None
 
-    def contains_tainted_loop(self):
-        """ TODO search tainted loops following the {pre-header, header, tail} structure """
-        return True
+    def get_node_by_id(self, id_):
+        for node in self.nodes:
+            if node.id == id_:
+                return node
+
+        return None
+
+    def get_tainted_loop_info(self):
+        """ Set initial dominants """
+        dominances = {}
+        for node in self.nodes:
+            """ Dominant of entry_node is a set of only itself """ 
+            if node is self.entry_node:
+                dominances[self.entry_node] = {self.entry_node}
+            else:
+                """ Set the rest with all nodes as dominants """
+                dominances[node] = set(self.nodes)
+
+        """ Analyze all nodes but entry_node """
+        worklist = [node for node in self.nodes if node != self.entry_node]
+
+        while worklist:
+            node = worklist.pop(0)                                          # Firt node in list
+            predecessor_dominants = set(dominances[node.predecessors[0]])   # Create a new set with the same values
+            """ Intersection of previous dominants """
+            for predecessor in node.predecessors[1:]:
+                predecessor_dominants &= dominances[predecessor]
+            """ Add itself as dominant """
+            predecessor_dominants.add(node)
+            """ Override with new dominant calculation """
+            dominances[node] = predecessor_dominants
+
+        """ Loop is defined by back-edges to header """
+        loop_info = []
+
+        for node in self.nodes:
+            dominants = dominances[node]
+            """ Back-edge to the header is detected if any node successor is a dominant to node """
+            for edge in node.edges:
+                if edge.dst in dominants:
+                    info = {'header': edge.dst, 'back-edge': node}
+                
+                    """
+                    FIXME could a header have more than two predecessors, e.g: two back-edges and a pre-header?
+
+                    The header has two predecessors, the back-edge and the pre-header.
+                    The pre-header is a previous basic block that falthroughs to the header,
+                    added for loop optimization
+                    """
+                    if len(edge.dst.predecessors) == 2:
+                        info['pre-header'] = edge.dst.predecessors[1 - edge.dst.predecessors.index(node)]
+
+                    if any([node.is_tainted() for node in info.values()]):
+                        loop_info.append(info)
+
+        return loop_info
 
     def _extend_last_node(self, node):
         """ We are updating the CFG, so do not store last_inserted as final node """
@@ -466,7 +522,9 @@ class CFG:
             new_edge.branch_taken = self.last_inserted.group.tail.is_branch_taken(node.group.leader)
 
         self.last_inserted.edges.append(new_edge)
+        predecessor = self.last_inserted
         self.last_inserted = node
+        self.last_inserted.predecessors.append(predecessor)
 
         """ Keep track of all nodes """
         if node not in self.nodes:
@@ -488,6 +546,7 @@ class CFG:
 
         """ Modify current node group to only contain instructions until next one leader """
         node.strip(where)
+        self.nodes.append(node)
 
         """ Replicate node information into new_node """
         new_node.copy_node_info(node)
@@ -565,6 +624,7 @@ class CFG:
 
         if self.is_empty():
             self.entry_node = node
+            self.id = self.entry_node.id            # CFG ID is defined by its entry_node ID
             self.last_inserted = self.entry_node
             self.nodes.append(node)
         else:
@@ -647,7 +707,7 @@ class CFG:
 
         while pending_edges:
             (node, edges) = pending_edges.pop(0)        # Get first tuple
-            node_id = hex(node.group.leader.addr)
+            node_id = hex(node.id)
 
             if node_id not in already_seen:
                 """
@@ -675,7 +735,7 @@ class CFG:
                     first = False
 
                 for edge in edges:
-                    edge_node_id = hex(edge.dst.group.leader.addr)
+                    edge_node_id = hex(edge.dst.id)
 
                     label = self._generate_node_label(edge.dst)
                     if edge.dst.is_tainted():
@@ -711,9 +771,6 @@ class CFG:
 
         """ Generate Graphviz DOT file (.gv) """
         graph.render()
-
-    def __hash__(self):
-        return self.entry_node.group.leader.addr
 
     def __eq__(self, other):
         if isinstance(other, CFG):
@@ -796,7 +853,7 @@ class DynamicCFG:
         addr = group.tail.info['target']
         for cfg in self.cfgs:
             if not cfg.is_empty():
-                if addr == hash(cfg):
+                if addr == cfg.id:
                     return cfg
 
         return None
@@ -812,14 +869,14 @@ class DynamicCFG:
             with tempfile.TemporaryDirectory() as temp_dir:
                 pending_cfgs = []
                 cfg = self.entry_cfg
-                cfg_output_filename = os.path.join(temp_dir, hex(hash(cfg)))
+                cfg_output_filename = os.path.join(temp_dir, hex(cfg.id))
                 cfg.export_graph(cfg_output_filename, first=True)
                 filenames.append(cfg_output_filename)
                 pending_cfgs.extend(cfg.next)
 
                 while pending_cfgs:
                     cfg = pending_cfgs.pop(0)
-                    cfg_output_filename = os.path.join(temp_dir, hex(hash(cfg)))
+                    cfg_output_filename = os.path.join(temp_dir, hex(cfg.id))
                     if cfg_output_filename not in filenames:
                         cfg.export_graph(cfg_output_filename)
                         filenames.append(cfg_output_filename)

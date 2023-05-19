@@ -132,7 +132,8 @@ class Analyzer:
             r2 = self._open_radare2(binary_base_addr)
 
         for tainted_cfg in tainted_cfgs:
-            if tainted_cfg.contains_tainted_loop():
+            loop_info = tainted_cfg.get_tainted_loop_info()
+            if loop_info:
                 target_cfg = tainted_cfg
                 if self.binary is not None:
                     target_cfg = self.update_cfg_with_static(r2, tainted_cfg)
