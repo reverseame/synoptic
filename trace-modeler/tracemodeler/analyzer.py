@@ -20,14 +20,13 @@ class Analyzer:
 
         for session in self.split_sessions(traces):
             for (i, net_trace) in enumerate(self.split_network_activity(session)):
-                if i <= 1:
-                    try:
-                        dynamic_cfg.initialize()
-                        dynamic_cfg = self.analyze_net_trace(dynamic_cfg, net_trace)
-                    except cfg.CFGException as e:
-                        debug.warning(str(e))
-                    finally:
-                        dynamic_cfg.finalize()
+                try:
+                    dynamic_cfg.initialize()
+                    dynamic_cfg = self.analyze_net_trace(dynamic_cfg, net_trace)
+                except cfg.CFGException as e:
+                    debug.warning(str(e))
+                finally:
+                    dynamic_cfg.finalize()
 
         binary_base_addr = self.get_base_addr(traces)
         self.analyze_tainted_loops(dynamic_cfg, binary_base_addr)

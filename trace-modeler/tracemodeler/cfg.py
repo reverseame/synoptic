@@ -174,6 +174,13 @@ class Group:
         """ Preserve taint count """
         self.taint_count += group.taint_count
 
+    def contains(self, ins):
+        for i in self.inss:
+            if i == ins:
+                return True
+
+        return False
+
     def __str__(self):
         return '\n'.join([str(ins) for ins in self.inss])
 
@@ -237,7 +244,7 @@ class Node:
 
         if ('fallthrough' in self.group.tail.info) and (self.group.tail.info['fallthrough'] == node.group.leader.addr):
             return
-    
+
         raise CFGException(f'"{self.group.tail}" cannot be followed by "{node.group.leader}"')
 
     def extend(self, node):
@@ -246,13 +253,13 @@ class Node:
 
     def is_subset(self, node):
         """
-        A node is a subset of another if both have same end, but leaders are
-        different
+        A node is a subset of another if both have same inss
         """
-        if (self.group.tail == node.group.tail) and (self.group.leader != node.group.leader):
-            return True
+        for ins in self.group:
+            if not node.group.contains(ins):
+                return False
 
-        return False
+        return True
 
     def strip(self, where):
         """
@@ -270,7 +277,7 @@ class Node:
         """ Swap one group for the new one """
         self.group = group
 
-    def copy_info_from(self, node):
+    def copy_node_info(self, node):
         self.visit_count = node.visit_count
         self.taint_count = node.taint_count
         self.edges = node.edges
@@ -368,6 +375,11 @@ class CFG:
         self.refine = False
         self.final_cfg = False
 
+    def _browse_sub_nodes(self, node):
+        while self.last_inserted.is_subset(node) and (self.last_inserted not in self.final_nodes):
+            """ Subsets are consecutive, so only have one edge that actuates as a fallthrough """
+            self._transition_to_first_edge(node)
+
     def _transition_to_first_edge(self, node):
         if self.last_inserted in self.final_nodes:
             self.last_inserted.visit()
@@ -402,6 +414,11 @@ class CFG:
                 self.last_inserted = edge.dst
                 """ Assume transition by the first edge again """
                 self._transition_to_first_edge(node)
+            elif edge.dst.is_subset(node):
+                """ If edge.dst is a subset, advance this transition and consume all subnodes """
+                edge.count += 1
+                self.last_inserted = edge.dst
+                self._browse_sub_nodes(node)
             else:
                 raise CFGException(f'Unkown transition from "{self.branch_node.group.tail}" to "{node.group.leader}"')
         else:
@@ -458,11 +475,16 @@ class CFG:
 
         """ Delete already defined node """
         self.nodes.remove(node)
+        node_was_final = False
+        while node in self.final_nodes:
+            self.final_nodes.remove(node)
+            node_was_final = True
+
         """ Modify current node group to only contain instructions until next one leader """
         node.strip(where)
 
         """ Replicate node information into new_node """
-        new_node.copy_info_from(node)
+        new_node.copy_node_info(node)
         """ Delete defined edges, and create new edge to new node """
         node.edges = []
 
@@ -476,6 +498,10 @@ class CFG:
         for edge in node.edges:
             if edge.dst == new_node:
                 edge.count = node.visit_count
+
+        """ Transfer final node to the new_node """
+        if node_was_final:
+            self.final_nodes.append(new_node)
 
         return (node, new_node)
 
@@ -497,26 +523,27 @@ class CFG:
         else:
             """ Check if any of the defined nodes is a subset of a new node """
             for n in self.nodes:
-                if node.is_subset(n):
-                    if len(node) > len(n):
-                        """ Strip node to not containg an already defined node """
-                        node.strip(n.group.leader)
-                        """ Add the stripped node """
+                if n.is_subset(node):
+                    """ Strip node to not containg an already defined node """
+                    node.strip(n.group.leader)
+                    """ Add the stripped node """
+                    if not self._transition_to_node(node):
                         self._add_node_transition(node)
-                        """ And transition to the already defined node """
+                    """ And transition to the already defined node """
+                    if not self._transition_to_node(n):
                         self._add_node_transition(n)
-                        break
-                    else:
-                        """
-                        We need to split an already defined node into two and transition
-                        to the already defined
-                        """
-                        (stripped_node, new_node) = self._split_node(n, node.group.leader)
-                        """ Update new node info """
-                        new_node.visit()
-                        new_node.taint(node)
-                        self._add_node_transition(new_node)
-                        break
+                    break
+                elif node.is_subset(n):
+                    """
+                    We need to split an already defined node into two and transition
+                    to the already defined
+                    """
+                    (stripped_node, new_node) = self._split_node(n, node.group.leader)
+                    """ Update new node info """
+                    new_node.visit()
+                    new_node.taint(node)
+                    self._add_node_transition(new_node)
+                    break
             else:
                 """
                 New transition to node, we looped every node in CFG witouth finding
@@ -535,7 +562,7 @@ class CFG:
             self.last_inserted = self.entry_node
             self.nodes.append(node)
         else:
-            if self.refine: 
+            if self.refine:
                 if self.last_inserted == node:
                     """
                     Always assume transition by first edge, even if it is branch_node
@@ -549,8 +576,14 @@ class CFG:
                     analysis and it was no complete, in that case, extend node
                     with new node instructions
                     """
-                    if self.last_inserted.group.leader.addr == node.group.leader.addr:
+                    if (self.last_inserted.group.leader.addr == node.group.leader.addr) and (len(self.last_inserted.edges) == 0):
                         self._extend_last_node(node)
+                    elif self.last_inserted.is_subset(node):
+                        """
+                        Node could be a subnode of already defined one, so we need
+                        to navegate all its corresponding subnodes
+                        """
+                        self._browse_sub_nodes(node)
                     elif self.branch_node is not None:
                         """
                         Assuming first transition of branch_node was wrong. So,
