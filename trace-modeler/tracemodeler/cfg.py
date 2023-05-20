@@ -408,13 +408,16 @@ class CFG:
                 
                     """
                     FIXME could a header have more than two predecessors, e.g: two back-edges and a pre-header?
-
-                    The header has two predecessors, the back-edge and the pre-header.
-                    The pre-header is a previous basic block that falthroughs to the header,
+                    
+                    The header has at least two predecessors, the back-edge and a potential pre-header.
+                    The pre-header is a previous basic block that falthroughs (or jumps) to the header,
                     added for loop optimization
                     """
-                    if len(edge.dst.predecessors) == 2:
-                        info['pre-header'] = edge.dst.predecessors[1 - edge.dst.predecessors.index(node)]
+                    if len(edge.dst.predecessors) >= 2:
+                        for predecessor in edge.dst.predecessors:
+                            if predecessor != node:     # Diferent to back-edge
+                                if predecessor.group.tail.is_standard() or predecessor.group.tail.is_jump():
+                                    info['pre-header'] = predecessor
 
                     """ Return information if any node defining the loop is tainted """
                     if any([node.is_tainted() for node in info.values()]):

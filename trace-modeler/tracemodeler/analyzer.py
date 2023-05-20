@@ -136,17 +136,15 @@ class Analyzer:
         for tainted_cfg in tainted_cfgs:
             loop_info = tainted_cfg.get_tainted_loop_info()
             if loop_info:
-                target_cfg = tainted_cfg
                 if self.binary is not None:
-                    target_cfg = self.update_cfg_with_static_info(r2, tainted_cfg)
+                    self.update_cfg_with_static_info(r2, tainted_cfg)
                 """ Create .ini file for Binsec symbolic execution """
-                self.create_binsec_file(target_cfg)
+                self.create_binsec_file(tainted_cfg)
 
         if self.binary is not None:
             r2.quit()
 
     def update_cfg_with_static_info(self, r2, tainted_cfg):
-        #if tainted_cfg.id == 0x555811ef2020:
         """ Function address pointed by ins leader of the entry node """
         function_name = tainted_cfg.entry_node.group.leader.routine
         function_addr = hex(tainted_cfg.entry_node.group.leader.routine_addr)
@@ -190,8 +188,6 @@ class Analyzer:
 
         """ Set all static transitions based in r2 basic blocks information """
         self._set_static_transitions(tainted_cfg, bbs)
-
-        return tainted_cfg
 
     def _set_static_transitions(self, cfg, bbs):
         for bb in bbs:
