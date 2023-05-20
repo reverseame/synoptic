@@ -129,38 +129,24 @@ class Analyzer:
         tainted_cfgs = dynamic_cfg.get_tainted_cfgs()
 
         if self.binary is not None:
-            r2 = self._open_radare2(binary_base_addr)
+            debug.info(f'Opening {os.path.basename(self.binary)} with radare2...')
+            """ Open binary at base address and close stderr """
+            r2 = r2pipe.open(self.binary, flags=['-B', binary_base_addr, '-2'])
 
         for tainted_cfg in tainted_cfgs:
             loop_info = tainted_cfg.get_tainted_loop_info()
             if loop_info:
                 target_cfg = tainted_cfg
                 if self.binary is not None:
-                    target_cfg = self.update_cfg_with_static(r2, tainted_cfg)
+                    target_cfg = self.update_cfg_with_static_info(r2, tainted_cfg)
                 """ Create .ini file for Binsec symbolic execution """
                 self.create_binsec_file(target_cfg)
 
         if self.binary is not None:
             r2.quit()
 
-    def _open_radare2(self, binary_base_addr):
-        debug.info(f'Opening {os.path.basename(self.binary)} with radare2...')
-        """ Open binary at base address and close stderr """
-        r2 = r2pipe.open(self.binary, flags=['-B', binary_base_addr, '-2'])
-        """ Check radare2 version """
-        version_str = r2.cmd('?Vq').rstrip()
-
-        """ Transform '5.8.4' into 584 """
-        min_r2_supported = int(utils.MIN_R2_VERSION.replace('.', ''))
-        version = int(version_str.replace('.', ''))
-        if version < min_r2_supported:
-            r2.quit()
-            debug.error(f'radare2 version found ({version_str}) older than minimun supported ({utils.MIN_R2_VERSION})')
-            sys.exit(-1)
-
-        return r2
-
-    def update_cfg_with_static(self, r2, tainted_cfg):
+    def update_cfg_with_static_info(self, r2, tainted_cfg):
+        #if tainted_cfg.id == 0x555811ef2020:
         """ Function address pointed by ins leader of the entry node """
         function_name = tainted_cfg.entry_node.group.leader.routine
         function_addr = hex(tainted_cfg.entry_node.group.leader.routine_addr)
@@ -174,7 +160,7 @@ class Analyzer:
         """ List function basic blocks """
         bbs = json.loads(r2.cmd('afbj'))
 
-        nodes = []
+        static_nodes = []
         routine = ''
         routine_addr = 0
 
@@ -194,47 +180,47 @@ class Analyzer:
                 ins = cfg.Ins(dis, ins_addr, opcodes, routine=routine, routine_addr=routine_addr)
                 group.add(ins)
 
-            node = cfg.Node(group)
-            nodes.append(node)
+            static_node = cfg.Node(group, static=True)
+            static_nodes.append(static_node)
 
-        """ Create CFG and define all its nodes without transitions """
-        function_cfg = cfg.CFG()
-        function_cfg.nodes = nodes
+        """ Add static_node if is not already defined in the CFG """
+        for static_node in static_nodes:
+            if static_nodes not in tainted_cfg:
+                tainted_cfg.nodes.append(static_node)
 
-        """ Set transitions based in basic blocks """
-        for bb in bbs:
-            if function_cfg.is_empty():
-                node = function_cfg.get_node_by_addr(bb['addr'])
-                function_cfg.entry_node = node
-                function_cfg.reset_to_node(node)
-            self._set_next_nodes(function_cfg, bb)
-
-        output = f'/tmp/func-{function_addr}'
-        function_cfg.export_graph(output)
-        debug.debug(f'{output}.gv.pdf saved')
+        """ Set all static transitions based in r2 basic blocks information """
+        self._set_static_transitions(tainted_cfg, bbs)
 
         return tainted_cfg
 
-    def _set_next_nodes(self, cfg, bb):
-        """ Each basic block has several ouput transitions """
-        node = cfg.get_node_by_addr(bb['addr'])
-        cfg.reset_to_node(node)
-
-        """ Node that ends CFG because does not have output tranisitions """
-        if bb['outputs'] == 0:
-            cfg.finalize()
-        elif bb['outputs'] == 1:
-            group = cfg.get_node_by_addr(bb['jump']).group
-            cfg.add(group)
-        elif bb['outputs'] == 2:
-            """ Control flow change """
-            group = cfg.get_node_by_addr(bb['jump']).group
-            cfg.add(group)
-            """ Reset to node containing two outputs """
+    def _set_static_transitions(self, cfg, bbs):
+        for bb in bbs:
+            """ Each basic block has several ouput transitions """
+            node = cfg.get_node_by_addr(bb['addr'])
+            """ Get node fallthrough in case of node ending in a call ins """
+            if node.group.tail.is_call():
+                node = cfg.get_node_by_addr(node.group.tail.info['fallthrough'])
             cfg.reset_to_node(node)
-            """ Fallthrough """
-            group = cfg.get_node_by_addr(bb['fail']).group
-            cfg.add(group)
+
+            """ Node that ends CFG because does not have output tranisitions """
+            if bb['outputs'] == 0:
+                if node.static:
+                    cfg.finalize()
+            elif bb['outputs'] == 1:
+                defined_node = cfg.get_node_by_addr(bb['jump'])
+                if defined_node.static:
+                    cfg.add(defined_node.group)
+            elif bb['outputs'] == 2:
+                """ Control flow change """
+                defined_node = cfg.get_node_by_addr(bb['jump'])
+                if defined_node.static:
+                    cfg.add(defined_node.group)
+                """ Reset to node containing two outputs """
+                cfg.reset_to_node(node)
+                """ Fallthrough """
+                defined_node = cfg.get_node_by_addr(bb['fail'])
+                if defined_node.static:
+                    cfg.add(defined_node.group)
 
     def create_binsec_file(self, target_cfg):
         debug.warning(f'Binsec file for {hex(target_cfg.entry_node.group.leader.routine_addr)} ({target_cfg.entry_node.group.leader.routine}) not created')

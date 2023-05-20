@@ -210,13 +210,14 @@ class Edge:
         return False
 
 class Node:
-    def __init__(self, group):
+    def __init__(self, group, static=False):
         self.id = group.leader.addr
         self.group = group
         self.visit_count = 1
         self.taint_count = group.taint_count
         self.edges = []
         self.predecessors = []
+        self.static = static
 
     def taint(self, node):
         """ Preserve taint count """
@@ -415,6 +416,7 @@ class CFG:
                     if len(edge.dst.predecessors) == 2:
                         info['pre-header'] = edge.dst.predecessors[1 - edge.dst.predecessors.index(node)]
 
+                    """ Return information if any node defining the loop is tainted """
                     if any([node.is_tainted() for node in info.values()]):
                         loop_info.append(info)
 
@@ -694,12 +696,33 @@ class CFG:
 
         return label
 
+    def _set_dynamic_node_style(self, graph):
+        graph.attr('node', shape='box', style='solid', fontname='monospace')
+
+    def _set_dynamic_edge_style(self, graph):
+        graph.attr('edge', style='solid', fontname='monospace')
+
+    def _draw_satic_node(self, graph, node_id, label):
+        graph.attr('node', shape='box', style='dashed', fontname='monospace')
+        graph.node(node_id, label=label)
+        """ Back to normal node CFG style """
+        self._set_dynamic_node_style(graph)
+
+    def _draw_satic_edge(self, graph, node_id, edge_node_id, label='', branch=False, color=''):
+        graph.attr('edge', style='dashed', fontname='monospace')
+        if branch:
+            graph.edge(node_id, edge_node_id, label=label, color=color)
+        else:
+            graph.edge(node_id, edge_node_id)
+        """ Back to normal edge CFG style """
+        self._set_dynamic_edge_style(graph)
+
     def export_graph(self, output, first=False):
         graph = graphviz.Digraph(name=output, format='pdf')
 
         """ General CFG Style """
-        graph.attr('node', shape='box', fontname='monospace')
-        graph.attr('edge', fontname='monospace')
+        self._set_dynamic_node_style(graph)
+        self._set_dynamic_edge_style(graph)
 
         """ Iterate """
         pending_edges = [(self.entry_node, self.entry_node.edges)]
@@ -726,7 +749,10 @@ class CFG:
                 if node.is_tainted():
                     graph.node(node_id, label=label, style='filled', fillcolor=COLOR_TAINTED)
                 else:
-                    graph.node(node_id, label=label)
+                    if node.static:
+                        self._draw_satic_node(graph, node_id, label=label)
+                    else:
+                        graph.node(node_id, label=label)
 
                 """ CFG first transition """
                 if first:
@@ -741,16 +767,29 @@ class CFG:
                     if edge.dst.is_tainted():
                         graph.node(edge_node_id, label=label, style='filled', fillcolor=COLOR_TAINTED)
                     else:
-                        graph.node(edge_node_id, label=label)
-
-                    """ True or false branch jump """
-                    if node.group.tail.is_branch():
-                        if edge.branch_taken:
-                            graph.edge(node_id, edge_node_id, label=f't / {edge.count}', color=COLOR_BRANCH_TAKEN)
+                        if edge.dst.static:
+                            self._draw_satic_node(graph, edge_node_id, label=label)
                         else:
-                            graph.edge(node_id, edge_node_id, label=f'f / {edge.count}', color=COLOR_BRANCH_NOT_TAKEN)
+                            graph.node(edge_node_id, label=label)
+
+                    if (not node.static and edge.dst.static) or (node.static and edge.dst.static) or (node.static and not edge.dst.static):
+                        """ True or false branch jump """
+                        if node.group.tail.is_branch():
+                            if edge.branch_taken:
+                                self._draw_satic_edge(graph, node_id, edge_node_id, label='t', branch=True, color=COLOR_BRANCH_TAKEN)
+                            else:
+                                self._draw_satic_edge(graph, node_id, edge_node_id, label='f', branch=True, color=COLOR_BRANCH_NOT_TAKEN)
+                        else:
+                            self._draw_satic_edge(graph, node_id, edge_node_id, branch=False)
                     else:
-                        graph.edge(node_id, edge_node_id, label=str(edge.count))
+                        """ True or false branch jump """
+                        if node.group.tail.is_branch():
+                            if edge.branch_taken:
+                                graph.edge(node_id, edge_node_id, label=f't / {edge.count}', color=COLOR_BRANCH_TAKEN)
+                            else:
+                                graph.edge(node_id, edge_node_id, label=f'f / {edge.count}', color=COLOR_BRANCH_NOT_TAKEN)
+                        else:
+                            graph.edge(node_id, edge_node_id, label=str(edge.count))
 
                     new_edges = (edge.dst, edge.dst.edges)
                     pending_edges.append(new_edges)
@@ -777,6 +816,9 @@ class CFG:
             return hash(self) == hash(other)
 
         return False
+
+    def __contains__(self, node):
+        return node in self.nodes
 
 class DynamicCFG:
     def __init__(self):

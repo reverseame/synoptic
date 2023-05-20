@@ -1,8 +1,10 @@
 import os
+import r2pipe
 import argparse
 import ipaddress
 
 import tracemodeler.debug as debug
+import tracemodeler.utils as utils
 
 description = 'This tool analyze server execution traces to infer its protocol model'
 
@@ -34,6 +36,21 @@ class ArgumentParser:
 
         return args
 
+    def _check_r2(self):
+        """ Open radare2 withouth binary and close stderr """
+        r2 = r2pipe.open('-', flags=['-2'])
+        """ Check radare2 version """
+        version_str = r2.cmd('?Vq').rstrip()
+        """ Close radare2 """
+        r2.quit()
+
+        """ Transform '5.8.4' into 584 """
+        min_r2_supported = int(utils.MIN_R2_VERSION.replace('.', ''))
+        version = int(version_str.replace('.', ''))
+
+        if version < min_r2_supported:
+            debug.error(f'radare2 version found ({version_str}) older than minimun supported ({utils.MIN_R2_VERSION})')
+
     def _check_args(self, args):
         if args.log:
             for filename in args.log:
@@ -51,6 +68,7 @@ class ArgumentParser:
         if args.binary:
             if not os.path.isfile(args.binary):
                 debug.error(f'{os.path.abspath(args.binary)}\t: Not a file')
+            self._check_r2()
 
         if args.replay:
             if args.host:
