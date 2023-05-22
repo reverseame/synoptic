@@ -33,7 +33,7 @@ class Ins:
         self.routine = routine
         self.routine_addr = routine_addr
         self.target_addr = target_addr
-        self.comment = comment
+        self.comment = set([comment]) if comment else set()
         self.type = self._get_ins_type()
         self.info = self._get_ins_info()
 
@@ -120,11 +120,15 @@ class Ins:
         if ins.addr != self.info['fallthrough']:
             raise CFGException(f'"{str(self)}" does not fallthrough to "{str(ins)}"')
 
+    def taint(self, ins):
+        self.tainted = ins.tainted
+        self.update_comment(ins.comment)
+
     def update_comment(self, comment):
-        if self.comment:
-            self.comment += ', '
-        
-        self.comment += comment
+        if isinstance(comment, set):
+            self.comment.update(comment)
+        elif isinstance(comment, str):
+            self.comment.add(comment)
 
     def dumps(self, opcodes_padding=0, comment_padding=0):
         tab_padding = ' ' * 5
@@ -132,7 +136,8 @@ class Ins:
         string = f'{hex(self.addr)}{tab_padding}{self.opcodes.hex().ljust(opcodes_padding)}{tab_padding}{self.dis.mnemonic} {self.dis.op_str}'
 
         if self.comment:
-            string = f'{string.ljust(comment_padding)} ; {self.comment}'
+            for comment in self.comment:                
+                string = f'{string.ljust(comment_padding)} ; {comment}'
 
         return string
 
@@ -151,6 +156,9 @@ class Group:
         self.leader = None
         self.tail = None
         self.taint_count = 0
+
+    def is_tainted(self):
+        return self.taint_count > 0
 
     def add(self, ins):
         if self.leader is None:
@@ -171,6 +179,14 @@ class Group:
         self.taint(group)
 
     def taint(self, group):
+        """ If current group is not tainted, we need to copy group's ins tainted info to current group """
+        if not self.is_tainted() and group.is_tainted():
+            """ We can have subsets, so we need to check every ins of both groups """
+            for my_ins in self.inss:
+                for ins in group.inss:
+                    if (my_ins == ins) and ins.tainted:
+                        my_ins.taint(ins)
+
         """ Preserve taint count """
         self.taint_count += group.taint_count
 
@@ -220,6 +236,7 @@ class Node:
         self.static = static
 
     def taint(self, node):
+        self.group.taint(node.group)
         """ Preserve taint count """
         self.taint_count += node.taint_count
 
@@ -234,18 +251,18 @@ class Node:
             return
 
         if self.group.tail.is_jump():
-            if self.group.tail.info['target'] == node.group.leader.addr:
+            if self.group.tail.info['target'] == node.id:
                 return
 
         if self.group.tail.is_branch():
-            if (self.group.tail.info['branch-target'] == node.group.leader.addr) or (self.group.tail.info['fallthrough'] == node.group.leader.addr):
+            if (self.group.tail.info['branch-target'] == node.id) or (self.group.tail.info['fallthrough'] == node.id):
                 return
 
         """ We can't know either fallthrough or target address during plt jmp """ 
         if self.group.tail.is_plt_jmp():
             return
 
-        if ('fallthrough' in self.group.tail.info) and (self.group.tail.info['fallthrough'] == node.group.leader.addr):
+        if ('fallthrough' in self.group.tail.info) and (self.group.tail.info['fallthrough'] == node.id):
             return
 
         raise CFGException(f'"{self.group.tail}" cannot be followed by "{node.group.leader}"')
@@ -359,7 +376,7 @@ class CFG:
 
     def get_node_by_addr(self, addr):
         for node in self.nodes:
-            if node.group.leader.addr == addr:
+            if node.id == addr:
                 return node
 
         return None
@@ -646,7 +663,7 @@ class CFG:
                     analysis and it was no complete, in that case, extend node
                     with new node instructions
                     """
-                    if (self.last_inserted.group.leader.addr == node.group.leader.addr) and (len(self.last_inserted.edges) == 0):
+                    if (self.last_inserted.id == node.id) and (len(self.last_inserted.edges) == 0):
                         self._extend_last_node(node)
                     elif self.last_inserted.is_subset(node):
                         """
@@ -804,7 +821,7 @@ class CFG:
 
             already_seen = []
             for last_node in self.final_nodes:
-                last_node_id = hex(last_node.group.leader.addr)
+                last_node_id = hex(last_node.id)
                 if last_node_id not in already_seen:
                     graph.edge(last_node_id, 'final', label=f'{self.final_nodes.count(last_node)}')
                     graph.node(last_node_id)
@@ -849,7 +866,7 @@ class DynamicCFG:
             self.last_cfg = self.entry_cfg
             self.cfgs.append(self.entry_cfg)
             if group.tail.is_return():
-                group.tail.comment = 'return to undefined CFG'
+                group.tail.update_comment('return to undefined CFG')
         else:
             """ Go to another CFG due to call function """
             if group.tail.is_call():
@@ -879,7 +896,7 @@ class DynamicCFG:
                 previous CFG (we started tracing in the middle of a function)
                 """
                 if self.last_cfg.previous is None:
-                    group.tail.comment = 'return to undefined CFG'
+                    group.tail.update_comment('return to undefined CFG')
 
                 self.last_cfg.add(group)
 

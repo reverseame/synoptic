@@ -363,8 +363,30 @@ void traceControlFlow(ADDRINT insAddr, USIZE insSize, std::string *insDis, char 
     LOG_RAW(" target-addr=%s target=\"%s\"\n", hexaddr(targetAddr).c_str(), target.c_str());
 }
 
+void traceLea(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT routineAddr, REG reg, ADDRINT leaAddr) {
+    if (!addrIsTraceable(insAddr, insSize)) {
+        return;
+    }
+
+    /* Address calculated with lea is tainted -> taint reg */
+    if (taintedAdddrs.count(leaAddr)) {
+        LOG_TAINT("io-counter=%d action=taint-reg routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
+        logInsOpcodes(insAddr, insSize);
+        LOG_RAW(" origin=from-lea reg=%s calculated-addr=%s\n", REG_StringShort(reg).c_str(), hexaddr(leaAddr).c_str());
+        taintedRegs[reg] = true;
+    } else if (taintedRegs[reg]) {
+        /* Free tainted reg */
+        LOG_TAINT("io-counter=%d action=free-reg routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
+        logInsOpcodes(insAddr, insSize);
+        LOG_RAW(" origin=from-lea reg=%s calculated-addr=%s\n", REG_StringShort(reg).c_str(), hexaddr(leaAddr).c_str());
+        taintedRegs[reg] = false;
+    } else {
+        logIns(insAddr, insSize, insDis, routine, routineAddr);
+    }
+}
+
 /* Analyzes mov instructions */
-void propagateTaint(INS ins, const char *routine, ADDRINT routineAddr) {
+void propagateMovTaint(INS ins, const char *routine, ADDRINT routineAddr) {
     if (hasImm(ins)) {
         /* [addr] <- imm */
         if (INS_IsMemoryWrite(ins)) {
@@ -435,6 +457,23 @@ void propagateTaint(INS ins, const char *routine, ADDRINT routineAddr) {
     } else {
         PRINT_WARNING("Unable to propagate taint info: %s\n", INS_Disassemble(ins).c_str());
     }
+}
+
+/* Analyzes lea instructions */
+void propagateLeaTaint(INS ins, const char *routine, ADDRINT routineAddr) {
+    /* reg <- [algorithmic calculation] */
+    REG reg = getReg(ins);
+
+    INS_InsertCall(
+        ins, IPOINT_BEFORE, (AFUNPTR)traceLea,
+        IARG_INST_PTR,
+        IARG_UINT32, INS_Size(ins),
+        IARG_PTR, new std::string(INS_Disassemble(ins)),
+        IARG_PTR, routine,
+        IARG_ADDRINT, routineAddr,
+        IARG_PTR, reg,
+        IARG_EXPLICIT_MEMORY_EA,
+        IARG_END);
 }
 
 void analyzeControlFlow(INS ins, const char *routine, ADDRINT routineAddr) {
@@ -589,9 +628,14 @@ void instrumentTrace(TRACE trace, void *v) {
 
     for (BBL bbl = TRACE_BblHead(trace); BBL_Valid(bbl); bbl = BBL_Next(bbl)) {
         for (INS ins = BBL_InsHead(bbl); INS_Valid(ins); ins = INS_Next(ins)) {
+            /* Propagate taint for mov instructions */
             if ((INS_Opcode(ins) >= XED_ICLASS_MOV) && (INS_Opcode(ins) <= XED_ICLASS_MOVZX)) {
-                propagateTaint(ins, routine, routineAddr);
-            } else if (INS_IsControlFlow(ins)) {
+                propagateMovTaint(ins, routine, routineAddr);
+            } else if (INS_IsLea(ins)) {
+                /* Propagate taint for lea instructions */
+                propagateLeaTaint(ins, routine, routineAddr);
+            }
+            else if (INS_IsControlFlow(ins)) {
                 analyzeControlFlow(ins, routine, routineAddr);
             } else if ((INS_Opcode(ins) == XED_ICLASS_CMP) || (INS_Opcode(ins) == XED_ICLASS_TEST)) {
                 analyzeComparison(ins, routine, routineAddr);
