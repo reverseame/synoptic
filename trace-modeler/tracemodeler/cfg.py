@@ -390,32 +390,31 @@ class CFG:
             predecessor_dominants = set(dominances[node.predecessors[0]])   # Create a new set with the same values
             """ Intersection of previous dominants """
             for predecessor in node.predecessors[1:]:
-                predecessor_dominants &= dominances[predecessor]
+                predecessor_dominants &= dominances[predecessor]            # Intersection of all predecessor dominants
             """ Add itself as dominant """
             predecessor_dominants.add(node)
             """ Override with new dominant calculation """
             dominances[node] = predecessor_dominants
 
-        """ Loop is defined by back-edges to header """
+        """ Loops are defined by back-edges to header """
         loop_info = []
 
         for node in self.nodes:
             dominants = dominances[node]
-            """ Back-edge to the header is detected if any node successor is a dominant to node """
+            """ Back-edge to the header is detected if any of node's successor is a dominant to node """
             for edge in node.edges:
                 if edge.dst in dominants:
                     info = {'header': edge.dst, 'back-edge': node}
                 
                     """
-                    FIXME could a header have more than two predecessors, e.g: two back-edges and a pre-header?
-                    
                     The header has at least two predecessors, the back-edge and a potential pre-header.
-                    The pre-header is a previous basic block that falthroughs (or jumps) to the header,
+                    The pre-header is a dominant basic block that falthroughs (or jumps) to the header,
                     added for loop optimization
                     """
                     if len(edge.dst.predecessors) >= 2:
                         for predecessor in edge.dst.predecessors:
-                            if predecessor != node:     # Diferent to back-edge
+                            """ A pre-header is a header's dominant, while back-edges are not """
+                            if predecessor in dominances[edge.dst]:
                                 if predecessor.group.tail.is_standard() or predecessor.group.tail.is_jump():
                                     info['pre-header'] = predecessor
 
