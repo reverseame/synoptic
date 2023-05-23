@@ -179,8 +179,8 @@ class Group:
         self.taint(group)
 
     def taint(self, group):
-        """ If current group is not tainted, we need to copy group's ins tainted info to current group """
-        if not self.is_tainted() and group.is_tainted():
+        """ We need to copy group's ins tainted info to current group """
+        if group.is_tainted():
             """ We can have subsets, so we need to check every ins of both groups """
             for my_ins in self.inss:
                 for ins in group.inss:

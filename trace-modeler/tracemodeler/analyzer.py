@@ -100,7 +100,7 @@ class Analyzer:
                 else:
                     ins = cfg.Ins(dis, addr, opcodes, routine=routine, routine_addr=routine_addr)
 
-                if (item['level'] == 'taint') and (item['action'] in ['compare', 'taint-reg', 'taint-addr']):
+                if (item['level'] == 'taint') and (item['action'] in ['compare', 'taint-reg', 'taint-addr', 'free-addr']):
                         """ Update comment with taint information """
                         ins.update_comment(f'{item["action"].replace("-", " ")} {item["origin"].replace("-", " ")}')
                         ins.tainted = True

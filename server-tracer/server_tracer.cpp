@@ -184,7 +184,7 @@ void regToAddr(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routin
         if (taintedAdddrs.count(addr)) {
             LOG_TAINT("io-counter=%d action=free-addr routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
             logInsOpcodes(insAddr, insSize);
-            LOG_RAW(" origin=reg addr=%s reg-addr=%s reg=%s\n", hexaddr(addr).c_str(), REG_StringShort(regAddr).c_str(), REG_StringShort(reg).c_str());
+            LOG_RAW(" origin=from-reg addr=%s reg-addr=%s reg=%s\n", hexaddr(addr).c_str(), REG_StringShort(regAddr).c_str(), REG_StringShort(reg).c_str());
             taintedAdddrs.erase(taintedAdddrs.find(addr));
         } else {
             logIns(insAddr, insSize, insDis, routine, routineAddr);
@@ -261,7 +261,7 @@ void immToAddr(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routin
     if (taintedAdddrs.count(mem_w)) {
         LOG_TAINT("io-counter=%d action=free-addr routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter,routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
         logInsOpcodes(insAddr, insSize);
-        LOG_RAW(" addr=%s\n", hexaddr(mem_w).c_str());
+        LOG_RAW(" origin=from-imm addr=%s\n", hexaddr(mem_w).c_str());
         taintedAdddrs.erase(taintedAdddrs.find(mem_w));
     } else {
         logIns(insAddr, insSize, insDis, routine, routineAddr);
@@ -397,7 +397,7 @@ void propagateMovTaint(INS ins, const char *routine, ADDRINT routineAddr) {
                 IARG_PTR, new std::string(INS_Disassemble(ins)),
                 IARG_PTR, routine,
                 IARG_ADDRINT, routineAddr,
-                IARG_MEMORYOP_EA, 0,
+                IARG_MEMORYWRITE_EA,
                 IARG_END);
         } else {
             /* reg <- imm */
@@ -422,7 +422,7 @@ void propagateMovTaint(INS ins, const char *routine, ADDRINT routineAddr) {
             IARG_PTR, new std::string(INS_Disassemble(ins)),
             IARG_PTR, routine,
             IARG_ADDRINT, routineAddr,
-            IARG_MEMORYOP_EA, 0,
+            IARG_MEMORYREAD_EA,
             IARG_PTR, reg,
             IARG_END);
     } else if (INS_IsMemoryWrite(ins)) {
@@ -437,7 +437,7 @@ void propagateMovTaint(INS ins, const char *routine, ADDRINT routineAddr) {
             IARG_PTR, routine,
             IARG_ADDRINT, routineAddr,
             IARG_PTR, regAddr,
-            IARG_MEMORYOP_EA, 0,
+            IARG_MEMORYWRITE_EA,
             IARG_PTR, reg,
             IARG_END);
     } else if (INS_RegR(ins, 0) != REG_INVALID()) {
