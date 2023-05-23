@@ -5,7 +5,9 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 
+#include <map>
 #include <set>
+#include <array>
 #include <string>
 #include <iostream>
 
@@ -274,7 +276,7 @@ ssize_t newRecvMsgFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &
     return ret;
 }
 
-ssize_t newWriteFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAdddrs, bool(&taintedRegs)[REG_LAST], std::string *imgName, int fd, const void *buf, size_t count) {
+ssize_t newWriteFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAdddrs, std::map<ADDRINT, std::array<bool, REG_LAST>> &taintedRegs, std::string *imgName, int fd, const void *buf, size_t count) {
     ssize_t ret;
 
     PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
@@ -301,15 +303,13 @@ ssize_t newWriteFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &ta
 
         /* Free all tainted data */
         taintedAdddrs.clear();
-        for (int i = 0; i < REG_LAST; i++) {
-            taintedRegs[i] = false;
-        }
+        taintedRegs.clear();
     }
 
     return ret;
 }
 
-ssize_t newSendFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAdddrs, bool(&taintedRegs)[REG_LAST], std::string *imgName, int sockfd, const void *buf, size_t len, int flags) {
+ssize_t newSendFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAdddrs, std::map<ADDRINT, std::array<bool, REG_LAST>> &taintedRegs, std::string *imgName, int sockfd, const void *buf, size_t len, int flags) {
     ssize_t ret;
 
     PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
@@ -337,15 +337,13 @@ ssize_t newSendFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &tai
 
         /* Free all tainted data */
         taintedAdddrs.clear();
-        for (int i = 0; i < REG_LAST; i++) {
-            taintedRegs[i] = false;
-        }
+        taintedRegs.clear();
     }
 
     return ret;
 }
 
-ssize_t newSendToFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAdddrs, bool(&taintedRegs)[REG_LAST], std::string *imgName, int sockfd, const void *buf, size_t len, int flags, const struct sockaddr *dest_addr, socklen_t addrlen) {
+ssize_t newSendToFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAdddrs, std::map<ADDRINT, std::array<bool, REG_LAST>> &taintedRegs, std::string *imgName, int sockfd, const void *buf, size_t len, int flags, const struct sockaddr *dest_addr, socklen_t addrlen) {
     ssize_t ret;
 
     PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
@@ -375,15 +373,13 @@ ssize_t newSendToFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &t
 
         /* Free all tainted data */
         taintedAdddrs.clear();
-        for (int i = 0; i < REG_LAST; i++) {
-            taintedRegs[i] = false;
-        }
+        taintedRegs.clear();
     }
 
     return ret;
 }
 
-ssize_t newSendMsgFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAdddrs, bool(&taintedRegs)[REG_LAST], std::string *imgName, int sockfd, const struct msghdr *msg, int flags) {
+ssize_t newSendMsgFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAdddrs, std::map<ADDRINT, std::array<bool, REG_LAST>> &taintedRegs, std::string *imgName, int sockfd, const struct msghdr *msg, int flags) {
     ssize_t ret;
 
     PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
@@ -403,9 +399,7 @@ ssize_t newSendMsgFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &
         }*/
         /* Free all tainted data */
         taintedAdddrs.clear();
-        for (int i = 0; i < REG_LAST; i++) {
-            taintedRegs[i] = false;
-        }
+        taintedRegs.clear();
     }
 
     return ret;
@@ -622,7 +616,7 @@ void replaceRecvMsgFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, 
     PROTO_Free(proto_tcp_activity);
 }
 
-void replaceWriteFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, bool(&taintedRegs)[REG_LAST]) {
+void replaceWriteFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, std::map<ADDRINT, std::array<bool, REG_LAST>> &taintedRegs) {
     PROTO proto_tcp_activity = PROTO_Allocate(PIN_PARG(ssize_t), CALLINGSTD_DEFAULT,
                                         NULL,
                                         PIN_PARG(int),          // fd
@@ -645,7 +639,7 @@ void replaceWriteFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, bo
     PROTO_Free(proto_tcp_activity);
 }
 
-void replaceSendFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, bool(&taintedRegs)[REG_LAST]) {
+void replaceSendFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, std::map<ADDRINT, std::array<bool, REG_LAST>> &taintedRegs) {
     PROTO proto_tcp_activity = PROTO_Allocate(PIN_PARG(ssize_t), CALLINGSTD_DEFAULT,
                                         NULL,
                                         PIN_PARG(int),          // sockfd
@@ -670,7 +664,7 @@ void replaceSendFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, boo
     PROTO_Free(proto_tcp_activity);
 }
 
-void replaceSendToFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, bool(&taintedRegs)[REG_LAST]) {
+void replaceSendToFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, std::map<ADDRINT, std::array<bool, REG_LAST>> &taintedRegs) {
     PROTO proto_tcp_activity = PROTO_Allocate(PIN_PARG(ssize_t), CALLINGSTD_DEFAULT,
                                         NULL,
                                         PIN_PARG(int),                      // sockfd
@@ -699,7 +693,7 @@ void replaceSendToFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, b
     PROTO_Free(proto_tcp_activity);
 }
 
-void replaceSendMsgFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, bool(&taintedRegs)[REG_LAST]) {
+void replaceSendMsgFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, std::map<ADDRINT, std::array<bool, REG_LAST>> &taintedRegs) {
     PROTO proto_tcp_activity = PROTO_Allocate(PIN_PARG(ssize_t), CALLINGSTD_DEFAULT,
                                         NULL,
                                         PIN_PARG(int),                      // sockfd
@@ -722,7 +716,7 @@ void replaceSendMsgFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, 
     PROTO_Free(proto_tcp_activity);
 }
 
-void replaceSignatures(bool KnobDebug, IMG img, std::set<ADDRINT> &taintedAdddrs, bool(&taintedRegs)[REG_LAST], std::set<ADDRINT> &visitedAddrs, bool &thresholdTriggered, int &IOCounter, ADDRINT &insFallthrough) {
+void replaceSignatures(bool KnobDebug, IMG img, std::set<ADDRINT> &taintedAdddrs, std::map<ADDRINT, std::array<bool, REG_LAST>> &taintedRegs, std::set<ADDRINT> &visitedAddrs, bool &thresholdTriggered, int &IOCounter, ADDRINT &insFallthrough) {
     RTN rtn;
 
     rtn = RTN_FindByName(img, "socket");

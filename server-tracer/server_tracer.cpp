@@ -1,6 +1,8 @@
 #include "pin.H"
 
+#include <map>
 #include <set>
+#include <array>
 #include <iostream>
 
 #include "log.h"
@@ -40,8 +42,8 @@ KNOB<std::string> KnobLogDir(KNOB_MODE_WRITEONCE, "pintool", "dirlog", ".", "Abs
 
 /* Keep track of tainted addresses */
 std::set<ADDRINT> taintedAdddrs;
-/* Keep track of tainted registers */
-bool taintedRegs[REG_LAST];
+/* Keep track of tainted registers per function */
+std::map<ADDRINT, std::array<bool, REG_LAST>> taintedRegs;
 
 void fini(INT32 code, VOID *v) {
     LOG_INFO("action=process-end return=%x\n", code);
@@ -82,6 +84,37 @@ void followForkInChild(THREADID threadid, const CONTEXT *ctxt, VOID *v) {
     OPEN_LOG(filename.c_str());
 
     LOG_INFO("action=new-process-forked\n");
+}
+
+void initializeRegs(ADDRINT routineAddr) {
+    std::array<bool, REG_LAST> regs;
+    /* Set all regs to false */
+    std::fill(std::begin(regs), std::end(regs), false);
+    taintedRegs[routineAddr] = regs;
+}
+
+bool regIsTainted(ADDRINT routineAddr, REG reg) {
+    std::map<ADDRINT, std::array<bool, REG_LAST>>::iterator item = taintedRegs.find(routineAddr);
+
+    /* reg info for this routineAddr not found, initialize it */
+    if (item == taintedRegs.end()) {
+        initializeRegs(routineAddr);
+        item = taintedRegs.find(routineAddr);
+    }
+
+    return item->second.at(reg);
+}
+
+void changeTaintRegValue(ADDRINT routineAddr, REG reg, bool tainted) {
+    std::map<ADDRINT, std::array<bool, REG_LAST>>::iterator item = taintedRegs.find(routineAddr);
+
+    /* reg info for this routineAddr not found, initialize it */
+    if (item == taintedRegs.end()) {
+        initializeRegs(routineAddr);
+        item = taintedRegs.find(routineAddr);
+    }
+
+    item->second.at(reg) = tainted;
 }
 
 bool addrIsTraceable(ADDRINT insAddr, USIZE insSize) {
@@ -173,7 +206,7 @@ void regToAddr(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routin
         return;
     }
 
-    if (taintedRegs[reg]) {
+    if (regIsTainted(routineAddr, reg)) {
         LOG_TAINT("io-counter=%d action=taint-addr routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
         logInsOpcodes(insAddr, insSize);
         LOG_RAW(" origin=from-reg addr=%s reg-addr=%s reg=%s\n", hexaddr(addr).c_str(), REG_StringShort(regAddr).c_str(), REG_StringShort(reg).c_str());
@@ -202,13 +235,13 @@ void addrToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routin
         LOG_TAINT("io-counter=%d action=taint-reg routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
         logInsOpcodes(insAddr, insSize);
         LOG_RAW(" origin=from-addr reg=%s addr=%s\n", REG_StringShort(reg_w).c_str(), hexaddr(mem_r).c_str());
-        taintedRegs[reg_w] = true;
-    } else if (taintedRegs[reg_w]) {
+        changeTaintRegValue(routineAddr, reg_w, true);
+    } else if (regIsTainted(routineAddr, reg_w)) {
         /* mem is clean -> reg is cleaned */
         LOG_TAINT("io-counter=%d action=free-reg routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter , routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
         logInsOpcodes(insAddr, insSize);
         LOG_RAW(" origin=addr reg=%s addr=%s\n", REG_StringShort(reg_w).c_str(), hexaddr(mem_r).c_str());
-        taintedRegs[reg_w] = false;
+        changeTaintRegValue(routineAddr, reg_w, false);
     } else {
         logIns(insAddr, insSize, insDis, routine, routineAddr);
     }
@@ -220,16 +253,16 @@ void regToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine
         return;
     }
 
-    if (taintedRegs[reg_r]) {
+    if (regIsTainted(routineAddr, reg_r)) {
         LOG_TAINT("io-counter=%d action=taint-reg routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
         logInsOpcodes(insAddr, insSize);
         LOG_RAW(" origin=from-reg reg-taint=%s reg-origin=%s\n", REG_StringShort(reg_w).c_str(), REG_StringShort(reg_r).c_str());
-        taintedRegs[reg_w] = true;
-    } else if (taintedRegs[reg_w]) {
+        changeTaintRegValue(routineAddr, reg_w, true);
+    } else if (regIsTainted(routineAddr, reg_w)) {
         LOG_TAINT("io-counter=%d action=free-reg routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
         logInsOpcodes(insAddr, insSize);
         LOG_RAW(" origin=reg reg-free=%s reg-origin=%s\n", REG_StringShort(reg_w).c_str(), REG_StringShort(reg_r).c_str());
-        taintedRegs[reg_w] = false;
+        changeTaintRegValue(routineAddr, reg_w, false);
     } else {
         logIns(insAddr, insSize, insDis, routine, routineAddr);
     }
@@ -241,11 +274,11 @@ void immToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine
         return;
     }
 
-    if (taintedRegs[reg_w]) {
+    if (regIsTainted(routineAddr, reg_w)) {
         LOG_TAINT("io-counter=%d action=free-reg routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
         logInsOpcodes(insAddr, insSize);
         LOG_RAW(" reg=%s\n", REG_StringShort(reg_w).c_str());
-        taintedRegs[reg_w] = false;
+        changeTaintRegValue(routineAddr, reg_w, false);
     } else {
         logIns(insAddr, insSize, insDis, routine, routineAddr);
     }
@@ -373,13 +406,13 @@ void traceLea(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine
         LOG_TAINT("io-counter=%d action=taint-reg routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
         logInsOpcodes(insAddr, insSize);
         LOG_RAW(" origin=from-lea reg=%s calculated-addr=%s\n", REG_StringShort(reg).c_str(), hexaddr(leaAddr).c_str());
-        taintedRegs[reg] = true;
-    } else if (taintedRegs[reg]) {
+        changeTaintRegValue(routineAddr, reg, true);
+    } else if (regIsTainted(routineAddr, reg)) {
         /* Free tainted reg */
         LOG_TAINT("io-counter=%d action=free-reg routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
         logInsOpcodes(insAddr, insSize);
         LOG_RAW(" origin=from-lea reg=%s calculated-addr=%s\n", REG_StringShort(reg).c_str(), hexaddr(leaAddr).c_str());
-        taintedRegs[reg] = false;
+        changeTaintRegValue(routineAddr, reg, false);
     } else {
         logIns(insAddr, insSize, insDis, routine, routineAddr);
     }
@@ -531,7 +564,7 @@ void compareImmToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *
         return;
     }
 
-    if (taintedRegs[reg]) {
+    if (regIsTainted(routineAddr, reg)) {
         LOG_TAINT("io-counter=%d action=compare routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
         logInsOpcodes(insAddr, insSize);
         LOG_RAW(" origin=reg-to-imm reg=%s reg-value=%s imm=%s\n", REG_StringShort(reg).c_str(), hexaddr(regValue).c_str(), hexaddr(imm).c_str());
@@ -546,7 +579,7 @@ void compareRegToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *
         return;
     }
 
-    if (taintedRegs[reg1] || taintedRegs[reg2]) {
+    if (regIsTainted(routineAddr, reg1) || regIsTainted(routineAddr, reg2)) {
         LOG_TAINT("io-counter=%d action=compare routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
         logInsOpcodes(insAddr, insSize);
         LOG_RAW(" origin=reg-to-reg reg1=%s reg2=%s\n", REG_StringShort(reg1).c_str(), REG_StringShort(reg2).c_str());
