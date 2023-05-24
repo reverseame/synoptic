@@ -429,16 +429,11 @@ void analyzeCallParams(BBL bbl, ADDRINT callAddr) {
 void passTaintedParams(ADDRINT insAddr, ADDRINT routineAddr, ADDRINT targetAddr) {
     std::map<ADDRINT, std::set<REG>>::iterator item = callParams.find(insAddr);
 
-    if (item->second.empty()) {
-        LOG_RAW("=== no params to call ins at %s ===\n", hexaddr(insAddr).c_str());
-    } else {
-        LOG_RAW("=== total of %ld params passed ===\n", item->second.size());
+    if (!item->second.empty()) {
         for (std::set<REG>::iterator it = item->second.begin(); it != item->second.end(); ++it) {
             /* Pass tainted reg to next function, a.k.a. targetAddr of call ins */
-            LOG_RAW("=== checking if param %s is tainted...  ===\n", REG_StringShort(*it).c_str());
             /* FIXME bug here, why? */
             if (regIsTainted(routineAddr, *it)) {
-                LOG_RAW("=== param %s tainted passed to function %s ===\n", REG_StringShort(*it).c_str(), hexaddr(targetAddr).c_str());
                 changeTaintRegValue(targetAddr, *it, true);
             }
         }
@@ -505,7 +500,7 @@ void traceControlFlow(ADDRINT insAddr, USIZE insSize, std::string *insDis, char 
     LOG_RAW(" target-addr=%s target=\"%s\"\n", hexaddr(targetAddr).c_str(), target.c_str());
 }
 
-void traceLea(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT routineAddr, REG reg, ADDRINT leaAddr) {
+void traceLea(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT routineAddr, REG reg, REG regBase, ADDRINT leaAddr) {
     if (!addrIsTraceable(insAddr, insSize)) {
         return;
     }
@@ -516,6 +511,10 @@ void traceLea(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine
         logInsOpcodes(insAddr, insSize);
         LOG_RAW(" origin=from-lea reg=%s calculated-addr=%s\n", REG_StringShort(reg).c_str(), hexaddr(leaAddr).c_str());
         changeTaintRegValue(routineAddr, reg, true);
+        /* Taint [base] register if it was not tainted, it used during callculation */
+        if (!regIsTainted(routineAddr, regBase)) {
+            changeTaintRegValue(routineAddr, regBase, true);
+        }
     } else if (regIsTainted(routineAddr, reg)) {
         /* Free tainted reg */
         LOG_TAINT("io-counter=%d action=free-reg routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
@@ -605,6 +604,7 @@ void propagateMovTaint(INS ins, const char *routine, ADDRINT routineAddr) {
 void propagateLeaTaint(INS ins, const char *routine, ADDRINT routineAddr) {
     /* reg <- [algorithmic calculation] */
     REG reg = getReg(ins);
+    REG regBase = INS_MemoryBaseReg(ins);
 
     INS_InsertCall(
         ins, IPOINT_BEFORE, (AFUNPTR)traceLea,
@@ -614,6 +614,7 @@ void propagateLeaTaint(INS ins, const char *routine, ADDRINT routineAddr) {
         IARG_PTR, routine,
         IARG_ADDRINT, routineAddr,
         IARG_PTR, reg,
+        IARG_PTR, regBase,
         IARG_EXPLICIT_MEMORY_EA,
         IARG_END);
 }
