@@ -4,6 +4,7 @@
 #include <set>
 #include <array>
 #include <iostream>
+#include <algorithm>
 
 #include "log.h"
 #include "utilities.h"
@@ -44,6 +45,17 @@ KNOB<std::string> KnobLogDir(KNOB_MODE_WRITEONCE, "pintool", "dirlog", ".", "Abs
 std::set<ADDRINT> taintedAdddrs;
 /* Keep track of tainted registers per function */
 std::map<ADDRINT, std::array<bool, REG_LAST>> taintedRegs;
+/* Keep track of params pased to call ins */
+std::map<ADDRINT, std::set<REG>> callParams;
+
+/* Linux x64 registers used to pass arguments to functions */
+std::array<REG, 6> linuxRegParams = {REG_RDI, REG_RSI, REG_RDX, REG_RCX, REG_R8, REG_R9};
+
+#define CF_DIRECT_CALL 0
+#define CF_INDIRECT_CALL 1
+#define CF_DIRECT_JUMP 2
+#define CF_INDIRECT_JUMP 3
+#define CF_RET 4
 
 void fini(INT32 code, VOID *v) {
     LOG_INFO("action=process-end return=%x\n", code);
@@ -84,6 +96,20 @@ void followForkInChild(THREADID threadid, const CONTEXT *ctxt, VOID *v) {
     OPEN_LOG(filename.c_str());
 
     LOG_INFO("action=new-process-forked\n");
+}
+
+bool regIsParam(REG reg) {
+    std::array<REG, 6>::iterator item = std::find(linuxRegParams.begin(), linuxRegParams.end(), reg);
+
+    return item != linuxRegParams.end();
+}
+
+void deleteRegs(ADDRINT routineAddr) {
+    std::map<ADDRINT, std::array<bool, REG_LAST>>::iterator item = taintedRegs.find(routineAddr);
+
+    if (item != taintedRegs.end()) {
+        taintedRegs.erase(item);
+    }
 }
 
 void initializeRegs(ADDRINT routineAddr) {
@@ -369,8 +395,58 @@ REG getMemoryReg(INS ins) {
     return REG_INVALID();
 }
 
+void analyzeCallParams(BBL bbl, ADDRINT callAddr) {
+    std::map<ADDRINT, std::set<REG>>::iterator item = callParams.find(callAddr);
+
+    /* Return if this call instruction was previouslly processed */
+    if (item != callParams.end()) {
+        return;
+    }
+
+    /* Initialize with empty set */
+    callParams[callAddr] = std::set<REG>();
+    item = callParams.find(callAddr);
+
+    /* Assume parameters to call ins are in the same BBL */
+    for (INS ins = BBL_InsHead(bbl); INS_Valid(ins); ins = INS_Next(ins)) {
+        /*
+        * Check only for ins that could propagate taint:
+        *       - mov reg, [...]
+        *       - mov reg, reg'
+        *       - lea reg, [...]
+        * For example, neither `mov rsi, imm` nor `xor rsi, rsi` could propagate a
+        * taint value, even though it is acctually a parameter
+        */
+        if ((INS_IsMov(ins) && !hasImm(ins)) || INS_IsLea(ins)) {
+            REG reg = getWriteReg(ins);
+            if ((reg != REG_INVALID()) && regIsParam(reg)) {
+                item->second.insert(reg);
+            }
+        }
+    }
+}
+
+void passTaintedParams(ADDRINT insAddr, ADDRINT routineAddr, ADDRINT targetAddr) {
+    std::map<ADDRINT, std::set<REG>>::iterator item = callParams.find(insAddr);
+
+    if (item->second.empty()) {
+        LOG_RAW("=== no params to call ins at %s ===\n", hexaddr(insAddr).c_str());
+    } else {
+        LOG_RAW("=== total of %ld params passed ===\n", item->second.size());
+        for (std::set<REG>::iterator it = item->second.begin(); it != item->second.end(); ++it) {
+            /* Pass tainted reg to next function, a.k.a. targetAddr of call ins */
+            LOG_RAW("=== checking if param %s is tainted...  ===\n", REG_StringShort(*it).c_str());
+            /* FIXME bug here, why? */
+            if (regIsTainted(routineAddr, *it)) {
+                LOG_RAW("=== param %s tainted passed to function %s ===\n", REG_StringShort(*it).c_str(), hexaddr(targetAddr).c_str());
+                changeTaintRegValue(targetAddr, *it, true);
+            }
+        }
+    }
+}
+
 /* Print in/direct control flow instruction */
-void traceControlFlow(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT routineAddr, const char *controlFlowType, ADDRINT targetAddr) {
+void traceControlFlow(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT routineAddr, int controlFlowType, ADDRINT targetAddr) {
     if (!addrIsTraceable(insAddr, insSize)) {
         return;
     }
@@ -391,7 +467,40 @@ void traceControlFlow(ADDRINT insAddr, USIZE insSize, std::string *insDis, char 
         }
     }
 
-    LOG_INFO("io-counter=%d action=%s routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, controlFlowType, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
+    const char *controlFlow;
+
+    switch(controlFlowType) {
+        case CF_DIRECT_CALL:
+            controlFlow = "direct-call";
+            passTaintedParams(insAddr, routineAddr, targetAddr);
+            break;
+        case CF_INDIRECT_CALL:
+            controlFlow = "indirect-call";
+            passTaintedParams(insAddr, routineAddr, targetAddr);
+            break;
+        case CF_DIRECT_JUMP:
+            controlFlow = "direct-jump";
+            break;
+        case CF_INDIRECT_JUMP:
+            controlFlow = "indirect-jump";
+            break;
+        case CF_RET:
+            controlFlow = "ret";
+            /* Delete tainted regs for current function due to function termination */
+            deleteRegs(routineAddr);
+            /*
+            * TODO If there was any tainted params, taint return value too. How to
+            * retrieve routine-addr from targetAddr? Ret returns to the calle, not
+            * the beginning of the function
+            */
+            break;
+        default:
+            controlFlow = "unknown";
+            break;
+    }
+
+
+    LOG_INFO("io-counter=%d action=%s routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, controlFlow, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
     logInsOpcodes(insAddr, insSize);
     LOG_RAW(" target-addr=%s target=\"%s\"\n", hexaddr(targetAddr).c_str(), target.c_str());
 }
@@ -510,26 +619,26 @@ void propagateLeaTaint(INS ins, const char *routine, ADDRINT routineAddr) {
 }
 
 void analyzeControlFlow(INS ins, const char *routine, ADDRINT routineAddr) {
-    const char* controlFlowType = "unknown";
+    int controlFlowType = -1;
 
     if (INS_IsCall(ins)) {
         /* call addr */
         if (INS_IsDirectCall(ins)) {
-            controlFlowType = "direct-call";
+            controlFlowType = CF_DIRECT_CALL;
         } else {
             /* call [reg] */
-            controlFlowType = "indirect-call";
+            controlFlowType = CF_INDIRECT_CALL;
         }
     } else if (INS_IsBranch(ins)) {
         if (INS_IsDirectBranch(ins)) {
             /* jmp addr */
-            controlFlowType = "direct-jmp";
+            controlFlowType = CF_DIRECT_JUMP;
         } else {
             /* jmp [reg] */
-            controlFlowType = "indirect-jmp";
+            controlFlowType = CF_INDIRECT_JUMP;
         }
     } else if (INS_IsRet(ins)) {
-        controlFlowType = "ret";
+        controlFlowType = CF_RET;
     }
 
     INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)traceControlFlow,
@@ -682,6 +791,17 @@ void instrumentTrace(TRACE trace, void *v) {
                     IARG_ADDRINT, routineAddr,
                     IARG_END);
             }
+        }
+    }
+
+    /* Analyze all call ins parameters, call are always at the end of a TRACE */
+    BBL lastBbl = TRACE_BblTail(trace);
+    INS lastIns = BBL_InsTail(lastBbl);
+    ADDRINT lastInsAddr = INS_Address(lastIns);
+
+    if ((lastInsAddr <= MAIN_MODULE_HIGH_ADDRESS) && (lastInsAddr >= MAIN_MODULE_LOW_ADDRESS)) {
+        if (INS_IsCall(lastIns)) {
+            analyzeCallParams(lastBbl, lastInsAddr);
         }
     }
 }
