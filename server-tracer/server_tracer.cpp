@@ -50,6 +50,8 @@ std::map<ADDRINT, std::set<REG>> callParams;
 
 /* Linux x64 registers used to pass arguments to functions */
 std::array<REG, 6> linuxRegParams = {REG_RDI, REG_RSI, REG_RDX, REG_RCX, REG_R8, REG_R9};
+/* General pourpose x64 registers */
+std::array<REG, 14> generalRegister = {REG_RAX, REG_RBX, REG_RCX, REG_RDX, REG_RSI, REG_RDI, REG_R8, REG_R9, REG_R10, REG_R11, REG_R12, REG_R13, REG_R14, REG_R15};
 
 #define CF_DIRECT_CALL 0
 #define CF_INDIRECT_CALL 1
@@ -96,6 +98,12 @@ void followForkInChild(THREADID threadid, const CONTEXT *ctxt, VOID *v) {
     OPEN_LOG(filename.c_str());
 
     LOG_INFO("action=new-process-forked\n");
+}
+
+bool regIsGeneral(REG reg) {
+    std::array<REG, 14>::iterator item = std::find(generalRegister.begin(), generalRegister.end(), reg);
+
+    return item != generalRegister.end();
 }
 
 bool regIsParam(REG reg) {
@@ -252,7 +260,7 @@ void regToAddr(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routin
 }
 
 /* Memory copied to register */
-void addrToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT routineAddr, ADDRINT mem_r, REG reg_w) {
+void addrToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT routineAddr, ADDRINT mem_r, REG reg_w, REG regBase) {
     if (!addrIsTraceable(insAddr, insSize)) {
         return;
     }
@@ -262,6 +270,10 @@ void addrToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routin
         logInsOpcodes(insAddr, insSize);
         LOG_RAW(" origin=from-addr reg=%s addr=%s\n", REG_StringShort(reg_w).c_str(), hexaddr(mem_r).c_str());
         changeTaintRegValue(routineAddr, reg_w, true);
+        /* mem is tainted -> [base] reg is tainted */
+        if (regIsGeneral(regBase)) {
+            changeTaintRegValue(routineAddr, regBase, true);
+        }
     } else if (regIsTainted(routineAddr, reg_w)) {
         /* mem is clean -> reg is cleaned */
         LOG_TAINT("io-counter=%d action=free-reg routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter , routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
@@ -511,7 +523,7 @@ void traceLea(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine
         logInsOpcodes(insAddr, insSize);
         LOG_RAW(" origin=from-lea reg=%s calculated-addr=%s\n", REG_StringShort(reg).c_str(), hexaddr(leaAddr).c_str());
         changeTaintRegValue(routineAddr, reg, true);
-        /* Taint [base] register if it was not tainted, it used during callculation */
+        /* Taint [base] register if it was not tainted, it used during calculation */
         if (!regIsTainted(routineAddr, regBase)) {
             changeTaintRegValue(routineAddr, regBase, true);
         }
@@ -556,6 +568,8 @@ void propagateMovTaint(INS ins, const char *routine, ADDRINT routineAddr) {
     } else if (INS_IsMemoryRead(ins)) {
         /* reg <- [addr] */
         REG reg = getWriteReg(ins);
+        REG regBase = INS_MemoryBaseReg(ins);
+
         INS_InsertCall(
             ins, IPOINT_BEFORE, (AFUNPTR)addrToReg,
             IARG_INST_PTR,
@@ -565,6 +579,7 @@ void propagateMovTaint(INS ins, const char *routine, ADDRINT routineAddr) {
             IARG_ADDRINT, routineAddr,
             IARG_MEMORYREAD_EA,
             IARG_PTR, reg,
+            IARG_PTR, regBase,
             IARG_END);
     } else if (INS_IsMemoryWrite(ins)) {
         /* [addr] <- reg */
