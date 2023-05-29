@@ -1,3 +1,4 @@
+import os
 import sys
 import capstone
 
@@ -28,10 +29,7 @@ def main():
     traces = utils.get_traces(filenames)
     arch_mode = capstone.CS_MODE_32 if args.m32 else capstone.CS_MODE_64
 
-    if not args.binary:
-        debug.warning('Binary file not provided, unable to update CFG with static information (--binary)')
-
-    dynamic_cfg = analyzer.Analyzer(binary=args.binary, arch_mode=arch_mode).analyze(traces)
+    dynamic_cfg = analyzer.Analyzer(binary=os.path.realpath(args.binary), symbolic_engine=args.symbolic, arch_mode=arch_mode).analyze(traces)
 
     if dynamic_cfg.is_empty():
         debug.warning('Empty CFG')

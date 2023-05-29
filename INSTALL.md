@@ -42,3 +42,9 @@ $ python -m venv virtualenv
 $ source virtualenv/bin/activate
 (virtualenv) $ python -m pip install -r requirements.txt
 ```
+
+Also, `graphviz` Python library relies on system wide binaries. So, `graphivz` needs to be installed with your distribution packages:
+
+```
+$ sudo apt install graphviz
+```

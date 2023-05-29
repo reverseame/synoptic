@@ -1,6 +1,8 @@
 import os
 import r2pipe
+import shutil
 import argparse
+import platform
 import ipaddress
 
 import tracemodeler.debug as debug
@@ -28,6 +30,8 @@ class ArgumentParser:
         self.argparser.add_argument('--host', type=str, metavar='<ip>', help='server IP')
         self.argparser.add_argument('--port', type=int, metavar='<port>', help='server listening port')
         self.argparser.add_argument('--udp', action='store_true', help='UDP transport protocol (TCP by default)')
+        """ Symbolic engine """
+        self.argparser.add_argument('--symbolic', type=str, metavar='<angr|binsec>', default='angr', help='symbolic engine to use for new message inference (default to angr)')
 
     def parse_args(self, arguments):
         args = self.argparser.parse_args(arguments)
@@ -35,6 +39,20 @@ class ArgumentParser:
         self._check_args(args)
 
         return args
+
+    def _check_binsec(self):
+        """ Search for binsec in the $PATH/%PATH% """
+        filepath = shutil.which("binsec")
+        
+        if filepath is None:
+            system = platform.system()
+            if system == 'Linux':
+                debug.error('Binsec not found in $PATH variable')
+            elif system == 'Windows':
+                debug.error('Binsec not found in %PATH% variable')
+            else:
+                debug.error('Binsec not found in system files')
+            
 
     def _check_r2(self):
         """ Open radare2 withouth binary and close stderr """
@@ -68,7 +86,17 @@ class ArgumentParser:
         if args.binary:
             if not os.path.isfile(args.binary):
                 debug.error(f'{os.path.abspath(args.binary)}\t: Not a file')
+
             self._check_r2()
+
+            if args.symbolic == 'angr':
+                pass    # Assume angr is installed as Python library
+            elif args.symbolic == 'binsec':
+                self._check_binsec()
+            else:
+                debug.error(f'{args.symbolic}\t: Unknown symbolic engine (neither angr nor binsec)')
+        else:
+            debug.error('Binary file not provided (--binary)')
 
         if args.replay:
             if args.host:

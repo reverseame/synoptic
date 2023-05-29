@@ -2,3 +2,4 @@ graphviz
 capstone
 PyPDF2
 r2pipe
+angr

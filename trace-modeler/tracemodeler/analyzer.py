@@ -8,10 +8,12 @@ import capstone
 import tracemodeler.cfg as cfg
 import tracemodeler.debug as debug
 import tracemodeler.utils as utils
+import tracemodeler.symbolic as symbolic
 
 class Analyzer:
-    def __init__(self, binary=None, arch_mode=capstone.CS_MODE_64):
+    def __init__(self, binary, symbolic_engine, arch_mode=capstone.CS_MODE_64):
         self.binary = binary
+        self.symbolic_engine = symbolic.SymbolicEngine(symbolic_engine)
         self.md = capstone.Cs(capstone.CS_ARCH_X86, arch_mode)
         self.md.detail = True
 
@@ -123,26 +125,26 @@ class Analyzer:
     def get_base_addr(self, traces):
         for trace in traces:
             if trace['action'] == 'relocate':
-                return trace['image-low']
+                return int(trace['image-low'], 0)
 
     def analyze_tainted_loops(self, dynamic_cfg, binary_base_addr):
         tainted_cfgs = dynamic_cfg.get_tainted_cfgs()
 
-        if self.binary is not None:
-            debug.info(f'Opening {os.path.basename(self.binary)} with radare2...')
-            """ Open binary at base address and close stderr """
-            r2 = r2pipe.open(self.binary, flags=['-B', binary_base_addr, '-2'])
+        debug.info(f'Opening {os.path.basename(self.binary)} with radare2...')
+        """ Open binary at base address and close stderr """
+        r2 = r2pipe.open(self.binary, flags=['-B', hex(binary_base_addr), '-2'])
 
         for tainted_cfg in tainted_cfgs:
             loop_info = tainted_cfg.get_tainted_loop_info()
             if loop_info:
-                if self.binary is not None:
+                try:
                     self.update_cfg_with_static_info(r2, tainted_cfg)
-                """ Create .ini file for Binsec symbolic execution """
-                self.create_binsec_file(tainted_cfg)
+                except cfg.CFGException as e:
+                    debug.warning(f'{str(e)}\t: Couldn\'t update {hex(tainted_cfg.id)} ({tainted_cfg.entry_node.group.leader.routine}) with static information')
 
-        if self.binary is not None:
-            r2.quit()
+                self.get_symbolic_messages(binary_base_addr, tainted_cfg)
+
+        r2.quit()
 
     def update_cfg_with_static_info(self, r2, tainted_cfg):
         """ Function address pointed by ins leader of the entry node """
@@ -218,5 +220,5 @@ class Analyzer:
                 if defined_node.static:
                     cfg.add(defined_node.group)
 
-    def create_binsec_file(self, target_cfg):
-        debug.warning(f'Binsec file for {hex(target_cfg.entry_node.group.leader.routine_addr)} ({target_cfg.entry_node.group.leader.routine}) not created')
+    def get_symbolic_messages(self, binary_base_addr, target_cfg):
+        self.symbolic_engine.binary(self.binary, binary_base_addr)
