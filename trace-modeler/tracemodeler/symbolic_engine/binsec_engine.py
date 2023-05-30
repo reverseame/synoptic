@@ -29,5 +29,5 @@ class BinsecEngine:
     def cut(self, cut_addr):
         self.cut_addr.append(cut_addr)
 
-    def run(self, n_solutions):
+    def run(self, timeout, n_solutions):
         raise NotImplementedError(f'Binsec symbolic simulation not implemented')

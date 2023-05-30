@@ -223,8 +223,7 @@ class Analyzer:
     def get_symbolic_messages(self, binary_base_addr, target_cfg, loop_info):
         debug.info(f'Symbolic\t: Setting up symbolic information for {hex(target_cfg.id)} ({target_cfg.entry_node.group.leader.routine})...')
 
-        if target_cfg.id == 0x563547a94020:
-            import pdb; pdb.set_trace()
+        if target_cfg.id == 0x560391e1c020:
             self.symbolic_engine.open_binary(base_addr=binary_base_addr)
 
             for loop in loop_info:
@@ -235,16 +234,17 @@ class Analyzer:
 
                 start_addr = start_node.id                
                 debug.info(f'Symbolic\t: start-addr\t: {hex(start_addr)}')
-                self.symbolic_engine.set_start_addr(start_addr)
+                self.symbolic_engine.start(start_addr)
                 self._analyze_symbolic_vars(start_node)
                 self._analyze_target_addrs(target_cfg)
-                results = self.symbolic_engine.run()
 
-                if results:
-                    for result in results:
-                        debug.info(f'Result found: {result}')
-                else:
-                    debug.warning('Unable to find symbolic values')
+                results = []
+                for result in self.symbolic_engine.run():
+                    debug.info(f'Result found: {result}')
+                    results.append(result)
+
+                if not results:
+                    debug.warning('Unable to obtain symbolic messages')
 
     def _analyze_symbolic_vars(self, node):
         """ Loop every ins in node """
@@ -267,7 +267,7 @@ class Analyzer:
 
             if node.static:
                 debug.info(f'Symbolic\t: cut-addr\t: {hex(node.id)}')
-                self.symbolic_engine.set_cut_addr(node.id)
+                self.symbolic_engine.cut(node.id)
             else:
                 debug.info(f'Symbolic\t: goal-addr\t: {hex(node.id)}')
-                self.symbolic_engine.set_goal_addr(node.id)
+                self.symbolic_engine.goal(node.id)

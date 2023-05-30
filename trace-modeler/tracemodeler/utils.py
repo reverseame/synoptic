@@ -3,6 +3,7 @@ import sys
 import glob
 import shlex
 import datetime
+import capstone.x86
 
 """ Set auto local for user messages """
 import locale
@@ -92,3 +93,131 @@ def filter_data(data):
 
 def order_data_by_timestamp(data):
     return sorted(data, key=lambda x: datetime.datetime.strptime(x['timestamp'], '%Y-%m-%d %H:%M:%S.%f'))
+
+def set_angr_reg(state, reg_id, value):
+    if reg_id == capstone.x86.X86_REG_AH:
+        state.regs.ah = value
+    elif reg_id == capstone.x86.X86_REG_AL:
+        state.regs.al = value
+    elif reg_id == capstone.x86.X86_REG_AX:
+        state.regs.ax = value
+    elif reg_id == capstone.x86.X86_REG_BH:
+        state.regs.bh = value
+    elif reg_id == capstone.x86.X86_REG_BL:
+        state.regs.bl = value
+    elif reg_id == capstone.x86.X86_REG_BP:
+        state.regs.bp = value
+    elif reg_id == capstone.x86.X86_REG_BPL:
+        state.regs.bpl = value
+    elif reg_id == capstone.x86.X86_REG_BX:
+        state.regs.bx = value
+    elif reg_id == capstone.x86.X86_REG_CH:
+        state.regs.ch = value
+    elif reg_id == capstone.x86.X86_REG_CL:
+        state.regs.cl = value
+    elif reg_id == capstone.x86.X86_REG_CX:
+        state.regs.cx = value
+    elif reg_id == capstone.x86.X86_REG_DH:
+        state.regs.dh = value
+    elif reg_id == capstone.x86.X86_REG_DI:
+        state.regs.di = value
+    elif reg_id == capstone.x86.X86_REG_DIL:
+        state.regs.dil = value
+    elif reg_id == capstone.x86.X86_REG_DL:
+        state.regs.dl = value
+    elif reg_id == capstone.x86.X86_REG_DX:
+        state.regs.dx = value
+    elif reg_id == capstone.x86.X86_REG_EAX:
+        state.regs.eax = value
+    elif reg_id == capstone.x86.X86_REG_EBX:
+        state.regs.ebx = value
+    elif reg_id == capstone.x86.X86_REG_ECX:
+        state.regs.ecx = value
+    elif reg_id == capstone.x86.X86_REG_EDI:
+        state.regs.edi = value
+    elif reg_id == capstone.x86.X86_REG_EDX:
+        state.regs.edx = value
+    elif reg_id == capstone.x86.X86_REG_ESI:
+        state.regs.esi = value
+    elif reg_id == capstone.x86.X86_REG_RAX:
+        state.regs.rax = value
+    elif reg_id == capstone.x86.X86_REG_RBX:
+        state.regs.rbx = value
+    elif reg_id == capstone.x86.X86_REG_RCX:
+        state.regs.rcx = value
+    elif reg_id == capstone.x86.X86_REG_RDI:
+        state.regs.rdi = value
+    elif reg_id == capstone.x86.X86_REG_RDX:
+        state.regs.rdx = value
+    elif reg_id == capstone.x86.X86_REG_RSI:
+        state.regs.rsi = value
+    elif reg_id == capstone.x86.X86_REG_SI:
+        state.regs.si = value
+    elif reg_id == capstone.x86.X86_REG_SIL:
+        state.regs.sil = value
+    elif reg_id == capstone.x86.X86_REG_R8:
+        state.regs.r8 = value
+    elif reg_id == capstone.x86.X86_REG_R9:
+        state.regs.r9 = value
+    elif reg_id == capstone.x86.X86_REG_R10:
+        state.regs.r10 = value
+    elif reg_id == capstone.x86.X86_REG_R11:
+        state.regs.r11 = value
+    elif reg_id == capstone.x86.X86_REG_R12:
+        state.regs.r12 = value
+    elif reg_id == capstone.x86.X86_REG_R13:
+        state.regs.r13 = value
+    elif reg_id == capstone.x86.X86_REG_R14:
+        state.regs.r14 = value
+    elif reg_id == capstone.x86.X86_REG_R15:
+        state.regs.r15 = value
+    elif reg_id == capstone.x86.X86_REG_R8B:
+        state.regs.r8b = value
+    elif reg_id == capstone.x86.X86_REG_R9B:
+        state.regs.r9b = value
+    elif reg_id == capstone.x86.X86_REG_R10B:
+        state.regs.r10b = value
+    elif reg_id == capstone.x86.X86_REG_R11B:
+        state.regs.r11b = value
+    elif reg_id == capstone.x86.X86_REG_R12B:
+        state.regs.r12b = value
+    elif reg_id == capstone.x86.X86_REG_R13B:
+        state.regs.r13b = value
+    elif reg_id == capstone.x86.X86_REG_R14B:
+        state.regs.r14b = value
+    elif reg_id == capstone.x86.X86_REG_R15B:
+        state.regs.r15b = value
+    elif reg_id == capstone.x86.X86_REG_R8D:
+        state.regs.r8d = value
+    elif reg_id == capstone.x86.X86_REG_R9D:
+        state.regs.r9d = value
+    elif reg_id == capstone.x86.X86_REG_R10D:
+        state.regs.r10d = value
+    elif reg_id == capstone.x86.X86_REG_R11D:
+        state.regs.r11d = value
+    elif reg_id == capstone.x86.X86_REG_R12D:
+        state.regs.r12d = value
+    elif reg_id == capstone.x86.X86_REG_R13D:
+        state.regs.r13d = value
+    elif reg_id == capstone.x86.X86_REG_R14D:
+        state.regs.r14d = value
+    elif reg_id == capstone.x86.X86_REG_R15D:
+        state.regs.r15d = value
+    elif reg_id == capstone.x86.X86_REG_R8W:
+        state.regs.r8w = value
+    elif reg_id == capstone.x86.X86_REG_R9W:
+        state.regs.r9w = value
+    elif reg_id == capstone.x86.X86_REG_R10W:
+        state.regs.r10w = value
+    elif reg_id == capstone.x86.X86_REG_R11W:
+        state.regs.r11w = value
+    elif reg_id == capstone.x86.X86_REG_R12W:
+        state.regs.r12w = value
+    elif reg_id == capstone.x86.X86_REG_R13W:
+        state.regs.r13w = value
+    elif reg_id == capstone.x86.X86_REG_R14W:
+        state.regs.r14w = value
+    elif reg_id == capstone.x86.X86_REG_R15W:
+        state.regs.r15w = value
+    else:
+        raise NotImplementedError(f'reg (ID: {reg_id}) not supported')
