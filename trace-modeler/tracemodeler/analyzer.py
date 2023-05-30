@@ -13,7 +13,7 @@ import tracemodeler.symbolic as symbolic
 class Analyzer:
     def __init__(self, binary, symbolic_engine, arch_mode=capstone.CS_MODE_64):
         self.binary = binary
-        self.symbolic_engine = symbolic.SymbolicEngine(symbolic_engine)
+        self.symbolic_engine = symbolic.SymbolicEngine(symbolic_engine, binary)
         self.md = capstone.Cs(capstone.CS_ARCH_X86, arch_mode)
         self.md.detail = True
 
@@ -98,9 +98,9 @@ class Analyzer:
                     comment = ''
                     if item['action'] in ['direct-call', 'indirect-call']:
                         comment = item['target']
-                    ins = cfg.Ins(dis, addr, opcodes, routine=routine, routine_addr=routine_addr, target_addr=target_addr, comment=comment)
+                    ins = cfg.Ins(dis, addr, opcodes, routine=routine, routine_addr=routine_addr, target_addr=target_addr, comment=comment, trace=item)
                 else:
-                    ins = cfg.Ins(dis, addr, opcodes, routine=routine, routine_addr=routine_addr)
+                    ins = cfg.Ins(dis, addr, opcodes, routine=routine, routine_addr=routine_addr, trace=item)
 
                 if (item['level'] == 'taint') and (item['action'] in ['compare', 'taint-reg', 'taint-addr', 'free-addr']):
                         """ Update comment with taint information """
@@ -142,7 +142,7 @@ class Analyzer:
                 except cfg.CFGException as e:
                     debug.warning(f'{str(e)}\t: Couldn\'t update {hex(tainted_cfg.id)} ({tainted_cfg.entry_node.group.leader.routine}) with static information')
 
-                self.get_symbolic_messages(binary_base_addr, tainted_cfg)
+                self.get_symbolic_messages(binary_base_addr, tainted_cfg, loop_info)
 
         r2.quit()
 
@@ -220,5 +220,54 @@ class Analyzer:
                 if defined_node.static:
                     cfg.add(defined_node.group)
 
-    def get_symbolic_messages(self, binary_base_addr, target_cfg):
-        self.symbolic_engine.binary(self.binary, binary_base_addr)
+    def get_symbolic_messages(self, binary_base_addr, target_cfg, loop_info):
+        debug.info(f'Symbolic\t: Setting up symbolic information for {hex(target_cfg.id)} ({target_cfg.entry_node.group.leader.routine})...')
+
+        if target_cfg.id == 0x563547a94020:
+            import pdb; pdb.set_trace()
+            self.symbolic_engine.open_binary(base_addr=binary_base_addr)
+
+            for loop in loop_info:
+                if 'pre-header' in loop:
+                    start_node = loop['pre-header']
+                else:
+                    start_node = loop['header']
+
+                start_addr = start_node.id                
+                debug.info(f'Symbolic\t: start-addr\t: {hex(start_addr)}')
+                self.symbolic_engine.set_start_addr(start_addr)
+                self._analyze_symbolic_vars(start_node)
+                self._analyze_target_addrs(target_cfg)
+                results = self.symbolic_engine.run()
+
+                if results:
+                    for result in results:
+                        debug.info(f'Result found: {result}')
+                else:
+                    debug.warning('Unable to find symbolic values')
+
+    def _analyze_symbolic_vars(self, node):
+        """ Loop every ins in node """
+        for ins in node.group:
+            if ins.tainted:
+                """ mov reg, [reg] """
+                if (ins.trace['action'] == 'taint-reg') and (ins.trace['origin'] == 'from-addr'):
+                    operand = ins.dis.operands[1]
+                    if operand.type == capstone.x86.X86_OP_MEM:
+                        tainted_reg_id = operand.mem.base
+                        tainted_reg_name = ins.dis.reg_name(tainted_reg_id)
+                        debug.info(f'Symbolic\t: buffer\t: {tainted_reg_name}')
+                        self.symbolic_engine.symbolic_buffer(tainted_reg_id, tainted_reg_name)
+
+    def _analyze_target_addrs(self, target_cfg):
+        final_nodes = set(target_cfg.final_nodes)
+
+        while final_nodes:
+            node = final_nodes.pop()
+
+            if node.static:
+                debug.info(f'Symbolic\t: cut-addr\t: {hex(node.id)}')
+                self.symbolic_engine.set_cut_addr(node.id)
+            else:
+                debug.info(f'Symbolic\t: goal-addr\t: {hex(node.id)}')
+                self.symbolic_engine.set_goal_addr(node.id)

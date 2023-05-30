@@ -94,7 +94,7 @@ class ArgumentParser:
             elif args.symbolic == 'binsec':
                 self._check_binsec()
             else:
-                debug.error(f'{args.symbolic}\t: Unknown symbolic engine (neither angr nor binsec)')
+                debug.error(f'{args.symbolic}\t: Unknown symbolic engine (--symbolic <angr|binsec>)')
         else:
             debug.error('Binary file not provided (--binary)')
 

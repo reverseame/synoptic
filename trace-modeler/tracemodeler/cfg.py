@@ -24,7 +24,7 @@ class CFGException(Exception):
     pass
 
 class Ins:
-    def __init__(self, dis, addr, opcodes, tainted=False, routine='', routine_addr=0x0, target_addr=0x0, comment=''):
+    def __init__(self, dis, addr, opcodes, tainted=False, routine='', routine_addr=0x0, target_addr=0x0, comment='', trace=dict()):
         self.dis = dis
         self.addr = addr
         self.opcodes = opcodes
@@ -34,6 +34,7 @@ class Ins:
         self.routine_addr = routine_addr
         self.target_addr = target_addr
         self.comment = set([comment]) if comment else set()
+        self.trace = trace
         self.type = self._get_ins_type()
         self.info = self._get_ins_info()
 
