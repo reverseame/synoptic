@@ -15,13 +15,13 @@ def info(msg):
 def warning(msg):
     log(logging.WARNING, msg)
 
-def error(msg):
+def error(msg, exit_code=-1):
     log(logging.ERROR, msg)
-    sys.exit(-1)
+    sys.exit(exit_code)
 
-def critical(msg):
+def critical(msg, exit_code=-1):
     log(logging.CRITICAL, msg)
-    sys.exit(-1)
+    sys.exit(exit_code)
 
 def log(loglevel, msg):
     """ Show debug message """
