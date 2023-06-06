@@ -41,6 +41,8 @@ class ProtocolFSM:
                 if trans.next is not None:
                     trans.next = self.states[ids.index(trans.next)]
 
+        self.initialize()
+
     def append(self, message):
         """ Add first element """
         if self.is_empty():

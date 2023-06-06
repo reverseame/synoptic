@@ -40,17 +40,17 @@ def main():
         debug.warning('Empty model')
 
     if args.cfg_analysis:
-        cfg = model.cfg_analysis(traces, args.binary, args.symbolic_engine)
+        model.cfg_analysis(traces, args.binary, args.symbolic_engine)
 
         if args.cfg_pdf:
-            cfg.export_graph(args.cfg_pdf)
+            model.cfg.export_graph(args.cfg_pdf)
             debug.info(f'{args.cfg_pdf}\t: CFG graph')
 
     if args.model_export:
         model.export_to_file(args.model_export)
         debug.info(f'{args.model_export}\t: Model exported')
     else:
-        print(model.fsm)
+        debug.info(f'Model infered\t:\n{str(model.fsm)}')
 
     if args.model_pdf:
         model.fsm.export_graph(args.model_pdf)

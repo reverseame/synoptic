@@ -20,7 +20,7 @@ usage_examples = '''usage examples:
         $ python trace-modeler/modeler.py --log /path/to/trace.log --model-export /path/to/model.json
 
     Enables CFG analysis and exports the constructed CFG to a PDF file:
-        $ python trace-modeler/modeler.py --log /path/to/trace.log --cfg-analysis --binary /path/to/binary --cfg-export /path/to/cfg.pdf
+        $ python trace-modeler/modeler.py --log /path/to/trace.log --cfg-analysis --binary /path/to/binary --cfg-pdf /path/to/cfg.pdf
 
     Replays messages to a server based on a protocol model:
         $ python3 trace-modeler/modeler.py --model-import /path/to/model.json --replay --server-ip <ip> --server-port <port>
@@ -87,16 +87,14 @@ class ArgumentParser:
             debug.error(f'radare2 version found ({version_str}) older than minimun supported ({utils.MIN_R2_VERSION})')
 
     def _check_existing_files(self, args):
-        filenames = [args.model_export, args.model_pdf, args.cfg_pdf]
+        filenames = [filename for filename in [args.model_export, args.model_pdf, args.cfg_pdf] if (filename is not None) and os.path.isfile(filename)]
 
-        for filename in filenames:
-            if filename is not None:
-                if os.path.isfile(filename) and not args.file_overwrite:
-                    debug.warning(f'{os.path.realpath(filename)}\t: File will be overwritten')
-                    response = input('Do you want to continue? [Y/n] ')
-                    if response.lower() not in ['', 'y', 'yes']:
-                        print('Abort.')
-                        sys.exit(-1)
+        if filenames and not args.file_overwrite:
+            debug.warning(f'{", ".join([os.path.realpath(filename) for filename in filenames])}\t: File/s will be overwritten')
+            response = input('Do you want to continue? [Y/n] ')
+            if response.lower() not in ['', 'y', 'yes']:
+                print('Abort.')
+                sys.exit(-1)
 
     def _check_args(self, args):
         """ Model analysis """

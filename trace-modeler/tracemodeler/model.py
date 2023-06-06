@@ -6,14 +6,15 @@ import binascii
 import capstone
 
 import tracemodeler.cfg as cfg
-import tracemodeler.debug as debug
 import tracemodeler.fsm
+import tracemodeler.debug as debug
 import tracemodeler.utils as utils
 import tracemodeler.symbolic as symbolic
 
 class Model:
     def __init__(self, arch_mode=capstone.CS_MODE_64):
         self.fsm = tracemodeler.fsm.ProtocolFSM()
+        self.cfg = tracemodeler.cfg.DynamicCFG()
         self.md = capstone.Cs(capstone.CS_ARCH_X86, arch_mode)
         self.md.detail = True
 
@@ -41,22 +42,18 @@ class Model:
     def cfg_analysis(self, traces, binary, symbolic_engine):
         symbolic_engine = symbolic.SymbolicEngine(symbolic_engine, binary)
 
-        dynamic_cfg = cfg.DynamicCFG()
-
         for session in self.split_sessions(traces):
             for net_trace in self.split_network_activity(session):
                 try:
-                    dynamic_cfg.initialize()
-                    dynamic_cfg = self.analyze_cfg_net_trace(dynamic_cfg, net_trace)
+                    self.cfg.initialize()
+                    self.analyze_cfg_net_trace(net_trace)
                 except cfg.CFGException as e:
                     debug.warning(str(e))
                 finally:
-                    dynamic_cfg.finalize()
+                    self.cfg.finalize()
 
         binary_base_addr = self.get_base_addr(traces)
-        self.analyze_tainted_loops(binary, symbolic_engine, dynamic_cfg, binary_base_addr)
-
-        return dynamic_cfg
+        self.analyze_tainted_loops(binary, symbolic_engine, binary_base_addr)
 
     def import_from_file(self, filename):
         with open(filename, 'r') as f:
@@ -107,7 +104,7 @@ class Model:
 
         return ret
 
-    def analyze_cfg_net_trace(self, dynamic_cfg, net_trace):
+    def analyze_cfg_net_trace(self, net_trace):
         print_debug = False
         group = cfg.Group()
         ins = None
@@ -145,22 +142,20 @@ class Model:
 
                 """ End group if last ins is either call, ret, or jump """
                 if not ins.is_standard():
-                    dynamic_cfg.add(group)
+                    self.cfg.add(group)
                     group = cfg.Group()
 
         """ Add last group if we finished CFG construction and last instruction is standard """
         if (ins is not None) and (ins.is_standard()):
-            dynamic_cfg.add(group)
-
-        return dynamic_cfg
+            self.cfg.add(group)
 
     def get_base_addr(self, traces):
         for trace in traces:
             if trace['action'] == 'relocate':
                 return int(trace['image-low'], 0)
 
-    def analyze_tainted_loops(self, binary, symbolic_engine, dynamic_cfg, binary_base_addr):
-        tainted_cfgs = dynamic_cfg.get_tainted_cfgs()
+    def analyze_tainted_loops(self, binary, symbolic_engine, binary_base_addr):
+        tainted_cfgs = self.cfg.get_tainted_cfgs()
 
         debug.info(f'Opening {os.path.basename(binary)} with radare2...')
         """ Open binary at base address and close stderr """
