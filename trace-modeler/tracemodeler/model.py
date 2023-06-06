@@ -1,389 +1,305 @@
 import os
-import copy
+import sys
 import json
+import r2pipe
 import binascii
+import capstone
 
-""" Disable logging for graphviz library """
-import logging
-logging.getLogger('graphviz').setLevel(logging.WARNING)
-import graphviz
+import tracemodeler.cfg as cfg
+import tracemodeler.debug as debug
+import tracemodeler.fsm
+import tracemodeler.utils as utils
+import tracemodeler.symbolic as symbolic
 
-class ProtocolFSM:
-    def __init__(self):
-        self.initial = None
-        self.last = None
-        self.index = None
-        self.states = []
+class Model:
+    def __init__(self, arch_mode=capstone.CS_MODE_64):
+        self.fsm = tracemodeler.fsm.ProtocolFSM()
+        self.md = capstone.Cs(capstone.CS_ARCH_X86, arch_mode)
+        self.md.detail = True
 
-    def is_empty(self):
-        return self.initial is None
+    def analyze(self, traces):
+        for session in self.split_sessions(traces):
+            for net_trace in self.split_network_activity(session):
+                self.analyze_net_trace(net_trace)
 
-    def _generate_id(self):
-        return f'state{len(self.states)}'
+    def analyze_net_trace(self, net_trace):
+        message = None
+        start = 0
 
-    def initialize(self):
-        """ Initialize FSM construction setting the index to the initial state """
-        self.index = self.initial
+        for (i, trace) in enumerate(net_trace):
+            if trace['level'] == 'taint':
 
-    def loads(self, content):
-        dict_content = json.loads(content)
+                if trace['action'] in ['recv', 'read']:
+                    buffer_content = trace['buffer-content']
+                    buffer_base_address = int(trace['range-start'], 16)
+                    message = tracemodeler.fsm.Message(buffer_content)
+                    start = i + 1
+                    break
 
-        for (state_id, state_content) in dict_content['states'].items():
-            state = State(id=state_id)
-            state.load(state_content)
-            self.states.append(state)
+        if message: self.fsm.append(message)
 
-        """ Transform state id to state reference """
-        ids = [state.id for state in self.states]
-        self.initial = self.states[ids.index(dict_content['initial'])]
-        for state in self.states:
-            for trans in state:
-                if trans.next is not None:
-                    trans.next = self.states[ids.index(trans.next)]
+    def cfg_analysis(self, traces, binary, symbolic_engine):
+        symbolic_engine = symbolic.SymbolicEngine(symbolic_engine, binary)
 
-    def append(self, message):
-        """ Add first element """
-        if self.is_empty():
-            """ Create a new state """
-            new_state = State(id=self._generate_id())
-            new_state.transition(message)
-            self.states.append(new_state)
-            """ All pointers point to the new state """
-            self.initial = new_state
-            self.last = new_state
-            self.index = new_state
-        else:
-            """
-            A final state is already defining the message transition. This prevents to set a transition to itself
-            """
-            for trans in self.index:
-                if trans.equals(message) and trans.is_final():
-                    return
-            """ Check if an already defined states contains the message """
-            for state in self.states:
-                """
-                We go over all transitions to check if message is already in a state.
-                Index state needs to point to the a state containing reached with a transition for the same message
-                """
-                for trans in state:
-                    """ Check if transition contains the message """
-                    if trans.equals(message):
-                        """ We now check a final transition in our index """
-                        for index_trans in self.index:
-                            if index_trans.is_final():
-                                """ Create a new state to be pointed from index state transition """
-                                new_state = State(id=self._generate_id())
-                                new_state.transition(message)
-                                index_trans.next = new_state
-                                self.states.append(new_state)
-                                """ And this new state must point to the previous state reached from the same message """
-                                new_state.set_next(trans.next)
-                                """ And needs to be the new index """
-                                self.index = trans.next
-                                self.last = new_state
-                                return
+        dynamic_cfg = cfg.DynamicCFG()
 
-                        """ We need to add a new transition from index to an already defined state with this message """
-                        if self.index != state:
-                            if not trans.is_final():
-                                self.index.transition(message, next=trans.next)
-                        """ We need to consume the transition if it is already defined for this state """
-                        self.index = trans.next
-                        return
+        for session in self.split_sessions(traces):
+            for net_trace in self.split_network_activity(session):
+                try:
+                    dynamic_cfg.initialize()
+                    dynamic_cfg = self.analyze_cfg_net_trace(dynamic_cfg, net_trace)
+                except cfg.CFGException as e:
+                    debug.warning(str(e))
+                finally:
+                    dynamic_cfg.finalize()
 
-            """ This is only reached if the message is not contained in states """
+        binary_base_addr = self.get_base_addr(traces)
+        self.analyze_tainted_loops(binary, symbolic_engine, dynamic_cfg, binary_base_addr)
 
-            """
-            If index and last are equal, we did not encounter a backwards transition yet. Create a new state at the end
-            of the FSM corresponding to a new message
-            """
-            if self.index == self.last:
-                for index_trans in self.index:
-                    """ Set from final transition to a new state """
-                    if index_trans.is_final():
-                        """ Create a new state """
-                        new_state = State(id=self._generate_id())
-                        new_state.transition(message)
-                        """ Set transition from index to the new state """
-                        index_trans.next = new_state
-                        self.states.append(new_state)
-                        """ Change last and index to the new state """
-                        self.index = new_state
-                        self.last = new_state
-                        return
+        return dynamic_cfg
 
-                """ Create a new transition to the new state """
-                self.index.transition(message)
-            else:
-                """ We are in a backwards transition, where index is different from the last added state """
-                """ Check if there is an already transition that matches the message """
-                for trans in self.index:
-                    if trans.equals(message):
-                        self.index = trans.next
-                        return
+    def import_from_file(self, filename):
+        with open(filename, 'r') as f:
+            content = f.read()
+        self.fsm.loads(content)
 
-                """ Else, create a new transition to index """
-                self.index.transition(message)
-                self.last = self.index
+    def export_to_file(self, filename):
+        with open(filename, 'w') as f:
+            f.write(self.fsm.dumps())
 
-    def exists(self, message):
-        return any([state.contains(message) for state in self.states])
+    def split_sessions(self, data):
+        ret = []
 
-    def dump(self):
-        if self.is_empty():
-            return {}
+        (index, fd) = (None, None)
 
-        ret = {'initial': self.initial.id}
-        states = {}
-
-        for state in self.states:
-            dump_state = state.dump()
-            states[state.id] = dump_state[state.id]
-
-        ret['states'] = states
+        """ Asume there will be always a close call matching the file descriptor of a accept call """
+        for (i, trace) in enumerate(data):
+            if 'action' in trace:
+                if (fd is None) and (trace['action'] == 'accept'):
+                    (index, fd) = (i, trace['return'])
+                elif fd is not None:
+                    """ Duplicate file descriptor """
+                    if (trace['action'] == 'dup2') and (trace['file-descriptor'] == fd):
+                        fd = trace['return']
+                    elif (trace['action'] == 'close') and (fd == trace['file-descriptor']):
+                        ret.append(data[index:i])
+                        (index, fd) = (None, None)
 
         return ret
 
-    def dumps(self):
-        return json.dumps(self.dump(), indent=4)
+    def split_network_activity(self, session):
+        """
+        Split traces based in recv/read calls
 
-    def export_graph(self, output):
-        graph = graphviz.Digraph(output)
+        :param session: list of traces in a client session
+        :returns: a new list of traces from a recv/read call until the next
+        """
+        ret = []
+        last = 0
 
-        """ Set left to right graph """
-        graph.attr(rankdir='LR')
+        for (i, item) in enumerate(session):
+            if ('action' in item) and (item['action'] in ['recv', 'read']):
+                ret.append(session[last:i])
+                last = i
 
-        """ Initial node """
-        graph.attr('node', shape='point')
-        graph.node('initial')
-        graph.attr('node', shape='circle')
-        graph.edge('initial', self.initial.id)      # Initial transition
+        """ Include remaining trace """
+        ret.append(session[last:])
 
-        for state in self.states:
-            for trans in state:
-                """ Epsilon symbol if it is an empty keyword """
-                label = trans.message.keyword if trans.message.keyword else '\u03B5'
-                if trans.next is None:
-                    """ Final node """
-                    graph.attr('node', shape='doublecircle')
-                    graph.node('final')
-                    graph.edge(state.id, 'final', label=label)
+        return ret
+
+    def analyze_cfg_net_trace(self, dynamic_cfg, net_trace):
+        print_debug = False
+        group = cfg.Group()
+        ins = None
+
+        for item in net_trace:
+            if not print_debug:
+                if 'io-counter' in item:
+                    debug.info(f'Dynamic CFG refinement {item["io-counter"]}...')
+                    print_debug = True
+            if 'ins-opcodes' in item:
+                routine_addr = int(item['routine-addr'], 16)
+                routine = item['routine']
+                addr = int(item['ins-addr'], 16)
+                opcodes = binascii.unhexlify(item['ins-opcodes'])
+                dis = next(self.md.disasm(opcodes, addr))           # Just dissasemble one instruction
+
+                """ Get control flow target """
+                if item['action'] in ['direct-call', 'indirect-call', 'direct-jmp', 'indirect-jmp', 'ret']:
+                    target_addr = int(item['target-addr'], 16)
+                    comment = ''
+                    if item['action'] in ['direct-call', 'indirect-call']:
+                        comment = item['target']
+                    ins = cfg.Ins(dis, addr, opcodes, routine=routine, routine_addr=routine_addr, target_addr=target_addr, comment=comment, trace=item)
                 else:
-                    """ Intermediate nodes """
-                    graph.attr('node', shape='circle')
-                    graph.edge(state.id, trans.next.id, label=label)
+                    ins = cfg.Ins(dis, addr, opcodes, routine=routine, routine_addr=routine_addr, trace=item)
 
+                if (item['level'] == 'taint') and (item['action'] in ['compare', 'taint-reg', 'taint-addr', 'free-addr']):
+                        """ Update comment with taint information """
+                        ins.update_comment(f'{item["action"].replace("-", " ")} {item["origin"].replace("-", " ")}')
+                        ins.tainted = True
+                        """ Two or more taint info in the same group means only one taint """
+                        group.taint_count = 1
 
-        """ Generate Graphviz DOT file (.gv) """
-        graph.render()
+                group.add(ins)
 
-        """ Rename output files """
-        pdf_file = f'{output}.gv.pdf'
-        os.rename(pdf_file, output)
-        """ Eliminate output file extension """
-        gv_file = f'{output}.gv'
-        (gv_output, _) = os.path.splitext(output)
-        gv_output = f'{gv_output}.gv'
-        os.rename(gv_file, gv_output)
+                """ End group if last ins is either call, ret, or jump """
+                if not ins.is_standard():
+                    dynamic_cfg.add(group)
+                    group = cfg.Group()
 
-        return (output, gv_output)
+        """ Add last group if we finished CFG construction and last instruction is standard """
+        if (ins is not None) and (ins.is_standard()):
+            dynamic_cfg.add(group)
 
-    def __len__(self):
-        return len(self.states)
+        return dynamic_cfg
 
-    def __iter__(self):
-        if self.is_empty():
-            return
+    def get_base_addr(self, traces):
+        for trace in traces:
+            if trace['action'] == 'relocate':
+                return int(trace['image-low'], 0)
 
-        fsm = copy.deepcopy(self)
-        yield from self._traverse(fsm.initial)
+    def analyze_tainted_loops(self, binary, symbolic_engine, dynamic_cfg, binary_base_addr):
+        tainted_cfgs = dynamic_cfg.get_tainted_cfgs()
 
-    def _traverse(self, state):
-        """ Final state """
-        if state is None:
-            return
+        debug.info(f'Opening {os.path.basename(binary)} with radare2...')
+        """ Open binary at base address and close stderr """
+        r2 = r2pipe.open(binary, flags=['-B', hex(binary_base_addr), '-2'])
 
-        if state.has_multiple_transition():
-            for trans in state:
-                yield trans.message
-                """
-                Two scenarios for deleting a transition:
+        for tainted_cfg in tainted_cfgs:
+            loop_info = tainted_cfg.get_tainted_loop_info()
+            if loop_info:
+                try:
+                    self.update_cfg_with_static_info(r2, tainted_cfg)
+                except cfg.CFGException as e:
+                    debug.warning(f'{str(e)}\t: Couldn\'t update {hex(tainted_cfg.id)} ({tainted_cfg.entry_node.group.leader.routine}) with static information')
 
-                    1) If next state hasn't several transitions. Otherwise, we need to visit this transition
-                    again to consume the upcoming transitions.
+                self.get_symbolic_messages(symbolic_engine, binary_base_addr, tainted_cfg, loop_info)
 
-                    2) If its an inifinite loop to same state
-                """
-                #FIXME What happen when multiple transition is not in the next state but in a state after the next?
-                if not trans.next.has_multiple_transition() or trans.is_transitition_to_state(state):
-                    state.trans.remove(trans)
-                yield from self._traverse(trans.next)
-        else:
-            trans = state.trans[0]
-            yield trans.message
-            state = trans.next
-            yield from self._traverse(state)
+        r2.quit()
 
-class State:
-    def __init__(self, id=None, trans=None):
-        self.id = id
-        self.trans = [] if trans is None else trans
+    def update_cfg_with_static_info(self, r2, tainted_cfg):
+        """ Function address pointed by ins leader of the entry node """
+        function_name = tainted_cfg.entry_node.group.leader.routine
+        function_addr = hex(tainted_cfg.entry_node.group.leader.routine_addr)
 
-    def set_next(self, next):
-        for trans in self.trans:
-            trans.set_next(next)
+        debug.info(f'Updating function at {function_addr} ({function_name}) with static information...')
 
-    def transition(self, message, next=None):
-        trans = Transition(message, next)
-        if trans not in self.trans:
-            self.trans.append(trans)
-    
-    def contains(self, message):
-        for trans in self.trans:
-            if trans.equals(message):
-                return True
-        
-        return False
+        """ Seek to the start of the function """
+        r2.cmd(f's {function_addr}')
+        """ Define function at current address """
+        r2.cmd('af')
+        """ List function basic blocks """
+        bbs = json.loads(r2.cmd('afbj'))
 
-    def has_multiple_transition(self):
-        return len(self.trans) > 1
+        static_nodes = []
+        routine = ''
+        routine_addr = 0
 
-    def dump(self):
-        ret = {}
-        trans = []
+        """ Create CFG groups based in basic block information """
+        for bb in bbs:
+            group = cfg.Group()
+            """ Loop every ins addr in basic block """
+            for ins_addr in bb['instrs']:
+                """ Disassemble one instruction """
+                ins_info = json.loads(r2.cmd(f'pdj 1 @ {ins_addr}'))[0]
+                opcodes = binascii.unhexlify(ins_info["bytes"])
+                dis = next(self.md.disasm(opcodes, ins_addr))
+                """ Get routine name, only in the first ins """
+                if not routine:
+                    routine = ins_info['flags'][0]
+                    routine_addr = ins_info['fcn_addr']
+                ins = cfg.Ins(dis, ins_addr, opcodes, routine=routine, routine_addr=routine_addr)
+                group.add(ins)
 
-        for t in self.trans:
-            trans.append(t.dump())
+            static_node = cfg.Node(group, static=True)
+            static_nodes.append(static_node)
 
-        ret[self.id] = trans
+        """ Add static_node if is not already defined in the CFG """
+        for static_node in static_nodes:
+            if static_nodes not in tainted_cfg:
+                tainted_cfg.nodes.append(static_node)
 
-        return ret
+        """ Set all static transitions based in r2 basic blocks information """
+        self._set_static_transitions(tainted_cfg, bbs)
 
-    def load(self, state):
-        for trans in state:
-            t = Transition()
-            t.load(trans)
-            self.trans.append(t)
+    def _set_static_transitions(self, cfg, bbs):
+        for bb in bbs:
+            """ Each basic block has several ouput transitions """
+            node = cfg.get_node_by_addr(bb['addr'])
+            """ Get node fallthrough in case of node ending in a call ins """
+            if node.group.tail.is_call():
+                node = cfg.get_node_by_addr(node.group.tail.info['fallthrough'])
+            cfg.reset_to_node(node)
 
-    def __iter__(self):
-        for trans in self.trans:
-            yield trans
+            """ Node that ends CFG because does not have output tranisitions """
+            if bb['outputs'] == 0:
+                if node.static:
+                    cfg.finalize()
+            elif bb['outputs'] == 1:
+                defined_node = cfg.get_node_by_addr(bb['jump'])
+                if defined_node.static:
+                    cfg.add(defined_node.group)
+            elif bb['outputs'] == 2:
+                """ Control flow change """
+                defined_node = cfg.get_node_by_addr(bb['jump'])
+                if defined_node.static:
+                    cfg.add(defined_node.group)
+                """ Reset to node containing two outputs """
+                cfg.reset_to_node(node)
+                """ Fallthrough """
+                defined_node = cfg.get_node_by_addr(bb['fail'])
+                if defined_node.static:
+                    cfg.add(defined_node.group)
 
-class Transition:
-    def __init__(self, message=None, next=None):
-        self.message = message
-        self.next = next
+    def get_symbolic_messages(self, symbolic_engine, binary_base_addr, target_cfg, loop_info):
+        debug.info(f'Symbolic\t: Setting up symbolic information for {hex(target_cfg.id)} ({target_cfg.entry_node.group.leader.routine})...')
 
-    def is_final(self):
-        return self.next is None
+        if target_cfg.id == 0x55f199f77020:
+            symbolic_engine.open_binary(base_addr=binary_base_addr)
 
-    def set_next(self, next):
-        self.next = next
+            for loop in loop_info:
+                if 'pre-header' in loop:
+                    start_node = loop['pre-header']
+                else:
+                    start_node = loop['header']
 
-    def equals(self, message):
-        return self.message == message
+                start_addr = start_node.id                
+                debug.info(f'Symbolic\t: start-addr\t: {hex(start_addr)}')
+                symbolic_engine.start(start_addr)
+                self._analyze_symbolic_vars(symbolic_engine, start_node)
+                self._analyze_target_addrs(symbolic_engine, target_cfg)
 
-    def dump(self):
-        ret = {}
+                results = []
+                for result in symbolic_engine.run():
+                    debug.info(f'Result found: {result}')
+                    results.append(result)
 
-        ret['message'] = self.message.dump()
-        ret['next'] = None if self.next is None else self.next.id
+                if not results:
+                    debug.warning('Unable to obtain symbolic messages')
 
-        return ret
+    def _analyze_symbolic_vars(self, symbolic_engine, node):
+        """ Loop every ins in node """
+        for ins in node.group:
+            if ins.tainted:
+                """ mov reg, [reg] """
+                if (ins.trace['action'] == 'taint-reg') and (ins.trace['origin'] == 'from-addr'):
+                    operand = ins.dis.operands[1]
+                    if operand.type == capstone.x86.X86_OP_MEM:
+                        tainted_reg_id = operand.mem.base
+                        tainted_reg_name = ins.dis.reg_name(tainted_reg_id)
+                        debug.info(f'Symbolic\t: buffer\t: {tainted_reg_name}')
+                        symbolic_engine.symbolic_buffer(tainted_reg_id, tainted_reg_name)
 
-    def load(self, transition):
-        msg = Message()
-        msg.load(transition['message'])
+    def _analyze_target_addrs(self, symbolic_engine, target_cfg):
+        final_nodes = set(target_cfg.final_nodes)
 
-        self.message = msg
-        self.next = transition['next']
+        while final_nodes:
+            node = final_nodes.pop()
 
-    def is_transitition_to_state(self, state):
-        return state == self.next
-
-    def __eq__(self, other):
-        if isinstance(other, Transition):
-            return (id(self) == id(other)) or ((self.message == other.message) and (self.next == other.next))
-
-        return False
-
-class Message:
-    def __init__(self, msg_bytes=None, msg_addr=None, keyword=None, constraints={}):
-        self.bytes = msg_bytes
-        self.addr = msg_addr
-        self.size = None if msg_bytes is None else len(msg_bytes)
-        self.keyword = self.get_keyword() if keyword is None else keyword
-        self.constraints = constraints
-
-    def get_keyword(self):
-        if self.bytes is None:
-            return None
-
-        string = self.bytes.decode('utf-8').strip()
-
-        if string.isprintable():
-            """ Search for spaces as separators """
-            if string.count(' ') > 0:
-                return string.split(' ')[0]
+            if node.static:
+                debug.info(f'Symbolic\t: cut-addr\t: {hex(node.id)}')
+                symbolic_engine.cut(node.id)
             else:
-                """ Assume is only a keyword """
-                return string
-
-        raise NotImplementedError
-
-    def generate_message(self):
-        return self.bytes
-
-    def constrain(self, where, byte):
-        self.constraints[where] = byte
-
-    def dump(self):
-        ret = {}
-        ret['content'] = binascii.hexlify(self.bytes).decode('utf-8')
-        ret['keyword'] = self.keyword
-        ret['constraints'] = self.constraints
-
-        return ret
-
-    def load(self, message):
-        self.bytes = binascii.unhexlify(message['content'])
-        self.keyword = message['keyword']
-        self.constraints = message['constraints']
-
-    def _is_addr_in_range(self, addr):
-        return (self.addr <= addr) and ((self.addr + self.size - 1) >= addr)
-
-    def _get_index_by_addr(self, addr):
-        if addr is None:
-            return None
-
-        if isinstance(addr, int):
-            if self._is_addr_in_range(addr):
-                return addr - self.addr
-            else:
-                raise IndexError(f'memory range from {hex(self.addr)} to {hex(self.addr + self.size - 1)}')
-        else:
-            raise TypeError(f'memory indices must be integers, not {type(addr).__name__}')
-
-    def __len__(self):
-        return self.size
-    
-    def __getitem__(self, addr):
-        if isinstance(addr, slice):
-            index_slice = slice(self._get_index_by_addr(addr.start), self._get_index_by_addr(addr.stop), addr.step)
-            return self.bytes[index_slice]
-
-        if isinstance(addr, int):
-            return self.bytes[self._get_index_by_addr(addr)]
-
-        raise TypeError(f'memory indices must be integers or slices, not {type(addr).__name__}')
-
-    def __iter__(self):
-        for b in self.bytes:
-            yield b
-
-    def __eq__(self, other):
-        if isinstance(other, Message):
-            return self.keyword == other.keyword
-
-        return False
+                debug.info(f'Symbolic\t: goal-addr\t: {hex(node.id)}')
+                symbolic_engine.goal(node.id)

@@ -30,16 +30,18 @@ class ArgumentParser:
     def __init__(self):
         self.argparser = argparse.ArgumentParser(description=description, epilog=usage_examples, formatter_class=argparse.RawDescriptionHelpFormatter)
         self.argparser.add_argument('-v', '--version',  action='store_true', help=f'display version and exit')
+        """ General options """
+        self.argparser.add_argument('--file-overwrite', action='store_true', help='force overwrite of existing files')
         """ Model analysis """
         self.argparser.add_argument('--log', type=str, nargs='+', metavar='<file>', help='a list of .log files')
         self.argparser.add_argument('--dirlog', type=str, metavar='<folder>', help='folder containing .log files')
         self.argparser.add_argument('--m32', action='store_true', help='trace of a 32-bit program (64-bit by default)')
         self.argparser.add_argument('--model-export', type=str, metavar='<file>', help='JSON file to export model')
         self.argparser.add_argument('--model-import', type=str, metavar='<file>', help='JSON file defining a model')
+        self.argparser.add_argument('--model-pdf', type=str, metavar='<file>', help='PDF file representing the model')
         """ CFG analysis """
         self.argparser.add_argument('--cfg-analysis', action='store_true', help='activate CFG analysis')
-        self.argparser.add_argument('--cfg-export', type=str, metavar='<file>', help='PDF file to save generated CFG')
-        self.argparser.add_argument('--cfg-export-force', action='store_true', help='force overwrite existing PDF file')
+        self.argparser.add_argument('--cfg-pdf', type=str, metavar='<file>', help='PDF file representing the CFG')
         self.argparser.add_argument('--binary', type=str, metavar='<file>', help='binary file to complement the CFG reconstructed from .log files')
         self.argparser.add_argument('--symbolic-engine', type=str, metavar='<angr|binsec>', default='angr', help='symbolic engine to use for new message inference (default to angr)')
         """ Replay properties """
@@ -84,6 +86,18 @@ class ArgumentParser:
         if version < min_r2_supported:
             debug.error(f'radare2 version found ({version_str}) older than minimun supported ({utils.MIN_R2_VERSION})')
 
+    def _check_existing_files(self, args):
+        filenames = [args.model_export, args.model_pdf, args.cfg_pdf]
+
+        for filename in filenames:
+            if filename is not None:
+                if os.path.isfile(filename) and not args.file_overwrite:
+                    debug.warning(f'{os.path.realpath(filename)}\t: File will be overwritten')
+                    response = input('Do you want to continue? [Y/n] ')
+                    if response.lower() not in ['', 'y', 'yes']:
+                        print('Abort.')
+                        sys.exit(-1)
+
     def _check_args(self, args):
         """ Model analysis """
         if args.log:
@@ -101,6 +115,9 @@ class ArgumentParser:
 
         """ CFG analysis """
         if args.cfg_analysis:
+            if not args.log and not args.dirlog:
+                debug.error(f'Log files are required to analyze CFG (--log or --dirlog)')
+
             if args.binary:
                 if not os.path.isfile(args.binary):
                     debug.error(f'{os.path.realpath(args.binary)}\t: Not a file')
@@ -114,15 +131,6 @@ class ArgumentParser:
                     self._check_binsec()
                 else:
                     debug.error(f'{args.symbolic_engine}\t: Unknown symbolic engine (--symbolic-engine <angr|binsec>)')
-
-                """ Check if --cfg-export already exists """
-                if args.cfg_export:
-                    if os.path.isfile(args.cfg_export) and not args.cfg_export_force:
-                        debug.warning(f'{os.path.realpath(args.cfg_export)}\t: File will be overwritten')
-                        response = input('Do you want to continue? [Y/n] ')
-                        if response.lower() not in ['', 'y', 'yes']:
-                            print('Abort.')
-                            sys.exit(-1)
             else:
                 debug.error('Binary file not provided for CFG analysis (--binary)')
 
@@ -148,3 +156,5 @@ class ArgumentParser:
 
             if (args.delay < 0):
                 debug.error(f'{args.delay}\t: Delay must be positive')
+
+        self._check_existing_files(args)

@@ -7,10 +7,10 @@ import tracemodeler.debug as debug
 BUF_SIZE = 4096
 
 class Replayer:
-    def __init__(self, host, port, tcp=True):
+    def __init__(self, host, port, transport_layer):
         self.host = host
         self.port = port
-        self.tcp = tcp
+        self.tcp = (transport_layer == 'tcp')
         self.socket = self.create_socket()
 
     def create_socket(self):
