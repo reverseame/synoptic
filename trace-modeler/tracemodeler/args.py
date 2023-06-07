@@ -49,7 +49,7 @@ class ArgumentParser:
         self.argparser.add_argument('--server-ip', type=str, metavar='<ip>', help='server IP')
         self.argparser.add_argument('--server-port', type=int, metavar='<port>', help='server listening port')
         self.argparser.add_argument('--transport-layer', type=str, metavar='<tcp|udp>', default='tcp', help='Transport layer (default to TCP)')
-        self.argparser.add_argument('--delay', type=int, metavar='<ms>', default=0, help='delay between sending messages (in ms)')
+        self.argparser.add_argument('--delay', type=int, metavar='<ms>', default=200, help='delay between sending messages (in ms) (default to 200 ms)')
 
     def parse_args(self, arguments):
         args = self.argparser.parse_args(arguments)

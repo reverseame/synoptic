@@ -58,4 +58,4 @@ def main():
 
     """ Replay model to a target server """
     if args.replay:
-        replayer.Replayer(args.server_ip, args.server_port, transport_layer=args.transport_layer).replay(model.fsm, delay=args.delay)
+        replayer.Replayer(args.server_ip, args.server_port, transport_layer=args.transport_layer).replay(model.fsm, delay=(args.delay / 1000))

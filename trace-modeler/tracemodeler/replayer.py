@@ -20,6 +20,8 @@ class Replayer:
             sock = socket.socket(family=socket.AF_INET, type=socket.SOCK_STREAM)
             try:
                 sock.connect((self.host, self.port))
+                """ Non-blocking socket, returns -1 if sock would block execution """
+                sock.setblocking(False)
             except ConnectionRefusedError:
                 debug.error(f'Unable to connect to {self.host}:{self.port}')
         else:
@@ -34,20 +36,18 @@ class Replayer:
             debug.info(f'Sending {len(fsm)} messages...')
 
             for message in fsm:
+                time.sleep(delay)
                 self.recv()
                 self.send(message.generate_message())
-                time.sleep(delay)
 
+            """ Try to receive a desconect message """
+            time.sleep(delay)
             self.recv()
         except KeyboardInterrupt:
             debug.warning('User interrupt')
         finally:
             if self.tcp: self.socket.close()
             debug.info(f'Done! Bye!')
-
-    def read_file(self, file):
-        with open(file, 'r') as f:
-            return f.read()
 
     def recv(self):
         buffer = b''
@@ -57,7 +57,7 @@ class Replayer:
         else:
             buffer = self._recvfrom()
 
-        debug.info(f'recv: {buffer}')
+        debug.info(f'recv: {repr(buffer)}')
 
     def send(self, buffer):
         if self.tcp:
@@ -65,19 +65,22 @@ class Replayer:
         else:
             self._sendto(buffer)
 
-        debug.info(f'send: {buffer}')
+        debug.info(f'send: {repr(buffer)}')
     
     def _recv(self):
         ret = io.BytesIO()
         buffer = b''
 
-        while True:
-            buffer = self.socket.recv(BUF_SIZE)
-            ret.write(buffer)
+        try:
+            while True:
+                buffer = self.socket.recv(BUF_SIZE)
+                if buffer:
+                    ret.write(buffer)
+                else:
+                    break
+        except BlockingIOError:
+            pass
 
-            if len(buffer) != BUF_SIZE:
-                break
-        
         return ret.getvalue()
 
     def _recvfrom(self):
@@ -86,9 +89,9 @@ class Replayer:
 
         while True:
             (buffer, _) = self.socket.recvfrom(BUF_SIZE)
-            ret.write(buffer)
-
-            if len(buffer) != BUF_SIZE:
+            if buffer:
+                ret.write(buffer)
+            else:
                 break
 
         return ret.getvalue()
