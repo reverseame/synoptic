@@ -9,7 +9,7 @@ import ipaddress
 import tracemodeler.debug as debug
 import tracemodeler.utils as utils
 
-description = 'This tool analyzes server execution traces to infer its protocol model, and\
+description = 'This tool analyzes server execution traces to infer its protocol FSM, and\
  uses symbolic analysis to try to find new messages not contained in the traces'
 
 usage_examples = '''usage examples:
@@ -31,20 +31,20 @@ class ArgumentParser:
         self.argparser = argparse.ArgumentParser(description=description, epilog=usage_examples, formatter_class=argparse.RawDescriptionHelpFormatter)
         self.argparser.add_argument('-v', '--version',  action='store_true', help=f'display version and exit')
         """ General options """
-        self.argparser.add_argument('--file-overwrite', action='store_true', help='force overwrite of existing files')
-        """ Model analysis """
+        self.argparser.add_argument('--force-overwrite', action='store_true', help='force overwrite of existing files')
+        """ Protocol FSM and binary CFG analysis """
         self.argparser.add_argument('--log', type=str, nargs='+', metavar='<file>', help='a list of .log files')
         self.argparser.add_argument('--dirlog', type=str, metavar='<folder>', help='folder containing .log files')
         self.argparser.add_argument('--m32', action='store_true', help='trace of a 32-bit program (64-bit by default)')
-        self.argparser.add_argument('--model-export', type=str, metavar='<file>', help='JSON file to export model')
-        self.argparser.add_argument('--model-import', type=str, metavar='<file>', help='JSON file defining a model')
-        self.argparser.add_argument('--model-pdf', type=str, metavar='<file>', help='PDF file representing the model')
-        """ CFG analysis """
-        self.argparser.add_argument('--cfg-analysis', action='store_true', help='activate CFG analysis')
-        self.argparser.add_argument('--cfg-pdf', type=str, metavar='<file>', help='PDF file representing the CFG')
+        self.argparser.add_argument('--fsm-export', type=str, metavar='<file>', help='JSON file to export model')
+        self.argparser.add_argument('--fsm-import', type=str, metavar='<file>', help='JSON file defining a model')
+        self.argparser.add_argument('--fsm-pdf', type=str, metavar='<file>', help='PDF file representing the model')
+        self.argparser.add_argument('--cfg-pdf', type=str, metavar='<file>', help='PDF file representing the traces CFG')
+        """ Symbolic analysis """
+        self.argparser.add_argument('--symbolic-analysis', action='store_true', help='activate symbolic analysis')
         self.argparser.add_argument('--binary', type=str, metavar='<file>', help='binary file to complement the CFG reconstructed from .log files')
         self.argparser.add_argument('--symbolic-engine', type=str, metavar='<angr|binsec>', default='angr', help='symbolic engine to use for new message inference (default to angr)')
-        """ Replay properties """
+        """ Replay options """
         self.argparser.add_argument('--replay', action='store_true', help='replay messages based in a model')
         self.argparser.add_argument('--server-ip', type=str, metavar='<ip>', help='server IP')
         self.argparser.add_argument('--server-port', type=int, metavar='<port>', help='server listening port')
@@ -87,9 +87,9 @@ class ArgumentParser:
             debug.error(f'radare2 version found ({version_str}) older than minimun supported ({utils.MIN_R2_VERSION})')
 
     def _check_existing_files(self, args):
-        filenames = [filename for filename in [args.model_export, args.model_pdf, args.cfg_pdf] if (filename is not None) and os.path.isfile(filename)]
+        filenames = [filename for filename in [args.fsm_export, args.fsm_pdf, args.fsm_pdf] if (filename is not None) and os.path.isfile(filename)]
 
-        if filenames and not args.file_overwrite:
+        if filenames:
             debug.warning(f'{", ".join([os.path.realpath(filename) for filename in filenames])}\t: File/s will be overwritten')
             response = input('Do you want to continue? [Y/n] ')
             if response.lower() not in ['', 'y', 'yes']:
@@ -97,7 +97,7 @@ class ArgumentParser:
                 sys.exit(-1)
 
     def _check_args(self, args):
-        """ Model analysis """
+        """ FSM analysis """
         if args.log:
             for filename in args.log:
                 if not os.path.isfile(filename):
@@ -105,14 +105,14 @@ class ArgumentParser:
         elif args.dirlog:
             if not os.path.isdir(args.dirlog):
                 debug.error(f'{os.path.realpath(args.dirlog)}\t: Not a directory')
-        elif args.model_import:
-            if not os.path.isfile(args.model_import):
-                debug.error(f'{os.path.realpath(args.model_import)}\t: Not a file')
+        elif args.fsm_import:
+            if not os.path.isfile(args.fsm_import):
+                debug.error(f'{os.path.realpath(args.fsm_import)}\t: Not a file')
         else:
-            debug.error('You need to provide either log files (--log or --dirlog) or a model (--model-import)')
+            debug.error('You need to provide either log files (--log or --dirlog) or a FSM (--fsm-import)')
 
-        """ CFG analysis """
-        if args.cfg_analysis:
+        """ Symbolic analysis """
+        if args.symbolic_analysis:
             if not args.log and not args.dirlog:
                 debug.error(f'Log files are required to analyze CFG (--log or --dirlog)')
 
@@ -130,9 +130,9 @@ class ArgumentParser:
                 else:
                     debug.error(f'{args.symbolic_engine}\t: Unknown symbolic engine (--symbolic-engine <angr|binsec>)')
             else:
-                debug.error('Binary file not provided for CFG analysis (--binary)')
+                debug.error('Binary file not provided for symbolic analysis (--binary)')
 
-        """ Replay properties """
+        """ Replay options """
         if args.replay:
             if args.server_ip:
                 """ Check if IP address is well formatted """
@@ -155,4 +155,5 @@ class ArgumentParser:
             if (args.delay < 0):
                 debug.error(f'{args.delay}\t: Delay must be positive')
 
-        self._check_existing_files(args)
+        if not args.force_overwrite:
+            self._check_existing_files(args)

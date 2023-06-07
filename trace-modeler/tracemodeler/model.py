@@ -19,9 +19,71 @@ class Model:
         self.md.detail = True
 
     def analyze(self, traces):
+        debug.info('CFG analysis...')
+        self.cfg_analysis(traces)
+        debug.info('FSM analysis...')
+        self.fsm_analysis(traces)
+
+    def cfg_analysis(self, traces):
+        for session in self.split_sessions(traces):
+            for net_trace in self.split_network_activity(session):
+                try:
+                    self.cfg.initialize()
+                    self.analyze_cfg_net_trace(net_trace)
+                except cfg.CFGException as e:
+                    debug.warning(str(e))
+                finally:
+                    self.cfg.finalize()
+
+    def fsm_analysis(self, traces):
         for session in self.split_sessions(traces):
             for net_trace in self.split_network_activity(session):
                 self.analyze_net_trace(net_trace)
+
+    def analyze_cfg_net_trace(self, net_trace):
+        print_debug = False
+        group = cfg.Group()
+        ins = None
+
+        for item in net_trace:
+            if not print_debug:
+                if 'io-counter' in item:
+                    debug.debug(f'Dynamic CFG refinement {item["io-counter"]}...')
+                    print_debug = True
+            if 'ins-opcodes' in item:
+                routine_addr = int(item['routine-addr'], 16)
+                routine = item['routine']
+                addr = int(item['ins-addr'], 16)
+                opcodes = binascii.unhexlify(item['ins-opcodes'])
+                dis = next(self.md.disasm(opcodes, addr))           # Just dissasemble one instruction
+
+                """ Get control flow target """
+                if item['action'] in ['direct-call', 'indirect-call', 'direct-jmp', 'indirect-jmp', 'ret']:
+                    target_addr = int(item['target-addr'], 16)
+                    comment = ''
+                    if item['action'] in ['direct-call', 'indirect-call']:
+                        comment = item['target']
+                    ins = cfg.Ins(dis, addr, opcodes, routine=routine, routine_addr=routine_addr, target_addr=target_addr, comment=comment, trace=item)
+                else:
+                    ins = cfg.Ins(dis, addr, opcodes, routine=routine, routine_addr=routine_addr, trace=item)
+
+                if (item['level'] == 'taint') and (item['action'] in ['compare', 'taint-reg', 'taint-addr', 'free-addr']):
+                        """ Update comment with taint information """
+                        ins.update_comment(f'{item["action"].replace("-", " ")} {item["origin"].replace("-", " ")}')
+                        ins.tainted = True
+                        """ Two or more taint info in the same group means only one taint """
+                        group.taint_count = 1
+
+                group.add(ins)
+
+                """ End group if last ins is either call, ret, or jump """
+                if not ins.is_standard():
+                    self.cfg.add(group)
+                    group = cfg.Group()
+
+        """ Add last group if we finished CFG construction and last instruction is standard """
+        if (ins is not None) and (ins.is_standard()):
+            self.cfg.add(group)
 
     def analyze_net_trace(self, net_trace):
         message = None
@@ -39,30 +101,10 @@ class Model:
 
         if message: self.fsm.append(message)
 
-    def cfg_analysis(self, traces, binary, symbolic_engine):
+    def symbolic_analysis(self, traces, binary, symbolic_engine):
         symbolic_engine = symbolic.SymbolicEngine(symbolic_engine, binary)
-
-        for session in self.split_sessions(traces):
-            for net_trace in self.split_network_activity(session):
-                try:
-                    self.cfg.initialize()
-                    self.analyze_cfg_net_trace(net_trace)
-                except cfg.CFGException as e:
-                    debug.warning(str(e))
-                finally:
-                    self.cfg.finalize()
-
         binary_base_addr = self.get_base_addr(traces)
         self.analyze_tainted_loops(binary, symbolic_engine, binary_base_addr)
-
-    def import_from_file(self, filename):
-        with open(filename, 'r') as f:
-            content = f.read()
-        self.fsm.loads(content)
-
-    def export_to_file(self, filename):
-        with open(filename, 'w') as f:
-            f.write(self.fsm.dumps())
 
     def split_sessions(self, data):
         ret = []
@@ -103,51 +145,6 @@ class Model:
         ret.append(session[last:])
 
         return ret
-
-    def analyze_cfg_net_trace(self, net_trace):
-        print_debug = False
-        group = cfg.Group()
-        ins = None
-
-        for item in net_trace:
-            if not print_debug:
-                if 'io-counter' in item:
-                    debug.info(f'Dynamic CFG refinement {item["io-counter"]}...')
-                    print_debug = True
-            if 'ins-opcodes' in item:
-                routine_addr = int(item['routine-addr'], 16)
-                routine = item['routine']
-                addr = int(item['ins-addr'], 16)
-                opcodes = binascii.unhexlify(item['ins-opcodes'])
-                dis = next(self.md.disasm(opcodes, addr))           # Just dissasemble one instruction
-
-                """ Get control flow target """
-                if item['action'] in ['direct-call', 'indirect-call', 'direct-jmp', 'indirect-jmp', 'ret']:
-                    target_addr = int(item['target-addr'], 16)
-                    comment = ''
-                    if item['action'] in ['direct-call', 'indirect-call']:
-                        comment = item['target']
-                    ins = cfg.Ins(dis, addr, opcodes, routine=routine, routine_addr=routine_addr, target_addr=target_addr, comment=comment, trace=item)
-                else:
-                    ins = cfg.Ins(dis, addr, opcodes, routine=routine, routine_addr=routine_addr, trace=item)
-
-                if (item['level'] == 'taint') and (item['action'] in ['compare', 'taint-reg', 'taint-addr', 'free-addr']):
-                        """ Update comment with taint information """
-                        ins.update_comment(f'{item["action"].replace("-", " ")} {item["origin"].replace("-", " ")}')
-                        ins.tainted = True
-                        """ Two or more taint info in the same group means only one taint """
-                        group.taint_count = 1
-
-                group.add(ins)
-
-                """ End group if last ins is either call, ret, or jump """
-                if not ins.is_standard():
-                    self.cfg.add(group)
-                    group = cfg.Group()
-
-        """ Add last group if we finished CFG construction and last instruction is standard """
-        if (ins is not None) and (ins.is_standard()):
-            self.cfg.add(group)
 
     def get_base_addr(self, traces):
         for trace in traces:

@@ -18,43 +18,45 @@ def main():
     arch_mode = capstone.CS_MODE_32 if args.m32 else capstone.CS_MODE_64
     model = tracemodeler.model.Model(arch_mode=arch_mode)
 
-    """ Import a model """
-    if args.model_import:
-        model.import_from_file(args.model_import)
-        debug.info(f'{os.path.abspath(args.model_import)}\t: {len(model.fsm)} model messages imported')
+    """ Import a FSM """
+    if args.fsm_import:
+        model.fsm.import_from_file(args.fsm_import)
+        debug.info(f'{os.path.abspath(args.fsm_import)}\t: {len(model.fsm)} model messages imported')
 
-    """ Analyze traces to create/refine a model """
+    """ Analyze traces to create/refine a FSM """
     filenames = []
     if args.log: filenames.extend(args.log)
     if args.dirlog: filenames.extend(utils.get_logs(args.dirlog))
 
     """ We have nothing to work on """
-    if not args.model_import and not filenames:
+    if not args.fsm_import and not filenames:
         debug.error('Unable to find logs')
         sys.exit(-1)
 
-    traces = utils.get_traces(filenames)
-    model.analyze(traces)
+    if filenames:
+        """ Proceed with CFG and FSM analysis """
+        traces = utils.get_traces(filenames)
+        model.analyze(traces)
 
-    if model.fsm.is_empty():
-        debug.warning('Empty model')
-
-    if args.cfg_analysis:
-        model.cfg_analysis(traces, args.binary, args.symbolic_engine)
+        if args.symbolic_analysis:
+            model.symbolic_analysis(traces, args.binary, args.symbolic_engine)
 
         if args.cfg_pdf:
             model.cfg.export_graph(args.cfg_pdf)
             debug.info(f'{args.cfg_pdf}\t: CFG graph')
 
-    if args.model_export:
-        model.export_to_file(args.model_export)
-        debug.info(f'{args.model_export}\t: Model exported')
-    else:
-        debug.info(f'Model infered\t:\n{str(model.fsm)}')
+    if model.fsm.is_empty():
+        debug.warning('Empty model')
 
-    if args.model_pdf:
-        model.fsm.export_graph(args.model_pdf)
-        debug.info(f'{args.model_pdf}\t: Model graph')
+    if args.fsm_export:
+        model.fsm.export_to_file(args.fsm_export)
+        debug.info(f'{args.fsm_export}\t: FSM exported')
+    else:
+        debug.info(f'FSM infered\t:\n{str(model.fsm)}')
+
+    if args.fsm_pdf:
+        model.fsm.export_graph(args.fsm_pdf)
+        debug.info(f'{args.fsm_pdf}\t: FSM graph')
 
     """ Replay model to a target server """
     if args.replay:

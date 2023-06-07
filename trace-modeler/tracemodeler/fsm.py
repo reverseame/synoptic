@@ -25,6 +25,15 @@ class ProtocolFSM:
         """ Initialize FSM construction setting the index to the initial state """
         self.index = self.initial
 
+    def import_from_file(self, filename):
+        with open(filename, 'r') as f:
+            content = f.read()
+        self.loads(content)
+
+    def export_to_file(self, filename):
+        with open(filename, 'w') as f:
+            f.write(self.dumps())
+
     def loads(self, content):
         dict_content = json.loads(content)
 
