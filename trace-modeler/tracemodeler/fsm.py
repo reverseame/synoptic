@@ -37,9 +37,22 @@ class ProtocolFSM:
             f.write(self.dumps())
 
     def loads(self, content):
-        """ If FSM is imported, we need to refine it """
-        self.refine = True
-        # TODO import itself
+        dict_content = json.loads(content)
+
+        for (state_id, state_content) in dict_content['states'].items():
+            state = State(id_=state_id)
+            state.load(state_content)
+            self.states.append(state)
+
+        """ Transform state ids to state references """
+        ids = [state.id for state in self.states]
+        self.entry_state = self.states[ids.index(dict_content['entry_state'])]
+        for state in self.states:
+            for trans in state:
+                if trans.next is not None:
+                    trans.next = self.states[ids.index(trans.next)]
+
+        self.initialize()
 
     def _add_transition_to_new_state(self, message):
         state = State(self._generate_id())
@@ -194,12 +207,18 @@ class State:
 
         return ret
 
+    def load(self, content):
+        for trans in content:
+            t = Transition()
+            t.load(trans)
+            self.transitions.append(t)
+
     def __iter__(self):
         for transition in self.transitions:
             yield transition
 
 class Transition:
-    def __init__(self, message, next_=None):
+    def __init__(self, message=None, next_=None):
         self.message = message
         self.next = next_
         self.count = 1
@@ -218,6 +237,13 @@ class Transition:
 
         return ret
 
+    def load(self, content):
+        msg = Message()
+        msg.load(content['message'])
+
+        self.message = msg
+        self.next = content['next']
+
     def __eq__(self, other):
         if isinstance(other, Transition):
             return (self.message == other.message) and (self.next == other.next)
@@ -225,7 +251,7 @@ class Transition:
         return False
 
 class Message:
-    def __init__(self, bytes_, keyword):
+    def __init__(self, bytes_=None, keyword=None):
         self.bytes = bytes_
         self.keyword = keyword
 
@@ -235,10 +261,14 @@ class Message:
     def dump(self):
         ret = {}
 
-        ret['content'] = binascii.hexlify(self.bytes).decode('utf-8')
+        ret['hexbytes'] = binascii.hexlify(self.bytes).decode('utf-8')
         ret['keyword'] = self.keyword
 
         return ret
+
+    def load(self, content):
+        self.bytes = binascii.unhexlify(content['hexbytes'])
+        self.keyword = content['keyword']
 
     def __eq__(self, other):
         if isinstance(other, Message):
