@@ -55,23 +55,24 @@ class Ins:
     def _get_ins_info(self):
         ret = {}
 
-        if (self.type == INS_TYPE_STANDARD) or (self.type == INS_TYPE_BRANCH) or (self.type == INS_TYPE_CALL):
+        if self.is_standard() or self.is_branch() or self.is_call():
             ret['fallthrough'] = self.addr + self.size
         
-        if (self.type == INS_TYPE_CALL) or (self.type == INS_TYPE_JUMP):
+        if self.is_call() or self.is_jump():
             operand = self.dis.operands[0] 
             if operand.type == capstone.x86.X86_OP_IMM:
                 ret['mode'] = 'direct'
                 ret['target'] = self.target_addr if self.target_addr else operand.imm
             elif (operand.type == capstone.x86.X86_OP_MEM) or (operand.type == capstone.x86.X86_OP_REG):
                 ret['mode'] = 'indirect'
+                ret['target'] = self.target_addr
             else:
                 raise NotImplementedError(f'{self.dis.mnemonic} {self.dis.op_str}\t: Ins not supported')
 
-        if self.type == INS_TYPE_RETURN:
+        if self.is_return():
             ret['target'] = self.target_addr
 
-        if self.type == INS_TYPE_BRANCH:
+        if self.is_branch():
             operand = self.dis.operands[0]
             if operand.type == capstone.x86.X86_OP_IMM:
                 ret['branch-target'] = operand.imm
@@ -114,8 +115,8 @@ class Ins:
     def get_ins_offset(self):
         if self.routine_addr:
             return self.addr - self.routine_addr
-        else:
-            return 0
+
+        return 0
 
     def check_next_ins(self, ins):
         if ins.addr != self.info['fallthrough']:

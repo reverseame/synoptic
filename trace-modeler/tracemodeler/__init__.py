@@ -20,8 +20,9 @@ def main():
 
     """ Import a FSM """
     if args.fsm_import:
-        model.fsm.import_from_file(args.fsm_import)
-        debug.info(f'{os.path.abspath(args.fsm_import)}\t: {len(model.fsm)} model messages imported')
+        filepath = os.path.abspath(args.fsm_import)
+        model.fsm.import_from_file(filepath)
+        debug.info(f'{filepath}\t: {len(model.fsm)} model messages imported')
 
     """ Analyze traces to create/refine a FSM """
     filenames = []
@@ -42,21 +43,24 @@ def main():
             model.symbolic_analysis(traces, args.binary, args.symbolic_engine)
 
         if args.cfg_pdf:
-            model.cfg.export_graph(args.cfg_pdf)
-            debug.info(f'{args.cfg_pdf}\t: CFG graph')
+            filepath = os.path.abspath(args.cfg_pdf)
+            model.cfg.export_graph(filepath)
+            debug.info(f'{filepath}\t: CFG graph')
 
     if model.fsm.is_empty():
         debug.warning('Empty model')
 
     if args.fsm_export:
-        model.fsm.export_to_file(args.fsm_export)
-        debug.info(f'{args.fsm_export}\t: FSM exported')
+        filepath = os.path.abspath(args.fsm_export)
+        model.fsm.export_to_file(filepath)
+        debug.info(f'{filepath}\t: FSM exported')
     else:
         debug.info(f'FSM infered\t:\n{str(model.fsm)}')
 
     if args.fsm_pdf:
-        model.fsm.export_graph(args.fsm_pdf)
-        debug.info(f'{args.fsm_pdf}\t: FSM graph')
+        filepath = os.path.abspath(args.fsm_pdf)
+        model.fsm.export_graph(filepath)
+        debug.info(f'{filepath}\t: FSM graph')
 
     """ Replay model to a target server """
     if args.replay:

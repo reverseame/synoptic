@@ -36,21 +36,31 @@ class Model:
                     self.cfg.finalize()
 
     def fsm_analysis(self, traces):
+        self.fsm.initialize()
+
         for session in self.split_sessions(traces):
             for net_trace in self.split_network_activity(session):
-                self.analyze_net_trace(net_trace)
+                self.analyze_fsm_net_trace(net_trace)
 
     def analyze_cfg_net_trace(self, net_trace):
         print_debug = False
         group = cfg.Group()
         ins = None
+        signal_detected = False
 
         for item in net_trace:
             if not print_debug:
                 if 'io-counter' in item:
                     debug.debug(f'Dynamic CFG refinement {item["io-counter"]}...')
                     print_debug = True
-            if 'ins-opcodes' in item:
+
+            if item['action'] == 'signal-detected':
+                signal_detected = True
+            elif item['action'] == 'signal-finished':
+                signal_detected = False
+
+            """ Only create a new instruction if we are not in a signal """
+            if ('ins-opcodes' in item) and not signal_detected:
                 routine_addr = int(item['routine-addr'], 16)
                 routine = item['routine']
                 addr = int(item['ins-addr'], 16)
@@ -58,7 +68,7 @@ class Model:
                 dis = next(self.md.disasm(opcodes, addr))           # Just dissasemble one instruction
 
                 """ Get control flow target """
-                if item['action'] in ['direct-call', 'indirect-call', 'direct-jmp', 'indirect-jmp', 'ret']:
+                if item['action'] in ['direct-call', 'indirect-call', 'direct-jump', 'indirect-jump', 'ret']:
                     target_addr = int(item['target-addr'], 16)
                     comment = ''
                     if item['action'] in ['direct-call', 'indirect-call']:
@@ -85,21 +95,29 @@ class Model:
         if (ins is not None) and (ins.is_standard()):
             self.cfg.add(group)
 
-    def analyze_net_trace(self, net_trace):
+    def analyze_fsm_net_trace(self, net_trace):
         message = None
-        start = 0
 
-        for (i, trace) in enumerate(net_trace):
-            if trace['level'] == 'taint':
-
-                if trace['action'] in ['recv', 'read']:
-                    buffer_content = trace['buffer-content']
-                    buffer_base_address = int(trace['range-start'], 16)
-                    message = tracemodeler.fsm.Message(buffer_content)
-                    start = i + 1
+        for item in net_trace:
+            if item['level'] == 'taint':
+                if item['action'] in ['recv', 'read']:
+                    buffer_content = binascii.unhexlify(item['buffer-content'])
+                    keyword = self.get_keyword(buffer_content)
+                    message = tracemodeler.fsm.Message(buffer_content, keyword)
                     break
 
-        if message: self.fsm.append(message)
+        if message is not None:
+            self.fsm.add(message)
+            message = None
+
+    def get_keyword(self, bytes_):
+        string = bytes_.decode('utf-8').strip()
+
+        if string.isprintable():
+            """ Assume space as separator """
+            return string.split(' ')[0]
+        
+        raise NotImplementedError
 
     def symbolic_analysis(self, traces, binary, symbolic_engine):
         symbolic_engine = symbolic.SymbolicEngine(symbolic_engine, binary)

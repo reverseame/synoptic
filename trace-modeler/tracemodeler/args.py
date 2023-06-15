@@ -87,7 +87,7 @@ class ArgumentParser:
             debug.error(f'radare2 version found ({version_str}) older than minimun supported ({utils.MIN_R2_VERSION})')
 
     def _check_existing_files(self, args):
-        filenames = [filename for filename in [args.fsm_export, args.fsm_pdf, args.fsm_pdf] if (filename is not None) and os.path.isfile(filename)]
+        filenames = [filename for filename in [args.fsm_export, args.fsm_pdf, args.cfg_pdf] if (filename is not None) and os.path.isfile(filename)]
 
         if filenames:
             debug.warning(f'{", ".join([os.path.realpath(filename) for filename in filenames])}\t: File/s will be overwritten')
