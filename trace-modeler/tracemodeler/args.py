@@ -97,19 +97,23 @@ class ArgumentParser:
                 sys.exit(-1)
 
     def _check_args(self, args):
+        """ Check for main arguments """
+        if not any([args.log, args.dirlog, args.fsm_import]):
+            debug.error('You need to provide either log files (--log or --dirlog) or a FSM (--fsm-import)')
+
         """ FSM analysis """
         if args.log:
             for filename in args.log:
                 if not os.path.isfile(filename):
                     debug.error(f'{os.path.realpath(filename)}\t: Not a file')
-        elif args.dirlog:
+
+        if args.dirlog:
             if not os.path.isdir(args.dirlog):
                 debug.error(f'{os.path.realpath(args.dirlog)}\t: Not a directory')
-        elif args.fsm_import:
+
+        if args.fsm_import:
             if not os.path.isfile(args.fsm_import):
                 debug.error(f'{os.path.realpath(args.fsm_import)}\t: Not a file')
-        else:
-            debug.error('You need to provide either log files (--log or --dirlog) or a FSM (--fsm-import)')
 
         """ Symbolic analysis """
         if args.symbolic_analysis:

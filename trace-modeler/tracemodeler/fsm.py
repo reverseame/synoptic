@@ -107,7 +107,7 @@ class ProtocolFSM:
                             self.refine = True
                             return
 
-                """ Add another state if not message not defined """
+                """ Add another state if message not defined """
                 self._add_transition_to_new_state(message)
 
     def dump(self):

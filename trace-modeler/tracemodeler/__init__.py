@@ -36,8 +36,11 @@ def main():
 
     if filenames:
         """ Proceed with CFG and FSM analysis """
-        traces = utils.get_traces(filenames)
-        model.analyze(traces)
+        try:
+            traces = utils.get_traces(filenames)
+            model.analyze(traces)
+        except KeyboardInterrupt:
+            pass
 
         if args.symbolic_analysis:
             model.symbolic_analysis(traces, args.binary, args.symbolic_engine)

@@ -394,14 +394,20 @@ REG getReadReg(INS ins) {
 }
 
 /* returns the full name of the first register operand read */
-REG getMemoryReg(INS ins) {
-    for (unsigned int i = 0; i < INS_OperandCount(ins); i++) {
-        if (INS_OperandIsMemory(ins, i)) {
-            REG reg = INS_OperandMemoryBaseReg(ins, i);
-            if (reg != REG_INVALID()) {
-                return REG_FullRegName(reg);
-            }
-        }
+REG getMemoryBaseReg(INS ins) {
+    REG reg = INS_MemoryBaseReg(ins)
+    if (reg != REG_INVALID()) {
+        return REG_FullRegName(reg);
+    }
+
+    return REG_INVALID();
+}
+
+/* returns the full name of the first index register */
+REG getMemoryIndexReg(INS ins) {
+    REG reg = INS_MemoryIndexReg(ins)
+    if (reg != REG_INVALID()) {
+        return REG_FullRegName(reg);
     }
 
     return REG_INVALID();
@@ -568,7 +574,7 @@ void propagateMovTaint(INS ins, const char *routine, ADDRINT routineAddr) {
     } else if (INS_IsMemoryRead(ins)) {
         /* reg <- [addr] */
         REG reg = getWriteReg(ins);
-        REG regBase = INS_MemoryBaseReg(ins);
+        REG regBase = getMemoryBaseReg(ins);
 
         INS_InsertCall(
             ins, IPOINT_BEFORE, (AFUNPTR)addrToReg,
@@ -583,7 +589,7 @@ void propagateMovTaint(INS ins, const char *routine, ADDRINT routineAddr) {
             IARG_END);
     } else if (INS_IsMemoryWrite(ins)) {
         /* [addr] <- reg */
-        REG regAddr = getMemoryReg(ins);
+        REG regAddr = getMemoryBaseReg(ins);
         REG reg = getReg(ins);
         INS_InsertCall(
             ins, IPOINT_BEFORE, (AFUNPTR)regToAddr,
@@ -619,7 +625,7 @@ void propagateMovTaint(INS ins, const char *routine, ADDRINT routineAddr) {
 void propagateLeaTaint(INS ins, const char *routine, ADDRINT routineAddr) {
     /* reg <- [algorithmic calculation] */
     REG reg = getReg(ins);
-    REG regBase = INS_MemoryBaseReg(ins);
+    REG regBase = getMemoryBaseReg(ins);
 
     INS_InsertCall(
         ins, IPOINT_BEFORE, (AFUNPTR)traceLea,
@@ -669,7 +675,7 @@ void analyzeControlFlow(INS ins, const char *routine, ADDRINT routineAddr) {
 }
 
 /* Immediate compared to memory address */
-void compareImmToAddr(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT routineAddr, ADDRINT mem_r, REG reg_r, ADDRINT imm) {
+void compareImmToAddr(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT routineAddr, ADDRINT mem_r, REG reg_r, REG reg_r_index, ADDRINT imm) {
     if (!addrIsTraceable(insAddr, insSize)) {
         return;
     }
@@ -678,6 +684,11 @@ void compareImmToAddr(ADDRINT insAddr, USIZE insSize, std::string *insDis, char 
         LOG_TAINT("io-counter=%d action=compare routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
         logInsOpcodes(insAddr, insSize);
         LOG_RAW(" origin=addr-to-imm addr=%s reg=%s imm=%s\n", hexaddr(mem_r).c_str(), REG_StringShort(reg_r).c_str(), hexaddr(imm).c_str());
+    /* If any of [reg_r + reg_r_index] is tainted -> tainted comparison */
+    } else if (regIsTainted(routineAddr, reg_r) || regIsTainted(reg_r_index, reg_r)) {
+        LOG_TAINT("io-counter=%d action=compare routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
+        logInsOpcodes(insAddr, insSize);
+        LOG_RAW(" origin=addr-to-imm addr=%s reg=%s imm=%s\n", hexaddr(mem_r).c_str(), REG_StringShort(reg_r_index).c_str(), hexaddr(imm).c_str());
     } else {
         logIns(insAddr, insSize, insDis, routine, routineAddr);
     }
@@ -717,7 +728,8 @@ void analyzeComparison(INS ins, const char *routine, ADDRINT routineAddr) {
     if (hasImm(ins)) {
         /* [addr] == imm */
         if (INS_IsMemoryRead(ins)) {
-            REG reg = getMemoryReg(ins);
+            REG reg = getMemoryBaseReg(ins);
+            REG reg_index = getMemoryIndexReg(ins);
             ADDRINT imm = getImm(ins);
             INS_InsertCall(
                 ins, IPOINT_BEFORE, (AFUNPTR)compareImmToAddr,
@@ -728,6 +740,7 @@ void analyzeComparison(INS ins, const char *routine, ADDRINT routineAddr) {
                 IARG_ADDRINT, routineAddr,
                 IARG_MEMORYOP_EA, 0,
                 IARG_PTR, reg,
+                IARG_PTR, reg_index,
                 IARG_PTR, imm,
                 IARG_END);
         } else {

@@ -18,7 +18,7 @@ class AngrEngine():
         self.cut_addr = []
 
     def open_binary(self, base_addr):
-        self.project = angr.Project(self.binary, main_opts={'base_addr': base_addr}, auto_load_libs=True)    # Lazy bindings
+        self.project = angr.Project(self.binary, main_opts={'base_addr': base_addr}, auto_load_libs=True)    # Resolve lazy bindings
 
     def start(self, start_addr):
         self.state = self.project.factory.blank_state(addr=start_addr)

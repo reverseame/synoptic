@@ -38,9 +38,8 @@ class Model:
     def fsm_analysis(self, traces):
         self.fsm.initialize()
 
-        for session in self.split_sessions(traces):
-            for net_trace in self.split_network_activity(session):
-                self.analyze_fsm_net_trace(net_trace)
+        (buffers, comparations) = self.get_buffers(traces)
+        self.analyze_comparations(comparations)
 
     def analyze_cfg_net_trace(self, net_trace):
         print_debug = False
@@ -95,27 +94,54 @@ class Model:
         if (ins is not None) and (ins.is_standard()):
             self.cfg.add(group)
 
-    def analyze_fsm_net_trace(self, net_trace):
-        message = None
+    def get_buffers(self, traces):
+        buffers = []
+        comparations = []
 
+        for session in self.split_sessions(traces):
+            for net_trace in self.split_network_activity(session):
+                cmps = []
+                for item in net_trace:
+                    if item['level'] == 'taint':
+                        if item['action'] in ['recv', 'read']:
+                            buffer_content = binascii.unhexlify(item['buffer-content'])
+                            buffers.append(buffer_content)
+                        elif item['action'] == 'compare':
+                            cmps.append(item)
+                if cmps: comparations.append(cmps)
+
+        return (buffers, comparations)
+
+    def analyze_comparations(self, comparations):
+        filtered = []
+
+        for cmps in comparations:
+            for item in cmps:
+                if ((item['origin'] == 'reg-to-reg') and (item['reg1'] != item['reg2'])) or (item['origin'] != 'reg-to-reg'):
+                    filtered.append(item)
+
+        import pdb; pdb.set_trace()
+
+    def analyze_fsm_net_trace(self, net_trace):
         for item in net_trace:
             if item['level'] == 'taint':
                 if item['action'] in ['recv', 'read']:
                     buffer_content = binascii.unhexlify(item['buffer-content'])
-                    keyword = self.get_keyword(buffer_content)
+                    keyword = self.get_keyword(net_trace, buffer_content)
                     message = tracemodeler.fsm.Message(buffer_content, keyword)
-                    break
+                    self.fsm.add(message)
 
-        if message is not None:
-            self.fsm.add(message)
-            message = None
+                    return
 
-    def get_keyword(self, bytes_):
-        string = bytes_.decode('utf-8').strip()
+    def get_keyword(self, net_trace, bytes_):
+        message = bytes_.decode('utf-8').strip()
 
-        if string.isprintable():
+        import pdb; pdb.set_trace()
+
+        """ Textual """
+        if message.isprintable():
             """ Assume space as separator """
-            return string.split(' ')[0]
+            return message.split(' ')[0]
         
         raise NotImplementedError
 
@@ -265,7 +291,7 @@ class Model:
     def get_symbolic_messages(self, symbolic_engine, binary_base_addr, target_cfg, loop_info):
         debug.info(f'Symbolic\t: Setting up symbolic information for {hex(target_cfg.id)} ({target_cfg.entry_node.group.leader.routine})...')
 
-        if target_cfg.id == 0x55f199f77020:
+        if target_cfg.id == 0x55cc71430020:
             symbolic_engine.open_binary(base_addr=binary_base_addr)
 
             for loop in loop_info:
