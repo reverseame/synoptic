@@ -2,8 +2,10 @@ import os
 import sys
 import json
 import r2pipe
+import string
 import binascii
 import capstone
+import collections
 
 import tracemodeler.cfg as cfg
 import tracemodeler.fsm
@@ -38,8 +40,13 @@ class Model:
     def fsm_analysis(self, traces):
         self.fsm.initialize()
 
-        (buffers, comparations) = self.get_buffers(traces)
-        self.analyze_comparations(comparations)
+        buffer_comparations = self.get_buffer_comparations(traces)
+        delimiters = self.get_delimiters(buffer_comparations)
+
+        for item in buffer_comparations:
+            keyword = self.get_keyword(item['buffer'], delimiters, textual=True)
+            message = tracemodeler.fsm.Message(item['buffer'], keyword)
+            self.fsm.add(message)
 
     def analyze_cfg_net_trace(self, net_trace):
         print_debug = False
@@ -94,56 +101,70 @@ class Model:
         if (ins is not None) and (ins.is_standard()):
             self.cfg.add(group)
 
-    def get_buffers(self, traces):
-        buffers = []
-        comparations = []
+    def get_buffer_comparations(self, traces):
+        ret = []
 
         for session in self.split_sessions(traces):
             for net_trace in self.split_network_activity(session):
-                cmps = []
+                buffer = {}
+                comparations = []
                 for item in net_trace:
                     if item['level'] == 'taint':
                         if item['action'] in ['recv', 'read']:
-                            buffer_content = binascii.unhexlify(item['buffer-content'])
-                            buffers.append(buffer_content)
+                            buffer['buffer'] = binascii.unhexlify(item['buffer-content'])
                         elif item['action'] == 'compare':
-                            cmps.append(item)
-                if cmps: comparations.append(cmps)
+                            if ((item['origin'] == 'reg-to-reg') and (item['reg1'] != item['reg2'])) or (item['origin'] != 'reg-to-reg'):
+                                comparations.append(item)
+                if comparations: buffer['comparations'] = comparations
+                if buffer: ret.append(buffer)
 
-        return (buffers, comparations)
+        return ret
 
-    def analyze_comparations(self, comparations):
-        filtered = []
+    def get_delimiters(self, buffer_comparations):
+        ret = []
 
-        for cmps in comparations:
-            for item in cmps:
-                if ((item['origin'] == 'reg-to-reg') and (item['reg1'] != item['reg2'])) or (item['origin'] != 'reg-to-reg'):
-                    filtered.append(item)
+        all_comparations = []
+        [all_comparations.extend(item['comparations']) for item in buffer_comparations]
+        all_buffers = [item['buffer'] for item in buffer_comparations]
 
-        import pdb; pdb.set_trace()
+        """ Check for the count of all imm comparations """
+        count = collections.Counter([item['imm'] for item in all_comparations])
 
-    def analyze_fsm_net_trace(self, net_trace):
-        for item in net_trace:
-            if item['level'] == 'taint':
-                if item['action'] in ['recv', 'read']:
-                    buffer_content = binascii.unhexlify(item['buffer-content'])
-                    keyword = self.get_keyword(net_trace, buffer_content)
-                    message = tracemodeler.fsm.Message(buffer_content, keyword)
-                    self.fsm.add(message)
+        """ Textual protocol """
+        if all([self.is_printable(buffer) for buffer in all_buffers]):
+            for char in count.keys():
+                try:
+                    decoded_char = chr(int(char, 0))
+                    if not self.is_special_char(decoded_char):
+                        """ If character is in any of the buffers, we considered it a delimiter """
+                        if any([decoded_char in buffer.decode('utf-8') for buffer in all_buffers]):
+                            ret.append(decoded_char)
+                except OverflowError:
+                    pass
+        else:
+            raise NotImplementedError('Binary protocol not implemented')
 
-                    return
+        return ret
 
-    def get_keyword(self, net_trace, bytes_):
-        message = bytes_.decode('utf-8').strip()
+    def is_printable(self, buffer):
+        decoded = buffer.decode('utf-8')
+        return all([char in string.printable for char in decoded])
 
-        import pdb; pdb.set_trace()
+    def is_special_char(self, char):
+        return char in ['\t', '\n', '\r']
 
-        """ Textual """
-        if message.isprintable():
-            """ Assume space as separator """
-            return message.split(' ')[0]
-        
-        raise NotImplementedError
+    def get_keyword(self, buffer, delimiters, textual=False):
+        if textual:
+            buffer = buffer.decode('utf-8').strip()
+
+        byte = delimiters[0]
+        keyword = buffer.split(byte)[0]
+
+        """ TODO More than one delimiter """
+        if len(delimiters) > 1:
+            import pdb; pdb.set_trace()
+
+        return keyword
 
     def symbolic_analysis(self, traces, binary, symbolic_engine):
         symbolic_engine = symbolic.SymbolicEngine(symbolic_engine, binary)

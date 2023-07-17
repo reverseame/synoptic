@@ -395,7 +395,7 @@ REG getReadReg(INS ins) {
 
 /* returns the full name of the first register operand read */
 REG getMemoryBaseReg(INS ins) {
-    REG reg = INS_MemoryBaseReg(ins)
+    REG reg = INS_MemoryBaseReg(ins);
     if (reg != REG_INVALID()) {
         return REG_FullRegName(reg);
     }
@@ -405,7 +405,7 @@ REG getMemoryBaseReg(INS ins) {
 
 /* returns the full name of the first index register */
 REG getMemoryIndexReg(INS ins) {
-    REG reg = INS_MemoryIndexReg(ins)
+    REG reg = INS_MemoryIndexReg(ins);
     if (reg != REG_INVALID()) {
         return REG_FullRegName(reg);
     }
@@ -450,7 +450,6 @@ void passTaintedParams(ADDRINT insAddr, ADDRINT routineAddr, ADDRINT targetAddr)
     if (!item->second.empty()) {
         for (std::set<REG>::iterator it = item->second.begin(); it != item->second.end(); ++it) {
             /* Pass tainted reg to next function, a.k.a. targetAddr of call ins */
-            /* FIXME bug here, why? */
             if (regIsTainted(routineAddr, *it)) {
                 changeTaintRegValue(targetAddr, *it, true);
             }
@@ -680,12 +679,12 @@ void compareImmToAddr(ADDRINT insAddr, USIZE insSize, std::string *insDis, char 
         return;
     }
 
-    if (taintedAdddrs.count(mem_r)) {
+    if (taintedAdddrs.count(mem_r) || regIsTainted(routineAddr, reg_r)) {
         LOG_TAINT("io-counter=%d action=compare routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
         logInsOpcodes(insAddr, insSize);
         LOG_RAW(" origin=addr-to-imm addr=%s reg=%s imm=%s\n", hexaddr(mem_r).c_str(), REG_StringShort(reg_r).c_str(), hexaddr(imm).c_str());
     /* If any of [reg_r + reg_r_index] is tainted -> tainted comparison */
-    } else if (regIsTainted(routineAddr, reg_r) || regIsTainted(reg_r_index, reg_r)) {
+    } else if (regIsTainted(routineAddr, reg_r_index)) {
         LOG_TAINT("io-counter=%d action=compare routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
         logInsOpcodes(insAddr, insSize);
         LOG_RAW(" origin=addr-to-imm addr=%s reg=%s imm=%s\n", hexaddr(mem_r).c_str(), REG_StringShort(reg_r_index).c_str(), hexaddr(imm).c_str());
