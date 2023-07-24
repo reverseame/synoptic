@@ -3,6 +3,7 @@ import sys
 import json
 import r2pipe
 import string
+import struct
 import binascii
 import capstone
 import collections
@@ -44,8 +45,9 @@ class Model:
         delimiters = self.get_delimiters(buffer_comparations)
 
         for item in buffer_comparations:
-            keyword = self.get_keyword(item['buffer'], delimiters, textual=True)
-            message = tracemodeler.fsm.Message(item['buffer'], keyword)
+            message = tracemodeler.fsm.Message(item['buffer'])
+            message.analyze_keyword(delimiters, textual=True)
+            message.analyze_symbols(delimiters)
             self.fsm.add(message)
 
     def analyze_cfg_net_trace(self, net_trace):
@@ -128,18 +130,17 @@ class Model:
         all_buffers = [item['buffer'] for item in buffer_comparations]
 
         """ Check for the count of all imm comparations """
-        count = collections.Counter([item['imm'] for item in all_comparations])
+        count = collections.Counter([item['imm'] for item in all_comparations if item['origin'] in ['addr-to-imm', 'reg-to-imm']])
 
         """ Textual protocol """
         if all([self.is_printable(buffer) for buffer in all_buffers]):
             for char in count.keys():
                 try:
-                    decoded_char = chr(int(char, 0))
-                    if not self.is_special_char(decoded_char):
-                        """ If character is in any of the buffers, we considered it a delimiter """
-                        if any([decoded_char in buffer.decode('utf-8') for buffer in all_buffers]):
-                            ret.append(decoded_char)
-                except OverflowError:
+                    byte_char = struct.pack('=B', int(char, 0))
+                    """ If character is in any of the buffers, we considered it a delimiter """
+                    if any([byte_char in buffer for buffer in all_buffers]):
+                        ret.append(byte_char)
+                except struct.error:
                     pass
         else:
             raise NotImplementedError('Binary protocol not implemented')
@@ -150,21 +151,23 @@ class Model:
         decoded = buffer.decode('utf-8')
         return all([char in string.printable for char in decoded])
 
-    def is_special_char(self, char):
-        return char in ['\t', '\n', '\r']
-
     def get_keyword(self, buffer, delimiters, textual=False):
         if textual:
-            buffer = buffer.decode('utf-8').strip()
+            """ Strip special chars at the end """
+            buffer = buffer.decode('utf-8').rstrip()
 
-        byte = delimiters[0]
-        keyword = buffer.split(byte)[0]
+        for delimiter in delimiters:
+            """
+            Assume that a delimiter at the end of buffer does not correspond to
+            keyword delimitation, only as buffer termination
+            """
+            if (delimiter in buffer) and (delimiter != buffer[-1]):
+                byte = delimiters[0]
+                keyword = buffer.split(byte)[0]
+                return keyword
 
-        """ TODO More than one delimiter """
-        if len(delimiters) > 1:
-            import pdb; pdb.set_trace()
-
-        return keyword
+        """ No delimeters found, return same buffer """
+        return buffer
 
     def symbolic_analysis(self, traces, binary, symbolic_engine):
         symbolic_engine = symbolic.SymbolicEngine(symbolic_engine, binary)

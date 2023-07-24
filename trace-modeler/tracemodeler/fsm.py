@@ -251,23 +251,45 @@ class Transition:
         return False
 
 class Message:
-    def __init__(self, bytes_=None, keyword=None):
-        self.bytes = bytes_
-        self.keyword = keyword
+    def __init__(self, buffer):
+        self.buffer = buffer
+        self.keyword = buffer   # Set whole buffer as default keyword
+        self.symbols = None
 
     def generate_message(self):
         return self.bytes
 
+    def analyze_keyword(self, delimiters, textual=False):
+        if textual:
+            """ Strip special chars at the end """
+            buffer = self.buffer.rstrip()
+
+        for delimiter in delimiters:
+            """
+            Assume that a delimiter at the end of buffer does not correspond to
+            keyword delimitation, only as buffer termination
+            """
+            if (delimiter in buffer) and (delimiter != buffer[-1]):
+                self.keyword = buffer.split(delimiter)[0]
+                return
+
+        """ Default keyword to decoded buffer in textual protocols """
+        if textual:
+            self.keyword = buffer
+
+    def analyze_symbols(self, delimiters):
+        import pdb; pdb.set_trace()
+
     def dump(self):
         ret = {}
 
-        ret['hexbytes'] = binascii.hexlify(self.bytes).decode('utf-8')
+        ret['hexbytes'] = binascii.hexlify(self.buffer).decode('utf-8')
         ret['keyword'] = self.keyword
 
         return ret
 
     def load(self, content):
-        self.bytes = binascii.unhexlify(content['hexbytes'])
+        self.buffer = binascii.unhexlify(content['hexbytes'])
         self.keyword = content['keyword']
 
     def __eq__(self, other):
