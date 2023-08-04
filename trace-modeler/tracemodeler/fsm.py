@@ -14,6 +14,9 @@ class ProtocolFSM:
         self.last_inserted = None
         self.states = []
         self.refine = False
+        self.textual = False        # Textual or binary protocol
+        self.keywords = []
+        self.delimiters = []
 
     def is_empty(self):
         return self.entry_state is None
@@ -63,6 +66,10 @@ class ProtocolFSM:
         self.states.append(state)
 
     def add(self, message):
+        """ Collect message keywords """
+        if message.keyword not in self.keywords:
+            self.keywords.append(message.keyword)
+
         """ Add first state """
         if self.is_empty():
             state = State(self._generate_id())
@@ -111,17 +118,28 @@ class ProtocolFSM:
                 self._add_transition_to_new_state(message)
 
     def dump(self):
-        if self.is_empty():
-            return {}
+        ret = {}
 
-        ret = {'entry_state': self.entry_state.id}
+        if self.is_empty():
+            return ret
+
+        ret['type'] = 'textual' if self.textual else 'binary'
+
+        ret['entry_state'] = self.entry_state.id
         states = {}
 
         for state in self.states:
+            state.analyze_symbols(self.keywords, self.delimiters)
             dump_state = state.dump()
             states[state.id] = dump_state[state.id]
 
         ret['states'] = states
+
+        symbols = {}
+        symbols['keywords'] = [binascii.hexlify(item).decode('utf-8') for item in self.keywords]
+        symbols['delimiters'] = [binascii.hexlify(item).decode('utf-8') for item in self.delimiters]
+
+        ret['symbols'] = symbols
 
         return ret
 
@@ -148,6 +166,9 @@ class ProtocolFSM:
             for trans in state:
                 """ Epsilon symbol if it is an empty keyword """
                 label = trans.message.keyword if trans.message.keyword else '\u03B5'
+
+                if self.textual:
+                    label = label.decode('utf-8')
 
                 if trans.next is None:
                     graph.edge(state.id, 'final', label=label)
@@ -195,6 +216,10 @@ class State:
             self.last_transition.next = state
         else:
             raise NotImplementedError
+
+    def analyze_symbols(self, keywords, delimiters):
+        for transition in self.transitions:
+            transition.message.analyze_symbols(keywords, delimiters)
 
     def dump(self):
         ret = {}
@@ -253,13 +278,16 @@ class Transition:
 class Message:
     def __init__(self, buffer):
         self.buffer = buffer
-        self.keyword = buffer   # Set whole buffer as default keyword
-        self.symbols = None
+        self.keyword = buffer       # Set whole buffer as default keyword
+        self.structure = []
+        self.symbols = []
 
     def generate_message(self):
         return self.bytes
 
     def analyze_keyword(self, delimiters, textual=False):
+        buffer = self.buffer
+
         if textual:
             """ Strip special chars at the end """
             buffer = self.buffer.rstrip()
@@ -277,14 +305,45 @@ class Message:
         if textual:
             self.keyword = buffer
 
-    def analyze_symbols(self, delimiters):
-        import pdb; pdb.set_trace()
+    def analyze_structure(self, delimiters):
+        buffers = [self.buffer]
+
+        for delimiter in delimiters:
+            buffers = self.split_keep_delimiter(buffers, delimiter)
+
+        self.structure = buffers
+
+    def split_keep_delimiter(self, buffers, delimiter):
+        ret = []
+
+        for buffer in buffers:
+            if delimiter in buffer:
+                items = buffer.split(delimiter)
+                for (item1, item2) in zip(items[:-1], items[1:]):
+                    if item1: ret.append(item1)
+                    ret.append(delimiter)
+                    if item2: ret.append(item2)
+            else:
+                ret.append(buffer)
+
+        return ret
+
+    def analyze_symbols(self, keywords, delimiters):
+        for item in self.structure:
+            if item in keywords:
+                self.symbols.append(f'k{{{keywords.index(item)}}}')
+            elif item in delimiters:
+                self.symbols.append(f'd{{{delimiters.index(item)}}}')
+            else:
+                self.symbols.append(binascii.hexlify(item).decode('utf-8'))
 
     def dump(self):
         ret = {}
 
         ret['hexbytes'] = binascii.hexlify(self.buffer).decode('utf-8')
-        ret['keyword'] = self.keyword
+        ret['keyword'] = binascii.hexlify(self.keyword).decode('utf-8')
+        ret['structure'] = [binascii.hexlify(item).decode('utf-8') for item in self.structure]
+        ret['symbols'] = self.symbols
 
         return ret
 

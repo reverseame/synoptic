@@ -90,7 +90,8 @@ class ArgumentParser:
         filenames = [filename for filename in [args.fsm_export, args.fsm_pdf, args.cfg_pdf] if (filename is not None) and os.path.isfile(filename)]
 
         if filenames:
-            debug.warning(f'{", ".join([os.path.realpath(filename) for filename in filenames])}\t: File/s will be overwritten')
+            n_files = 'Files' if len(filenames) > 1 else 'File'
+            debug.warning(f'{", ".join([os.path.realpath(filename) for filename in filenames])}\t: {n_files} will be overwritten')
             response = input('Do you want to continue? [Y/n] ')
             if response.lower() not in ['', 'y', 'yes']:
                 print('Abort.')

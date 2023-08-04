@@ -42,12 +42,12 @@ class Model:
         self.fsm.initialize()
 
         buffer_comparations = self.get_buffer_comparations(traces)
-        delimiters = self.get_delimiters(buffer_comparations)
+        (self.fsm.textual, self.fsm.delimiters) = self.get_delimiters(buffer_comparations)
 
         for item in buffer_comparations:
             message = tracemodeler.fsm.Message(item['buffer'])
-            message.analyze_keyword(delimiters, textual=True)
-            message.analyze_symbols(delimiters)
+            message.analyze_keyword(self.fsm.delimiters, self.fsm.textual)
+            message.analyze_structure(self.fsm.delimiters)
             self.fsm.add(message)
 
     def analyze_cfg_net_trace(self, net_trace):
@@ -124,6 +124,7 @@ class Model:
 
     def get_delimiters(self, buffer_comparations):
         ret = []
+        textual = False
 
         all_comparations = []
         [all_comparations.extend(item['comparations']) for item in buffer_comparations]
@@ -134,18 +135,20 @@ class Model:
 
         """ Textual protocol """
         if all([self.is_printable(buffer) for buffer in all_buffers]):
+            textual = True
             for char in count.keys():
                 try:
                     byte_char = struct.pack('=B', int(char, 0))
                     """ If character is in any of the buffers, we considered it a delimiter """
                     if any([byte_char in buffer for buffer in all_buffers]):
-                        ret.append(byte_char)
+                        if byte_char not in ret:
+                            ret.append(byte_char)
                 except struct.error:
                     pass
         else:
             raise NotImplementedError('Binary protocol not implemented')
 
-        return ret
+        return (textual, ret)
 
     def is_printable(self, buffer):
         decoded = buffer.decode('utf-8')
