@@ -175,7 +175,8 @@ class Model:
     def symbolic_analysis(self, traces, binary, symbolic_engine):
         symbolic_engine = symbolic.SymbolicEngine(symbolic_engine, binary)
         binary_base_addr = self.get_base_addr(traces)
-        self.analyze_tainted_loops(binary, symbolic_engine, binary_base_addr)
+        results = self._symbolic_analysis(binary, symbolic_engine, binary_base_addr)
+        self.analyze_buffers(results)
 
     def split_sessions(self, data):
         ret = []
@@ -222,10 +223,11 @@ class Model:
             if trace['action'] == 'relocate':
                 return int(trace['image-low'], 0)
 
-    def analyze_tainted_loops(self, binary, symbolic_engine, binary_base_addr):
+    def _symbolic_analysis(self, binary, symbolic_engine, binary_base_addr):
+        ret = []
         tainted_cfgs = self.cfg.get_tainted_cfgs()
 
-        debug.info(f'Opening {os.path.basename(binary)} with radare2...')
+        debug.info(f'Opening {os.path.realpath(binary)} with radare2...')
         """ Open binary at base address and close stderr """
         r2 = r2pipe.open(binary, flags=['-B', hex(binary_base_addr), '-2'])
 
@@ -237,9 +239,13 @@ class Model:
                 except cfg.CFGException as e:
                     debug.warning(f'{str(e)}\t: Couldn\'t update {hex(tainted_cfg.id)} ({tainted_cfg.entry_node.group.leader.routine}) with static information')
 
-                self.get_symbolic_messages(symbolic_engine, binary_base_addr, tainted_cfg, loop_info)
+                result = self.get_symbolic_buffers(symbolic_engine, binary_base_addr, tainted_cfg, loop_info)
+                debug.info(f'{len(result)} concrete buffers found by symbolic execution')
+                ret.append(result)
 
         r2.quit()
+
+        return ret
 
     def update_cfg_with_static_info(self, r2, tainted_cfg):
         """ Function address pointed by ins leader of the entry node """
@@ -315,31 +321,42 @@ class Model:
                 if defined_node.static:
                     cfg.add(defined_node.group)
 
-    def get_symbolic_messages(self, symbolic_engine, binary_base_addr, target_cfg, loop_info):
+    def get_symbolic_buffers(self, symbolic_engine, binary_base_addr, target_cfg, loop_info):
+        ret = []
+
         debug.info(f'Symbolic\t: Setting up symbolic information for {hex(target_cfg.id)} ({target_cfg.entry_node.group.leader.routine})...')
 
-        if target_cfg.id == 0x55cc71430020:
-            symbolic_engine.open_binary(base_addr=binary_base_addr)
+        symbolic_engine.open_binary(base_addr=binary_base_addr)
 
-            for loop in loop_info:
-                if 'pre-header' in loop:
-                    start_node = loop['pre-header']
+        for loop in loop_info:
+            if 'pre-header' in loop:
+                start_node = loop['pre-header']
+            else:
+                start_node = loop['header']
+
+            start_addr = start_node.id                
+            debug.info(f'Symbolic\t: start-addr\t: {hex(start_addr)}')
+            symbolic_engine.start(start_addr)
+            self._analyze_symbolic_vars(symbolic_engine, start_node)
+            self._analyze_target_addrs(symbolic_engine, target_cfg)
+
+            already_seen_count = 0
+            already_seen_threshold = 5
+
+            for results in symbolic_engine.run():
+                """ Stop symbolic execution if we do not encounter new buffers """
+                if already_seen_count >= already_seen_threshold:
+                    debug.warning('We are obtaining the same concrete buffers, skipping...')
+                    return ret
+
+                result = results[0]
+                if result in ret:
+                    already_seen_count += 1
                 else:
-                    start_node = loop['header']
+                    already_seen_count = 0
+                    ret.append(result)
 
-                start_addr = start_node.id                
-                debug.info(f'Symbolic\t: start-addr\t: {hex(start_addr)}')
-                symbolic_engine.start(start_addr)
-                self._analyze_symbolic_vars(symbolic_engine, start_node)
-                self._analyze_target_addrs(symbolic_engine, target_cfg)
-
-                results = []
-                for result in symbolic_engine.run():
-                    debug.info(f'Result found: {result}')
-                    results.append(result)
-
-                if not results:
-                    debug.warning('Unable to obtain symbolic messages')
+        return ret
 
     def _analyze_symbolic_vars(self, symbolic_engine, node):
         """ Loop every ins in node """
@@ -366,3 +383,38 @@ class Model:
             else:
                 debug.info(f'Symbolic\t: goal-addr\t: {hex(node.id)}')
                 symbolic_engine.goal(node.id)
+
+    def analyze_buffers(self, buffers):
+        """ Order buffers by length """
+        buffers = sorted(buffers, key=lambda x: len(x), reverse=True)
+
+        """ Assume that keywords are contained in the list with more results """
+        keywords = buffers[0]
+
+        """ Strip trailing zeros in buffer """
+        keywords = [self.strip_buffer(keyword, self.fsm.textual) for keyword in keywords]
+
+        if self.fsm.textual:
+            """ Any keyword not previously found could be a new keyword """
+            new_keywords = [keyword.upper() for keyword in keywords if keyword.upper() not in [fsm_keyword.upper() for fsm_keyword in self.fsm.keywords]]
+            """ Ensure that at least one of the inferred keywords is in the previous known keywords """
+            if new_keywords and any([keyword.upper() in [fsm_keyword.upper() for fsm_keyword in self.fsm.keywords] for keyword in keywords]):
+                debug.info(f'{len(new_keywords)} keywords inferred: {new_keywords}')
+                self.fsm.inferred_keywords.extend(new_keywords)
+            else:
+                debug.warning(f'Unable to find new keywords in {keywords}')
+        else:
+            raise NotImplementedError
+
+    def strip_buffer(self, buffer, textual):
+        ret = buffer
+
+        if textual:
+            """
+            A null byte in a textual protocol is not valid, so remove trailing
+            bytes after first occurrence
+            """
+            if b'\x00' in buffer:
+                ret = buffer.split(b'\x00')[0]
+
+        return ret

@@ -1,7 +1,9 @@
 import os
 import copy
 import json
+import PyPDF2
 import binascii
+import tempfile
 
 """ Disable logging for graphviz library """
 import logging
@@ -17,6 +19,7 @@ class ProtocolFSM:
         self.textual = False        # Textual or binary protocol
         self.keywords = []
         self.delimiters = []
+        self.inferred_keywords = []
 
     def is_empty(self):
         return self.entry_state is None
@@ -137,6 +140,7 @@ class ProtocolFSM:
 
         symbols = {}
         symbols['keywords'] = [binascii.hexlify(item).decode('utf-8') for item in self.keywords]
+        symbols['inferred_keywords'] = [binascii.hexlify(item).decode('utf-8') for item in self.inferred_keywords]
         symbols['delimiters'] = [binascii.hexlify(item).decode('utf-8') for item in self.delimiters]
 
         ret['symbols'] = symbols
@@ -147,7 +151,26 @@ class ProtocolFSM:
         return json.dumps(self.dump(), indent=indent)
 
     def export_graph(self, output):
+        """ Automatically deletes temp_dir and all its content """
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fsm_file = os.path.join(temp_dir, 'fsm')
+            self._generate_fsm_graph(fsm_file)
+            inferred_keywords_file = os.path.join(temp_dir, 'inferred_keywords')
+            self._generate_inferred_keywords_graph(inferred_keywords_file)
+
+            """ Join temp files """
+            merger = PyPDF2.PdfMerger()
+            merger.append(f'{fsm_file}.gv.pdf')
+            merger.append(f'{inferred_keywords_file}.gv.pdf')
+
+            merger.write(output)
+            merger.close()
+
+    def _generate_fsm_graph(self, output):
         graph = graphviz.Digraph(output)
+
+        """ Graph title """
+        graph.attr('graph', label='FSM', labelloc='t', fontsize='16.00', fontname='sans')
 
         """ Set left to right graph """
         graph.attr(rankdir='LR')
@@ -164,6 +187,7 @@ class ProtocolFSM:
 
         for state in self.states:
             for trans in state:
+                graph.node(state.id, label=state.id, fontname='monospace')
                 """ Epsilon symbol if it is an empty keyword """
                 label = trans.message.keyword if trans.message.keyword else '\u03B5'
 
@@ -171,20 +195,39 @@ class ProtocolFSM:
                     label = label.decode('utf-8')
 
                 if trans.next is None:
-                    graph.edge(state.id, 'final', label=label)
+                    graph.edge(state.id, 'final', label=label, labelfontname='monospace', fontname='monospace')
                 else:
                     """ Intermediate nodes """
-                    graph.edge(state.id, trans.next.id, label=label)
+                    graph.edge(state.id, trans.next.id, label=label, labelfontname='monospace', fontname='monospace')
 
         """ Render graph """
         graph.render()
 
-        """ Rename output file """
-        pdf_file = f'{output}.gv.pdf'
-        os.rename(pdf_file, output)
-        """ Eliminate DOT file """
-        gv_file = f'{output}.gv'
-        os.remove(gv_file)
+    def _generate_inferred_keywords_graph(self, inferred_keywords_file):
+        graph = graphviz.Digraph(inferred_keywords_file)
+
+        """ Graph title """
+        graph.attr('graph', label='Inferred Keywords', labelloc='t', fontsize='16.00', fontname='sans')
+
+        """ General node style """
+        graph.attr('node', shape='circle', style='dotted')
+        """ Set top to bottom graph """
+        graph.attr(rankdir='TB')
+
+        max_label_length = len(max(self.inferred_keywords))
+
+        for (i, inferred_keyword) in enumerate(self.inferred_keywords):
+            label = f'{inferred_keyword.decode("utf-8")}'
+            graph.node(str(i), label=label, fixedsize='true', width=str(max_label_length/5), fontname='monospace')    # Empirical width value
+
+        """ Generate a grid of grid_columns to display inferred keywords """
+        grid_columns = 5
+        for i in range(grid_columns, len(self.inferred_keywords)):
+            """ Invisible edges """
+            graph.edge(str(i - grid_columns), str(i), style="invis")
+
+        """ Render graph """
+        graph.render()
 
     def __len__(self):
         return len(self.states)

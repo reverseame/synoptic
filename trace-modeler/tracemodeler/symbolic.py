@@ -28,5 +28,5 @@ class SymbolicEngine():
     def cut(self, cut_addr):
         self.engine.cut(cut_addr)
 
-    def run(self, timeout=5, n_solutions=10):
+    def run(self, timeout=5, n_solutions=1):
         yield from self.engine.run(timeout, n_solutions)
