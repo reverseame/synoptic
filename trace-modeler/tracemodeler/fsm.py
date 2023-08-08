@@ -307,6 +307,7 @@ class ProtocolFSM:
                         delimiter = symbol[i]
                     """ Ensure all delimiters are placed in the same position """
                     if symbol[i] != delimiter:
+                        delimiter = None
                         break
                 else:
                     break

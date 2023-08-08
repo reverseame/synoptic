@@ -9,21 +9,27 @@ import ipaddress
 import tracemodeler.debug as debug
 import tracemodeler.utils as utils
 
-description = 'This tool analyzes server execution traces to infer its protocol FSM, and\
+description = 'This tool analyzes server execution traces to infer its protocol Finite-State Machine (FSM), and\
  uses symbolic analysis to try to find new messages not contained in the traces'
 
 usage_examples = '''usage examples:
-    Displays a protocol model based on a trace:
+    Displays a protocol FSM based on a trace:
         $ python trace-modeler/modeler.py --log /path/to/trace.log
 
-    Exports a protocol model:
-        $ python trace-modeler/modeler.py --log /path/to/trace.log --model-export /path/to/model.json
+    Exports a protocol FSM for later use:
+        $ python trace-modeler/modeler.py --log /path/to/trace.log --fsm-export /path/to/fsm.json
 
-    Enables CFG analysis and exports the constructed CFG to a PDF file:
-        $ python trace-modeler/modeler.py --log /path/to/trace.log --cfg-analysis --binary /path/to/binary --cfg-pdf /path/to/cfg.pdf
+    Exports the constructed Control-Flow Graph (CFG) and FSM to a PDF file:
+        $ python trace-modeler/modeler.py --log /path/to/trace.log --cfg-pdf /path/to/cfg.pdf --fsm-pdf /path/to/fsm.pdf
 
-    Replays messages to a server based on a protocol model:
-        $ python3 trace-modeler/modeler.py --model-import /path/to/model.json --replay --server-ip <ip> --server-port <port>
+    Infers new keywords thanks to symbolic analysis and stores them in the FSM:
+        $ python trace-modeler/modeler.py --log /path/to/trace.log --fsm-export /path/to/fsm.json --symbolic-analysis --binary /path/to/binary
+
+    Replays messages to a server based on a previous FSM:
+        $ python3 trace-modeler/modeler.py --fsm-import /path/to/fsm.json --replay --server-ip <ip> --server-port <port>
+
+    Replay FSM messages and send new messages obtained thanks to symbolic analysis:
+        $ python3 trace-modeler/modeler.py --fsm-import /path/to/fsm.json --replay --server-ip <ip> --server-port <port> --new-messages
     '''
 
 class ArgumentParser:
@@ -50,6 +56,7 @@ class ArgumentParser:
         self.argparser.add_argument('--server-port', type=int, metavar='<port>', help='server listening port')
         self.argparser.add_argument('--transport-layer', type=str, metavar='<tcp|udp>', default='tcp', help='Transport layer (default to TCP)')
         self.argparser.add_argument('--delay', type=int, metavar='<ms>', default=200, help='delay between sending messages (in ms) (default to 200 ms)')
+        self.argparser.add_argument('--new-messages', action='store_true', help='constructs and send new messages based in symbolic analysis results')
 
     def parse_args(self, arguments):
         args = self.argparser.parse_args(arguments)
@@ -63,16 +70,18 @@ class ArgumentParser:
         filepath = shutil.which("binsec")
         
         if filepath is None:
+            where = 'system files'
+
             system = platform.system()
             if system == 'Linux':
-                debug.error('Binsec not found in $PATH variable')
+                where = '$PATH variable'
             elif system == 'Windows':
-                debug.error('Binsec not found in %PATH% variable')
-            else:
-                debug.error('Binsec not found in system files')
+                where = '%PATH% variable'
+
+            debug.error(f'Binsec not found in {where}')
 
     def _check_r2(self):
-        """ Open radare2 withouth binary and close stderr """
+        """ Open radare2 without binary and close stderr """
         r2 = r2pipe.open('-', flags=['-2'])
         """ Check radare2 version """
         version_str = r2.cmd('?Vq').rstrip()
@@ -84,7 +93,7 @@ class ArgumentParser:
         version = int(version_str.replace('.', ''))
 
         if version < min_r2_supported:
-            debug.error(f'radare2 version found ({version_str}) older than minimun supported ({utils.MIN_R2_VERSION})')
+            debug.error(f'radare2 version found ({version_str}) older than minimum supported ({utils.MIN_R2_VERSION})')
 
     def _check_existing_files(self, args):
         filenames = [filename for filename in [args.fsm_export, args.fsm_pdf, args.cfg_pdf] if (filename is not None) and os.path.isfile(filename)]
@@ -108,13 +117,11 @@ class ArgumentParser:
                 if not os.path.isfile(filename):
                     debug.error(f'{os.path.realpath(filename)}\t: Not a file')
 
-        if args.dirlog:
-            if not os.path.isdir(args.dirlog):
-                debug.error(f'{os.path.realpath(args.dirlog)}\t: Not a directory')
+        if args.dirlog and not os.path.isdir(args.dirlog):
+            debug.error(f'{os.path.realpath(args.dirlog)}\t: Not a directory')
 
-        if args.fsm_import:
-            if not os.path.isfile(args.fsm_import):
-                debug.error(f'{os.path.realpath(args.fsm_import)}\t: Not a file')
+        if args.fsm_import and not os.path.isfile(args.fsm_import):
+            debug.error(f'{os.path.realpath(args.fsm_import)}\t: Not a file')
 
         """ Symbolic analysis """
         if args.symbolic_analysis:
@@ -127,7 +134,7 @@ class ArgumentParser:
 
                 self._check_r2()
 
-                """ Check symnbolic engine """
+                """ Check symbolic engine """
                 if args.symbolic_engine == 'angr':
                     pass    # Assume angr is installed as Python library
                 elif args.symbolic_engine == 'binsec':
