@@ -4,7 +4,6 @@ import json
 import r2pipe
 import string
 import struct
-import binascii
 import capstone
 import collections
 
@@ -50,6 +49,8 @@ class Model:
             message.analyze_structure(self.fsm.delimiters)
             self.fsm.add(message)
 
+        self.fsm.finalize()
+
     def analyze_cfg_net_trace(self, net_trace):
         print_debug = False
         group = cfg.Group()
@@ -72,7 +73,7 @@ class Model:
                 routine_addr = int(item['routine-addr'], 16)
                 routine = item['routine']
                 addr = int(item['ins-addr'], 16)
-                opcodes = binascii.unhexlify(item['ins-opcodes'])
+                opcodes = bytes.fromhex(item['ins-opcodes'])
                 dis = next(self.md.disasm(opcodes, addr))           # Just dissasemble one instruction
 
                 """ Get control flow target """
@@ -113,7 +114,7 @@ class Model:
                 for item in net_trace:
                     if item['level'] == 'taint':
                         if item['action'] in ['recv', 'read']:
-                            buffer['buffer'] = binascii.unhexlify(item['buffer-content'])
+                            buffer['buffer'] = bytes.fromhex(item['buffer-content'])
                         elif item['action'] == 'compare':
                             if ((item['origin'] == 'reg-to-reg') and (item['reg1'] != item['reg2'])) or (item['origin'] != 'reg-to-reg'):
                                 comparations.append(item)
@@ -272,7 +273,7 @@ class Model:
             for ins_addr in bb['instrs']:
                 """ Disassemble one instruction """
                 ins_info = json.loads(r2.cmd(f'pdj 1 @ {ins_addr}'))[0]
-                opcodes = binascii.unhexlify(ins_info["bytes"])
+                opcodes = bytes.fromhex(ins_info["bytes"])
                 dis = next(self.md.disasm(opcodes, ins_addr))
                 """ Get routine name, only in the first ins """
                 if not routine:

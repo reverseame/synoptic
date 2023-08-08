@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 import capstone
 
 import tracemodeler.args
@@ -21,7 +22,10 @@ def main():
     """ Import a FSM """
     if args.fsm_import:
         filepath = os.path.abspath(args.fsm_import)
-        model.fsm.import_from_file(filepath)
+        try:
+            model.fsm.import_from_file(filepath)
+        except json.decoder.JSONDecodeError as e:
+            debug.error(f'{filepath}\t: Failed to load JSON\t: {str(e)}')
         debug.info(f'{filepath}\t: {len(model.fsm)} model messages imported')
 
     """ Analyze traces to create/refine a FSM """
@@ -57,7 +61,7 @@ def main():
         filepath = os.path.abspath(args.fsm_export)
         model.fsm.export_to_file(filepath)
         debug.info(f'{filepath}\t: FSM exported')
-    else:
+    elif filenames and args.fsm_import:
         debug.info(f'FSM infered\t:\n{str(model.fsm)}')
 
     if args.fsm_pdf:

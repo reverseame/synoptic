@@ -11,7 +11,7 @@ class Replayer:
         self.host = host
         self.port = port
         self.tcp = (transport_layer == 'tcp')
-        self.socket = self.create_socket()
+        #self.socket = self.create_socket()
 
     def create_socket(self):
         sock = None
@@ -31,22 +31,41 @@ class Replayer:
 
         return sock
 
-    def replay(self, fsm, delay=0.5):
+    def replay(self, fsm, delay):
+        new_messages_generated = False
+        already_visited = []
+
         try:
             debug.info(f'Sending {len(fsm)} messages...')
 
-            for message in fsm:
-                time.sleep(delay)
-                self.recv()
-                self.send(message.generate_message())
+            for transition in fsm:
+                next_state = transition.next
+                if next_state is not None:
+                    """
+                    Create new messages based in inferred keywords once we are
+                    back to an already seen state
+                    """
+                    if not new_messages_generated and (next_state.id in already_visited) and fsm.inferred_keywords:
+                        for inferred_message in fsm.generate_new_messages():
+                            time.sleep(delay)
+                            print(f'Inferred message\t: {inferred_message.buffer}')
+                        new_messages_generated = True
+                    else:
+                        already_visited.append(next_state.id)
+                        time.sleep(delay)
+                        print(transition.message.buffer)
+                #self.recv()
+                #self.send(message.buffer)
 
-            """ Try to receive a desconect message """
+            """ Try to receive a disconnect message """
             time.sleep(delay)
-            self.recv()
+            #self.recv()
         except KeyboardInterrupt:
             debug.warning('User interrupt')
+        except BrokenPipeError:
+            debug.warning('Socket closed by remote peer')
         finally:
-            if self.tcp: self.socket.close()
+            #if self.tcp: self.socket.close()
             debug.info(f'Done! Bye!')
 
     def recv(self):
