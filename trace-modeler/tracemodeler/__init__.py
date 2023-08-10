@@ -33,6 +33,9 @@ def main():
     if args.log: filenames.extend(args.log)
     if args.dirlog: filenames.extend(utils.get_logs(args.dirlog))
 
+    for filename in filenames:
+        debug.debug(f'Log found\t: {filename}')
+
     """ We have nothing to work on """
     if not args.fsm_import and not filenames:
         debug.error('Unable to find logs')
@@ -47,7 +50,7 @@ def main():
             pass
 
         if args.symbolic_analysis:
-            model.symbolic_analysis(traces, args.binary, args.symbolic_engine)
+            model.symbolic_analysis(traces, args.binary, args.symbolic_engine, args.timeout)
 
         if args.cfg_pdf:
             filepath = os.path.abspath(args.cfg_pdf)
@@ -61,7 +64,7 @@ def main():
         filepath = os.path.abspath(args.fsm_export)
         model.fsm.export_to_file(filepath)
         debug.info(f'{filepath}\t: FSM exported')
-    elif filenames and args.fsm_import:
+    else:
         debug.info(f'FSM infered\t:\n{str(model.fsm)}')
 
     if args.fsm_pdf:

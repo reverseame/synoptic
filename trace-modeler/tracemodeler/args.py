@@ -2,6 +2,7 @@ import os
 import sys
 import r2pipe
 import shutil
+import logging
 import argparse
 import platform
 import ipaddress
@@ -9,26 +10,38 @@ import ipaddress
 import tracemodeler.debug as debug
 import tracemodeler.utils as utils
 
-description = 'This tool analyzes server execution traces to infer its protocol Finite-State Machine (FSM), and\
- uses symbolic analysis to try to find new messages not contained in the traces'
+description = '''
+This tool is part of
+   __            __   __  ___    __ 
+  (__' \_/ |\ | /  \ |__)  |  | /  `
+  .__)  |  | \| \__/ |     |  | \__,
 
-usage_examples = '''usage examples:
-    Displays a protocol FSM based on a trace:
+(SYmbolic NetwOrk ProTocol InferenCe)
+
+This tool analyzes server execution traces to infer the Finite-State Machine (FSM)
+protocol, and uses symbolic analysis to attempt to find new messages not contained in the
+traces. It relies on the construction of a Dynamic Control-Flow Graph (CFG) from traces to
+analyze the execution flow of a program
+'''
+
+usage_examples = '''
+usage examples:
+    Display a protocol FSM based on a trace:
         $ python trace-modeler/modeler.py --log /path/to/trace.log
 
-    Exports a protocol FSM for later use:
+    Export a protocol FSM for future use:
         $ python trace-modeler/modeler.py --log /path/to/trace.log --fsm-export /path/to/fsm.json
 
-    Exports the constructed Control-Flow Graph (CFG) and FSM to a PDF file:
+    Create dynamic CFG and FSM PDF files:
         $ python trace-modeler/modeler.py --log /path/to/trace.log --cfg-pdf /path/to/cfg.pdf --fsm-pdf /path/to/fsm.pdf
 
-    Infers new keywords thanks to symbolic analysis and stores them in the FSM:
+    Infer new keywords through symbolic analysis and export them to the FSM:
         $ python trace-modeler/modeler.py --log /path/to/trace.log --fsm-export /path/to/fsm.json --symbolic-analysis --binary /path/to/binary
 
-    Replays messages to a server based on a previous FSM:
+    Replay messages to a server based on a previously exported FSM:
         $ python3 trace-modeler/modeler.py --fsm-import /path/to/fsm.json --replay --server-ip <ip> --server-port <port>
 
-    Replay FSM messages and send new messages obtained thanks to symbolic analysis:
+    Replay FSM messages and send new messages obtained through symbolic analysis:
         $ python3 trace-modeler/modeler.py --fsm-import /path/to/fsm.json --replay --server-ip <ip> --server-port <port> --new-messages
     '''
 
@@ -37,26 +50,28 @@ class ArgumentParser:
         self.argparser = argparse.ArgumentParser(description=description, epilog=usage_examples, formatter_class=argparse.RawDescriptionHelpFormatter)
         self.argparser.add_argument('-v', '--version',  action='store_true', help=f'display version and exit')
         """ General options """
-        self.argparser.add_argument('--force-overwrite', action='store_true', help='force overwrite of existing files')
-        """ Protocol FSM and binary CFG analysis """
+        self.argparser.add_argument('--force-overwrite', action='store_true', help='force overwriting of existing files')
+        self.argparser.add_argument('--debug', action='store_true', help='display debug messages')
+        """ FSM and dynamic CFG analysis """
         self.argparser.add_argument('--log', type=str, nargs='+', metavar='<file>', help='a list of .log files')
-        self.argparser.add_argument('--dirlog', type=str, metavar='<folder>', help='folder containing .log files')
-        self.argparser.add_argument('--m32', action='store_true', help='trace of a 32-bit program (64-bit by default)')
-        self.argparser.add_argument('--fsm-export', type=str, metavar='<file>', help='JSON file to export model')
-        self.argparser.add_argument('--fsm-import', type=str, metavar='<file>', help='JSON file defining a model')
-        self.argparser.add_argument('--fsm-pdf', type=str, metavar='<file>', help='PDF file representing the model')
-        self.argparser.add_argument('--cfg-pdf', type=str, metavar='<file>', help='PDF file representing the traces CFG')
+        self.argparser.add_argument('--dirlog', type=str, metavar='<folder>', help='a folder with .log files')
+        self.argparser.add_argument('--m32', action='store_true', help='traces are in 32-bit mode (64-bit by default)')
+        self.argparser.add_argument('--fsm-export', type=str, metavar='<file>', help='export FSM to JSON file')
+        self.argparser.add_argument('--fsm-import', type=str, metavar='<file>', help='import FSM from JSON file')
+        self.argparser.add_argument('--fsm-pdf', type=str, metavar='<file>', help='create a PDF with the FSM')
+        self.argparser.add_argument('--cfg-pdf', type=str, metavar='<file>', help='create a PDF with the dynamic CFG')
         """ Symbolic analysis """
         self.argparser.add_argument('--symbolic-analysis', action='store_true', help='activate symbolic analysis')
-        self.argparser.add_argument('--binary', type=str, metavar='<file>', help='binary file to complement the CFG reconstructed from .log files')
+        self.argparser.add_argument('--binary', type=str, metavar='<file>', help='binary file to add static information to the dynamic CFG')
         self.argparser.add_argument('--symbolic-engine', type=str, metavar='<angr|binsec>', default='angr', help='symbolic engine to use for new message inference (default to angr)')
+        self.argparser.add_argument('--timeout', type=int, metavar='<s>', default=5, help='symbolic exploration timeout, it is reset after each result found (default to 5 s)')
         """ Replay options """
-        self.argparser.add_argument('--replay', action='store_true', help='replay messages based in a model')
+        self.argparser.add_argument('--replay', action='store_true', help='send messages to a server based on the FSM')
         self.argparser.add_argument('--server-ip', type=str, metavar='<ip>', help='server IP')
         self.argparser.add_argument('--server-port', type=int, metavar='<port>', help='server listening port')
-        self.argparser.add_argument('--transport-layer', type=str, metavar='<tcp|udp>', default='tcp', help='Transport layer (default to TCP)')
-        self.argparser.add_argument('--delay', type=int, metavar='<ms>', default=200, help='delay between sending messages (in ms) (default to 200 ms)')
-        self.argparser.add_argument('--new-messages', action='store_true', help='constructs and send new messages based in symbolic analysis results')
+        self.argparser.add_argument('--transport-layer', type=str, metavar='<tcp|udp>', default='tcp', help='transport layer (default to TCP)')
+        self.argparser.add_argument('--delay', type=int, metavar='<ms>', default=200, help='delay between messages to be sent (in ms) (default to 200 ms)')
+        self.argparser.add_argument('--new-messages', action='store_true', help='generate and send new messages based on symbolic analysis information')
 
     def parse_args(self, arguments):
         args = self.argparser.parse_args(arguments)
@@ -83,17 +98,17 @@ class ArgumentParser:
     def _check_r2(self):
         """ Open radare2 without binary and close stderr """
         r2 = r2pipe.open('-', flags=['-2'])
-        """ Check radare2 version """
+        """ Obtain radare2 version """
         version_str = r2.cmd('?Vq').rstrip()
         """ Close radare2 """
         r2.quit()
 
-        """ Transform '5.8.4' into 584 """
-        min_r2_supported = int(utils.MIN_R2_VERSION.replace('.', ''))
+        """ Transform '5.8.4' str into 584 int """
+        r2_supported = int(utils.R2_VERSION.replace('.', ''))
         version = int(version_str.replace('.', ''))
 
-        if version < min_r2_supported:
-            debug.error(f'radare2 version found ({version_str}) older than minimum supported ({utils.MIN_R2_VERSION})')
+        if version != r2_supported:
+            debug.error(f'radare2 {version_str} is not supported. Please, install version {utils.R2_VERSION} (sorry for the inconvenience, but radare2 output is too unstable between versions)')
 
     def _check_existing_files(self, args):
         filenames = [filename for filename in [args.fsm_export, args.fsm_pdf, args.cfg_pdf] if (filename is not None) and os.path.isfile(filename)]
@@ -132,7 +147,10 @@ class ArgumentParser:
                 if not os.path.isfile(args.binary):
                     debug.error(f'{os.path.realpath(args.binary)}\t: Not a file')
 
-                self._check_r2()
+                try:
+                    self._check_r2()
+                except Exception as e:
+                    debug.error(str(e))
 
                 """ Check symbolic engine """
                 if args.symbolic_engine == 'angr':
@@ -143,6 +161,9 @@ class ArgumentParser:
                     debug.error(f'{args.symbolic_engine}\t: Unknown symbolic engine (--symbolic-engine <angr|binsec>)')
             else:
                 debug.error('Binary file not provided for symbolic analysis (--binary)')
+
+            if args.timeout < 0:
+                debug.error(f'{args.timeout}\t: Timeout must be positive')
 
         """ Replay options """
         if args.replay:
@@ -164,8 +185,12 @@ class ArgumentParser:
             if args.transport_layer not in ['tcp', 'udp']:
                 debug.error(f'{args.transport_layer}\t: Unknown transport layer (--transport-layer <tcp|udp>)')
 
-            if (args.delay < 0):
+            if args.delay < 0:
                 debug.error(f'{args.delay}\t: Delay must be positive')
 
         if not args.force_overwrite:
             self._check_existing_files(args)
+
+        """ Set logger to DEBUG level """
+        if args.debug:
+            logging.getLogger(utils.LOGGER_NAME).setLevel(logging.DEBUG)

@@ -2,7 +2,9 @@ import os
 import sys
 import glob
 import shlex
+import signal
 import datetime
+import __main__
 import capstone.x86
 
 """ Set auto local for user messages """
@@ -11,14 +13,17 @@ locale.setlocale(locale.LC_ALL, '')     # '' means auto
 
 import tracemodeler.debug as debug
 
+""" Name of the top-level environment a.k.a. main file """
+LOGGER_NAME = os.path.basename(__main__.__file__)
+
 """ Tool version """
 MAJOR = 0
 MINOR = 1
 PATCH = 0
 VERSION = f'{MAJOR}.{MINOR}.{PATCH}'
 
-""" Miminum radare2 version supported """
-MIN_R2_VERSION = '5.8.4'
+""" radare2 version supported """
+R2_VERSION = '5.8.4'
 
 def get_logs(path):
     ret = []
@@ -93,6 +98,17 @@ def filter_data(data):
 
 def order_data_by_timestamp(data):
     return sorted(data, key=lambda x: datetime.datetime.strptime(x['timestamp'], '%Y-%m-%d %H:%M:%S.%f'))
+
+def setup_timeout(timeout):
+    """ Set the signal handler and a {timeout}-second alarm """
+    signal.signal(signal.SIGALRM, _signal_handler)
+    signal.alarm(timeout)
+
+def disable_timeout():
+    signal.alarm(0)
+
+def _signal_handler(signum, frame):
+    raise TimeOutException
 
 def set_angr_reg(state, reg_id, value):
     if reg_id == capstone.x86.X86_REG_AH:
@@ -221,3 +237,6 @@ def set_angr_reg(state, reg_id, value):
         state.regs.r15w = value
     else:
         raise NotImplementedError(f'reg (ID: {reg_id}) not supported')
+
+class TimeOutException(Exception):
+    pass

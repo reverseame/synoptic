@@ -173,8 +173,8 @@ class Model:
         """ No delimeters found, return same buffer """
         return buffer
 
-    def symbolic_analysis(self, traces, binary, symbolic_engine):
-        symbolic_engine = symbolic.SymbolicEngine(symbolic_engine, binary)
+    def symbolic_analysis(self, traces, binary, symbolic_engine, timeout):
+        symbolic_engine = symbolic.SymbolicEngine(symbolic_engine, binary, timeout)
         binary_base_addr = self.get_base_addr(traces)
         results = self._symbolic_analysis(binary, symbolic_engine, binary_base_addr)
         self.analyze_buffers(results)
@@ -228,7 +228,7 @@ class Model:
         ret = []
         tainted_cfgs = self.cfg.get_tainted_cfgs()
 
-        debug.info(f'Opening {os.path.realpath(binary)} with radare2...')
+        debug.debug(f'Static analysis\t: Opening {os.path.realpath(binary)} with radare2 at base address {binary_base_addr:#x}...')
         """ Open binary at base address and close stderr """
         r2 = r2pipe.open(binary, flags=['-B', hex(binary_base_addr), '-2'])
 
@@ -236,31 +236,44 @@ class Model:
             loop_info = tainted_cfg.get_tainted_loop_info()
             if loop_info:
                 try:
-                    self.update_cfg_with_static_info(r2, tainted_cfg)
+                    """ Function address pointed by ins leader of the entry node """
+                    function_name = tainted_cfg.entry_node.group.leader.routine
+                    function_addr = tainted_cfg.entry_node.group.leader.routine_addr
+                    debug.info(f'Static analysis\t: Updating tainted function at {hex(function_addr)} ({tainted_cfg.entry_node.group.leader.routine}) with static information...')
+                    self.update_cfg_with_static_info(r2, tainted_cfg, function_name, function_addr)
                 except cfg.CFGException as e:
-                    debug.warning(f'{str(e)}\t: Couldn\'t update {hex(tainted_cfg.id)} ({tainted_cfg.entry_node.group.leader.routine}) with static information')
+                    debug.warning(f'Static analysis\t: {str(e)}\t: Couldn\'t update {hex(tainted_cfg.id)} ({tainted_cfg.entry_node.group.leader.routine}) with static information')
 
                 result = self.get_symbolic_buffers(symbolic_engine, binary_base_addr, tainted_cfg, loop_info)
-                debug.info(f'{len(result)} concrete buffers found by symbolic execution')
+                debug.info(f'Symbolic analysis\t: {len(result)} concrete buffers found by symbolic execution')
                 ret.append(result)
 
         r2.quit()
 
         return ret
 
-    def update_cfg_with_static_info(self, r2, tainted_cfg):
-        """ Function address pointed by ins leader of the entry node """
-        function_name = tainted_cfg.entry_node.group.leader.routine
-        function_addr = hex(tainted_cfg.entry_node.group.leader.routine_addr)
-
-        debug.info(f'Updating function at {function_addr} ({function_name}) with static information...')
-
+    def update_cfg_with_static_info(self, r2, tainted_cfg, function_name, function_addr):
         """ Seek to the start of the function """
-        r2.cmd(f's {function_addr}')
+        r2.cmd(f's {function_addr:#x}')
         """ Define function at current address """
         r2.cmd('af')
         """ List function basic blocks """
-        bbs = json.loads(r2.cmd('afbj'))
+        bbs_info = r2.cmd('afbj')
+
+        """
+        Is this a feature or a bug? Sometimes r2 doesn't list basic blocks in JSON
+        format, we need to do it a few times
+        """
+        """attempts = 1
+        while not bbs_info and (attempts <= 3):
+            bbs_info = r2.cmd('afbj')
+            attempts += 1"""
+
+        if not bbs_info:
+            debug.warning(f'Static analysis\t: Unable to find basic block information for function {function_addr:#x} ({function_name})')
+            return
+
+        bbs = json.loads(bbs_info)
 
         static_nodes = []
         routine = ''
@@ -302,7 +315,7 @@ class Model:
                 node = cfg.get_node_by_addr(node.group.tail.info['fallthrough'])
             cfg.reset_to_node(node)
 
-            """ Node that ends CFG because does not have output tranisitions """
+            """ Node that ends CFG because does not have output transitions """
             if bb['outputs'] == 0:
                 if node.static:
                     cfg.finalize()
@@ -325,7 +338,7 @@ class Model:
     def get_symbolic_buffers(self, symbolic_engine, binary_base_addr, target_cfg, loop_info):
         ret = []
 
-        debug.info(f'Symbolic\t: Setting up symbolic information for {hex(target_cfg.id)} ({target_cfg.entry_node.group.leader.routine})...')
+        debug.info(f'Symbolic analysis\t: Setting up symbolic information for {hex(target_cfg.id)} ({target_cfg.entry_node.group.leader.routine})...')
 
         symbolic_engine.open_binary(base_addr=binary_base_addr)
 
@@ -336,7 +349,7 @@ class Model:
                 start_node = loop['header']
 
             start_addr = start_node.id                
-            debug.info(f'Symbolic\t: start-addr\t: {hex(start_addr)}')
+            debug.debug(f'Symbolic analysis\t: start-addr\t: {hex(start_addr)}')
             symbolic_engine.start(start_addr)
             self._analyze_symbolic_vars(symbolic_engine, start_node)
             self._analyze_target_addrs(symbolic_engine, target_cfg)
@@ -344,18 +357,29 @@ class Model:
             already_seen_count = 0
             already_seen_threshold = 5
 
-            for results in symbolic_engine.run():
-                """ Stop symbolic execution if we do not encounter new buffers """
-                if already_seen_count >= already_seen_threshold:
-                    debug.warning('We are obtaining the same concrete buffers, skipping...')
-                    return ret
+            try:
+                for results in symbolic_engine.run():
+                    """ Stop symbolic execution if we do not encounter new buffers """
+                    if already_seen_count >= already_seen_threshold:
+                        debug.warning('Symbolic analysis\t: We are obtaining the same concrete buffers, skipping...')
+                        return ret
 
-                result = results[0]
-                if result in ret:
-                    already_seen_count += 1
-                else:
-                    already_seen_count = 0
-                    ret.append(result)
+                    result = results[0]
+                    debug.debug(f'Symbolic analysis\t: Concrete buffer\t: {result}')
+                    if result in ret:
+                        already_seen_count += 1
+                    else:
+                        already_seen_count = 0
+                        ret.append(result)
+            except KeyboardInterrupt:
+                debug.warning(f'Symbolic analysis\t: User interrupt')
+            except utils.TimeOutException:
+                debug.warning(f'Symbolic analysis\t: {symbolic_engine.get_name()} error\t: Exploration timeout after {symbolic_engine.get_timeout()} seconds')
+            except Exception as e:
+                debug.warning(f'Symbolic analysis\t: {symbolic_engine.get_name()} error\t: {str(e)}')
+
+            """ Reset all information """
+            symbolic_engine.clean_project()
 
         return ret
 
@@ -369,7 +393,7 @@ class Model:
                     if operand.type == capstone.x86.X86_OP_MEM:
                         tainted_reg_id = operand.mem.base
                         tainted_reg_name = ins.dis.reg_name(tainted_reg_id)
-                        debug.info(f'Symbolic\t: buffer\t: {tainted_reg_name}')
+                        debug.debug(f'Symbolic analysis\t: buffer\t: {tainted_reg_name}')
                         symbolic_engine.symbolic_buffer(tainted_reg_id, tainted_reg_name)
 
     def _analyze_target_addrs(self, symbolic_engine, target_cfg):
@@ -379,10 +403,10 @@ class Model:
             node = final_nodes.pop()
 
             if node.static:
-                debug.info(f'Symbolic\t: cut-addr\t: {hex(node.id)}')
+                debug.debug(f'Symbolic analysis\t: cut-addr\t: {hex(node.id)}')
                 symbolic_engine.cut(node.id)
             else:
-                debug.info(f'Symbolic\t: goal-addr\t: {hex(node.id)}')
+                debug.debug(f'Symbolic analysis\t: goal-addr\t: {hex(node.id)}')
                 symbolic_engine.goal(node.id)
 
     def analyze_buffers(self, buffers):
@@ -400,10 +424,12 @@ class Model:
             new_keywords = [keyword.upper() for keyword in keywords if keyword.upper() not in [fsm_keyword.upper() for fsm_keyword in self.fsm.keywords]]
             """ Ensure that at least one of the inferred keywords is in the previous known keywords """
             if new_keywords and any([keyword.upper() in [fsm_keyword.upper() for fsm_keyword in self.fsm.keywords] for keyword in keywords]):
-                debug.info(f'{len(new_keywords)} keywords inferred: {new_keywords}')
+                debug.info(f'Symbolic analysis\t: {len(new_keywords)} keywords inferred\t: {new_keywords}')
                 self.fsm.inferred_keywords.extend(new_keywords)
-            else:
+            elif new_keywords:
                 debug.warning(f'Unable to find new keywords in {keywords}')
+            else:
+                debug.warning(f'Unable to find new keywords')
         else:
             raise NotImplementedError
 
@@ -412,7 +438,7 @@ class Model:
 
         if textual:
             """
-            A null byte in a textual protocol is not valid, so remove trailing
+            A null byte in a textual protocol is invalid, so remove trailing
             bytes after first occurrence
             """
             if b'\x00' in buffer:

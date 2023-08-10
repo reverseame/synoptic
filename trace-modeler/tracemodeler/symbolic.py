@@ -1,14 +1,23 @@
+import signal
+
+import tracemodeler.debug as debug
 import tracemodeler.symbolic_engine.angr_engine
 import tracemodeler.symbolic_engine.binsec_engine
 
 class SymbolicEngine():
-    def __init__(self, symbolic, binary):
+    def __init__(self, symbolic, binary, timeout):
         if symbolic == 'angr':
-            self.engine = tracemodeler.symbolic_engine.angr_engine.AngrEngine(binary)
+            self.engine = tracemodeler.symbolic_engine.angr_engine.AngrEngine(binary, timeout)
         elif symbolic == 'binsec':
-            self.engine = tracemodeler.symbolic_engine.binsec_engine.BinsecEngine(binary)
+            self.engine = tracemodeler.symbolic_engine.binsec_engine.BinsecEngine(binary, timeout)
         else:
             raise ValueError(f'{symbolic}\t: Unknown symbolic engine')
+
+    def get_name(self):
+        return self.engine.get_name()
+
+    def get_timeout(self):
+        return self.engine.get_timeout()
 
     def open_binary(self, base_addr):
         self.engine.open_binary(base_addr)
@@ -28,5 +37,8 @@ class SymbolicEngine():
     def cut(self, cut_addr):
         self.engine.cut(cut_addr)
 
-    def run(self, timeout=5, n_solutions=1):
-        yield from self.engine.run(timeout, n_solutions)
+    def run(self, n_solutions=1):
+        yield from self.engine.run(n_solutions)
+
+    def clean_project(self):
+        self.engine.clean_project()

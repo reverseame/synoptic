@@ -197,16 +197,18 @@ class ProtocolFSM:
         with tempfile.TemporaryDirectory() as temp_dir:
             fsm_file = os.path.join(temp_dir, 'fsm')
             self._generate_fsm_graph(fsm_file)
-            inferred_keywords_file = os.path.join(temp_dir, 'inferred_keywords')
-            self._generate_inferred_keywords_graph(inferred_keywords_file)
+            if self.inferred_keywords:
+                inferred_keywords_file = os.path.join(temp_dir, 'inferred_keywords')
+                self._generate_inferred_keywords_graph(inferred_keywords_file)
 
-            """ Join temp files """
-            merger = PyPDF2.PdfMerger()
-            merger.append(f'{fsm_file}.gv.pdf')
-            merger.append(f'{inferred_keywords_file}.gv.pdf')
-
-            merger.write(output)
-            merger.close()
+                """ Join temp files """
+                merger = PyPDF2.PdfMerger()
+                merger.append(f'{fsm_file}.gv.pdf')
+                merger.append(f'{inferred_keywords_file}.gv.pdf')
+                merger.write(output)
+                merger.close()
+            else:
+                os.rename(f'{fsm_file}.gv.pdf', output)
 
     def _generate_fsm_graph(self, output):
         graph = graphviz.Digraph(output)

@@ -1,15 +1,23 @@
 import shutil
 
 class BinsecEngine:
-    def __init__(self, binary):
+    def __init__(self, binary, timeout):
+        self.name = 'binsec'
         self.binsec_path = shutil.which('binsec')
         self.binary = binary
+        self.timeout = timeout
         self.base_addr = None
         self.start_addr = None
         self.buffer = None
         self.regs = []
         self.goal_addr = None
         self.cut_addr = []
+
+    def get_name(self):
+        return self.name
+
+    def get_timeout(self):
+        return self.timeout
 
     def open_binary(self, base_addr):
         self.base_addr = base_addr
