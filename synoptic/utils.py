@@ -11,10 +11,10 @@ import capstone.x86
 import locale
 locale.setlocale(locale.LC_ALL, '')     # '' means auto
 
-import tracemodeler.debug as debug
+import synoptic.debug as debug
 
 """ Name of the top-level environment a.k.a. main file """
-LOGGER_NAME = os.path.basename(__main__.__file__)
+TOOL_NAME = os.path.basename(__main__.__file__)
 
 """ Tool version """
 MAJOR = 0

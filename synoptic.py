@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 
-import tracemodeler
+import synoptic
 
 if __name__ == '__main__':
-    tracemodeler.main()
+    synoptic.main()

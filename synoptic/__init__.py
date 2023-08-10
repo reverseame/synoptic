@@ -3,21 +3,23 @@ import sys
 import json
 import capstone
 
-import tracemodeler.args
-import tracemodeler.debug as debug
-import tracemodeler.model
-import tracemodeler.utils as utils
-import tracemodeler.replayer as replayer
+import synoptic.args
+import synoptic.utils as utils
+import synoptic.debug as debug
+import synoptic.tracemodeler.model
+import synoptic.tracemodeler.version
+import synoptic.tracemodeler.replayer as replayer
 
 def main():
-    args = tracemodeler.args.ArgumentParser().parse_args(sys.argv[1:])
+    args = synoptic.args.ArgumentParser().parse_args(sys.argv[1:])
 
     if args.version:
-        debug.info(f'Version\t: {utils.VERSION}')
+        print(f'{utils.TOOL_NAME}\t\t: {utils.VERSION}')
+        print(f'{synoptic.tracemodeler.version.TOOL_NAME}\t: {synoptic.tracemodeler.version.VERSION}')
         sys.exit(0)
 
     arch_mode = capstone.CS_MODE_32 if args.m32 else capstone.CS_MODE_64
-    model = tracemodeler.model.Model(arch_mode=arch_mode)
+    model = synoptic.tracemodeler.model.Model(arch_mode=arch_mode)
 
     """ Import a FSM """
     if args.fsm_import:
@@ -44,7 +46,7 @@ def main():
     if filenames:
         """ Proceed with CFG and FSM analysis """
         try:
-            traces = utils.get_traces(filenames)
+            traces = synoptic.utils.get_traces(filenames)
             model.analyze(traces)
         except KeyboardInterrupt:
             pass

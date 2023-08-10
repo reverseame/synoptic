@@ -5,8 +5,8 @@ for module in ['angr', 'ailment', 'claripy', 'cle', 'pyvex']:
 import angr
 import claripy
 
-import tracemodeler.debug as debug
-import tracemodeler.utils as utils
+import synoptic.debug as debug
+import synoptic.utils as utils
 
 class AngrEngine():
     def __init__(self, binary, timeout):

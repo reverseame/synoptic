@@ -7,42 +7,41 @@ import argparse
 import platform
 import ipaddress
 
-import tracemodeler.debug as debug
-import tracemodeler.utils as utils
+import synoptic.debug as debug
+import synoptic.utils as utils
 
 description = '''
-This tool is part of
    __            __   __  ___    __ 
   (__' \_/ |\ | /  \ |__)  |  | /  `
   .__)  |  | \| \__/ |     |  | \__,
 
 (SYmbolic NetwOrk ProTocol InferenCe)
 
-This tool analyzes server execution traces to infer the Finite-State Machine (FSM)
-protocol, and uses symbolic analysis to attempt to find new messages not contained in the
-traces. It relies on the construction of a Dynamic Control-Flow Graph (CFG) from traces to
-analyze the execution flow of a program
+This script orchestrates the generation and analysis of server execution traces to infer
+the Finite-State Machine (FSM) protocol, and uses symbolic analysis to attempt to find
+new messages not contained in the traces. It relies on the construction of a Dynamic
+Control-Flow Graph (CFG) from traces to analyze the execution flow of a program
 '''
 
 usage_examples = '''
 usage examples:
     Display a protocol FSM based on a trace:
-        $ python trace-modeler/modeler.py --log /path/to/trace.log
+        $ python synoptic.py --log /path/to/trace.log
 
     Export a protocol FSM for future use:
-        $ python trace-modeler/modeler.py --log /path/to/trace.log --fsm-export /path/to/fsm.json
+        $ python synoptic.py --log /path/to/trace.log --fsm-export /path/to/fsm.json
 
     Create dynamic CFG and FSM PDF files:
-        $ python trace-modeler/modeler.py --log /path/to/trace.log --cfg-pdf /path/to/cfg.pdf --fsm-pdf /path/to/fsm.pdf
+        $ python synoptic.py --log /path/to/trace.log --cfg-pdf /path/to/cfg.pdf --fsm-pdf /path/to/fsm.pdf
 
     Infer new keywords through symbolic analysis and export them to the FSM:
-        $ python trace-modeler/modeler.py --log /path/to/trace.log --fsm-export /path/to/fsm.json --symbolic-analysis --binary /path/to/binary
+        $ python synoptic.py --log /path/to/trace.log --fsm-export /path/to/fsm.json --symbolic-analysis --binary /path/to/binary
 
     Replay messages to a server based on a previously exported FSM:
-        $ python3 trace-modeler/modeler.py --fsm-import /path/to/fsm.json --replay --server-ip <ip> --server-port <port>
+        $ python synoptic.py --fsm-import /path/to/fsm.json --replay --server-ip <ip> --server-port <port>
 
     Replay FSM messages and send new messages obtained through symbolic analysis:
-        $ python3 trace-modeler/modeler.py --fsm-import /path/to/fsm.json --replay --server-ip <ip> --server-port <port> --new-messages
+        $ python synoptic.py --fsm-import /path/to/fsm.json --replay --server-ip <ip> --server-port <port> --new-messages
     '''
 
 class ArgumentParser:
@@ -76,7 +75,9 @@ class ArgumentParser:
     def parse_args(self, arguments):
         args = self.argparser.parse_args(arguments)
 
-        self._check_args(args)
+        """ Do not need to check anything to only displaying version """
+        if not args.version:
+            self._check_args(args)
 
         return args
 
@@ -122,6 +123,7 @@ class ArgumentParser:
                 sys.exit(-1)
 
     def _check_args(self, args):
+
         """ Check for main arguments """
         if not any([args.log, args.dirlog, args.fsm_import]):
             debug.error('You need to provide either log files (--log or --dirlog) or a FSM (--fsm-import)')
@@ -193,4 +195,4 @@ class ArgumentParser:
 
         """ Set logger to DEBUG level """
         if args.debug:
-            logging.getLogger(utils.LOGGER_NAME).setLevel(logging.DEBUG)
+            logging.getLogger(utils.TOOL_NAME).setLevel(logging.DEBUG)

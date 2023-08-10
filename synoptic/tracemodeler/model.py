@@ -7,16 +7,16 @@ import struct
 import capstone
 import collections
 
-import tracemodeler.cfg as cfg
-import tracemodeler.fsm
-import tracemodeler.debug as debug
-import tracemodeler.utils as utils
-import tracemodeler.symbolic as symbolic
+import synoptic.debug as debug
+import synoptic.utils as utils
+import synoptic.tracemodeler.cfg as cfg
+import synoptic.tracemodeler.fsm
+import synoptic.tracemodeler.symbolic as symbolic
 
 class Model:
     def __init__(self, arch_mode=capstone.CS_MODE_64):
-        self.fsm = tracemodeler.fsm.ProtocolFSM()
-        self.cfg = tracemodeler.cfg.DynamicCFG()
+        self.fsm = synoptic.tracemodeler.fsm.ProtocolFSM()
+        self.cfg = synoptic.tracemodeler.cfg.DynamicCFG()
         self.md = capstone.Cs(capstone.CS_ARCH_X86, arch_mode)
         self.md.detail = True
 
@@ -44,7 +44,7 @@ class Model:
         (self.fsm.textual, self.fsm.delimiters) = self.get_delimiters(buffer_comparations)
 
         for item in buffer_comparations:
-            message = tracemodeler.fsm.Message(item['buffer'])
+            message = synoptic.tracemodeler.fsm.Message(item['buffer'])
             message.analyze_keyword(self.fsm.delimiters, self.fsm.textual)
             message.analyze_structure(self.fsm.delimiters)
             self.fsm.add(message)

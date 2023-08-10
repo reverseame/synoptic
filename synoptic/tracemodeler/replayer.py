@@ -2,7 +2,7 @@ import io
 import time
 import socket
 
-import tracemodeler.debug as debug
+import synoptic.debug as debug
 
 BUF_SIZE = 4096
 

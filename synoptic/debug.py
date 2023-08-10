@@ -1,12 +1,12 @@
 import sys
 import logging
 
-import tracemodeler.utils as utils
+import synoptic.utils as utils
 
-logger = logging.getLogger(utils.LOGGER_NAME)
+logger = logging.getLogger(utils.TOOL_NAME)
 
 """ Log format, default level to INFO """
-logging.basicConfig(level=logging.INFO, format='%(name)s:%(levelname)s\t: %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(name)s\t: %(levelname)s\t: %(message)s')
 
 def debug(msg):
     log(logging.DEBUG, msg)
