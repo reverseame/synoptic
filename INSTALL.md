@@ -37,14 +37,14 @@ $ python -m pip install -r requirements.txt
 
 Optionally, you can install dependencies in a virtual environment:
 
-```
+```console
 $ python -m venv virtualenv
 $ source virtualenv/bin/activate
 (virtualenv) $ python -m pip install -r requirements.txt
 ```
 
-Also, `graphviz` Python library relies on system wide binaries. So, `graphivz` needs to be installed with your distribution packages:
+Also, there are dependencies that need to be installed on your system because Python libraries rely on these system wide binaries. So, you will need to install them with your system distribution packages:
 
-```
+```console
 $ sudo apt install graphviz
 ```

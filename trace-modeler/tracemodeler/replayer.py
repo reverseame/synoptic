@@ -46,7 +46,7 @@ class Replayer:
                 if next_state is not None:
                     """
                     Create new messages based in inferred keywords once we are
-                    back to an already visited state
+                    back to an already_visited state
                     """
                     if new_messages and not new_messages_triggered and (next_state.id in already_visited) and fsm.inferred_keywords:
                         for inferred_message in fsm.generate_new_messages():

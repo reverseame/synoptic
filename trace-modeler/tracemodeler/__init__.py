@@ -65,7 +65,7 @@ def main():
         model.fsm.export_to_file(filepath)
         debug.info(f'{filepath}\t: FSM exported')
     else:
-        debug.info(f'FSM infered\t:\n{str(model.fsm)}')
+        debug.info(f'FSM infered\t: {str(model.fsm)}')
 
     if args.fsm_pdf:
         filepath = os.path.abspath(args.fsm_pdf)

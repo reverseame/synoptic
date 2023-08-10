@@ -857,7 +857,12 @@ void moduleLoad(IMG img, void *v) {
 }
 
 int usage() {
-    std::cerr << std::endl << "This Pintool traces all data activity sent and received over the network" << std::endl;
+    std::cerr << std::endl << "This tool is part of" << std::endl;
+    std::cerr << "   __            __   __  ___    __ " << std::endl;
+    std::cerr << "  (__' \\_/ |\\ | /  \\ |__)  |  | /  `" << std::endl;
+    std::cerr << "  .__)  |  | \\| \\__/ |     |  | \\__," << std::endl;
+    std::cerr << std::endl << "(SYmbolic NetwOrk ProTocol InferenCe)" << std::endl;
+    std::cerr << std::endl << "This pintool traces all data activity sent and received over the network" << std::endl;
     std::cerr << KNOB_BASE::StringKnobSummary() << std::endl;
 
     return -1;
