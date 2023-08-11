@@ -31,7 +31,7 @@ class Replayer:
 
         return sock
 
-    def replay(self, fsm, delay, new_messages):
+    def replay(self, fsm, delay, symbolic_messages):
         new_messages_triggered = False
         already_visited = []
 
@@ -48,7 +48,7 @@ class Replayer:
                     Create new messages based in inferred keywords once we are
                     back to an already_visited state
                     """
-                    if new_messages and not new_messages_triggered and (next_state.id in already_visited) and fsm.inferred_keywords:
+                    if symbolic_messages and not new_messages_triggered and (next_state.id in already_visited) and fsm.inferred_keywords:
                         for inferred_message in fsm.generate_new_messages():
                             self.send(inferred_message.buffer)
                             time.sleep(delay)

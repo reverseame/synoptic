@@ -48,3 +48,10 @@ Also, there are dependencies that need to be installed on your system because Py
 ```console
 $ sudo apt install graphviz
 ```
+
+You will also need to install radare2 5.8.4:
+
+```console
+$ curl -Ls https://github.com/radareorg/radare2/releases/download/5.8.4/radare2-5.8.4.tar.xz | tar xJv
+$ radare2-5.8.4/sys/install.sh
+```

@@ -13,8 +13,14 @@ locale.setlocale(locale.LC_ALL, '')     # '' means auto
 
 import synoptic.debug as debug
 
+TOOL_HEADER = ''' __            __   __  ___    __ 
+(__' \_/ |\ | /  \ |__)  |  | /  `
+.__)  |  | \| \__/ |     |  | \__,
+'''
+
+TOOL_ROOT_DIR = os.path.dirname(os.path.abspath(__main__.__file__))
 """ Name of the top-level environment a.k.a. main file """
-TOOL_NAME = os.path.basename(__main__.__file__)
+(TOOL_NAME, _) = os.path.splitext(os.path.basename(__main__.__file__))
 
 """ Tool version """
 MAJOR = 0
@@ -24,6 +30,19 @@ VERSION = f'{MAJOR}.{MINOR}.{PATCH}'
 
 """ radare2 version supported """
 R2_VERSION = '5.8.4'
+
+def get_servertracer_info():
+    version_file = os.path.join(TOOL_ROOT_DIR, 'synoptic', 'servertracer', 'version.txt')
+    content = read_file(version_file)
+
+    for line in content:
+        splitted = line.split(' ')
+        if splitted[0] == 'PACKAGE':
+            name = splitted[1]
+        elif splitted[0] == 'VERSION':
+            version = splitted[1]
+    
+    return (name, version)
 
 def get_logs(path):
     ret = []
@@ -62,14 +81,14 @@ def read_file(path):
         debug.error(f'{path}\t: Unable to read file\t: {str(ex)}')
         sys.exit(-1)
 
-def parse_data(data):
+def parse_data(data, delimiter='='):
     ret = []
 
     for (i, line) in enumerate(data, start=1):
         try:
             new_dict = {}
             splitted = shlex.split(line)
-            for (key, value) in [item.split('=') for item in splitted]:
+            for (key, value) in [item.split(delimiter) for item in splitted]:
                 new_dict[key] = value
             ret.append(new_dict)
         except ValueError as e:

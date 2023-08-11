@@ -6,7 +6,7 @@ import synoptic.utils as utils
 logger = logging.getLogger(utils.TOOL_NAME)
 
 """ Log format, default level to INFO """
-logging.basicConfig(level=logging.INFO, format='%(name)s\t: %(levelname)s\t: %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(name)s\t\t: %(levelname)s\t: %(message)s')
 
 def debug(msg):
     log(logging.DEBUG, msg)

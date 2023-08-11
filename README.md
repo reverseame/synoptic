@@ -38,8 +38,6 @@ usage: synoptic.py [-h] [-v] [--force-overwrite] [--debug]
   (__' \_/ |\ | /  \ |__)  |  | /  `
   .__)  |  | \| \__/ |     |  | \__,
 
-(SYmbolic NetwOrk ProTocol InferenCe)
-
 This script orchestrates the generation and analysis of server execution traces to infer
 the Finite-State Machine (FSM) protocol, and uses symbolic analysis to attempt to find
 new messages not contained in the traces. It relies on the construction of a Dynamic
@@ -107,8 +105,6 @@ This tool is part of
    __            __   __  ___    __ 
   (__' \_/ |\ | /  \ |__)  |  | /  `
   .__)  |  | \| \__/ |     |  | \__,
-
-(SYmbolic NetwOrk ProTocol InferenCe)
 
 This pintool traces all data activity sent and received over the network
 

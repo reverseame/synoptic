@@ -1,7 +1,8 @@
 import os
 import sys
-import json
+import shlex
 import capstone
+import subprocess
 
 import synoptic.args
 import synoptic.utils as utils
@@ -10,70 +11,105 @@ import synoptic.tracemodeler.model
 import synoptic.tracemodeler.version
 import synoptic.tracemodeler.replayer as replayer
 
+def print_version():
+    print(f'{utils.TOOL_NAME}\t\t: {utils.VERSION}')
+    print(f'{synoptic.tracemodeler.version.TOOL_NAME}\t: {synoptic.tracemodeler.version.VERSION}')
+    (servertracer_name, servertracer_version) = utils.get_servertracer_info()
+    print(f'{servertracer_name}\t: {servertracer_version}')
+
+def analyze_logs(args, model, working_dir):
+    filenames = utils.get_logs(working_dir)
+
+    """ Proceed with CFG and FSM analysis """
+    traces = utils.get_traces(filenames)
+    model.analyze(traces)
+
+    """ Symbolic analysis of traces """
+    if args.symbolic_analysis:
+        model.symbolic_analysis(traces, args.binary, args.symbolic_engine, args.symbolic_timeout)
+
+    """ Export dynamic CFG """
+    if args.export_pdf:
+        cfg_pdf = os.path.join(working_dir, 'cfg.pdf')
+        model.cfg.export_graph(cfg_pdf)
+        debug.info(f'{cfg_pdf}\t: CFG graph exported')
+
+    if model.fsm.is_empty():
+        debug.warning('Empty FSM')
+    else:
+        """ Export FSM for use in next iteration """
+        fsm_json = os.path.join(working_dir, 'fsm.json')
+        model.fsm.export_to_file(fsm_json)
+        debug.info(f'{fsm_json}\t: FSM exported')
+
+        if args.export_pdf:
+            fsm_pdf = os.path.join(working_dir, 'fsm.pdf')
+            model.fsm.export_graph(fsm_pdf)
+            debug.info(f'{fsm_pdf}\t: FSM graph exported')
+
+    return model
+
+def execute_servertracer(args, iteration):
+    """ Creates log folder """
+    working_dir = os.path.join(args.working_dir, f'iteration-{iteration:#03}')
+    os.makedirs(working_dir)
+
+    """ Execute servertracer submodule """
+    command = []
+
+    if args.binary_privileges:
+        command = ['sudo']
+    command.extend([args.pin, '-follow_execv', '-t', os.path.abspath(args.pintool)])
+    if args.debug:
+        command.append('-debug')
+    command.extend(['-dirlog', working_dir, '--', args.binary])
+    """ Split string to list """
+    command.extend(shlex.split(args.binary_args))
+
+    debug.info(f'Executing servertracer submodule\t: {" ".join(command)}')
+
+    """ At first iteration, waits till binary is finished """
+    if iteration == 0:
+        completed_process = subprocess.run(command)
+    else:
+        import pdb; pdb.set_trace()
+
+    return (completed_process, working_dir)
+
 def main():
     args = synoptic.args.ArgumentParser().parse_args(sys.argv[1:])
 
+    print(utils.TOOL_HEADER)
+
     if args.version:
-        print(f'{utils.TOOL_NAME}\t\t: {utils.VERSION}')
-        print(f'{synoptic.tracemodeler.version.TOOL_NAME}\t: {synoptic.tracemodeler.version.VERSION}')
+        print_version()
         sys.exit(0)
 
-    arch_mode = capstone.CS_MODE_32 if args.m32 else capstone.CS_MODE_64
+    if args.binary_bitmode == '32-bit':
+        arch_mode = capstone.CS_MODE_32 
+    elif args.binary_bitmode == '64-bit':
+        arch_mode = capstone.CS_MODE_64
+
     model = synoptic.tracemodeler.model.Model(arch_mode=arch_mode)
 
-    """ Import a FSM """
-    if args.fsm_import:
-        filepath = os.path.abspath(args.fsm_import)
-        try:
-            model.fsm.import_from_file(filepath)
-        except json.decoder.JSONDecodeError as e:
-            debug.error(f'{filepath}\t: Failed to load JSON\t: {str(e)}')
-        debug.info(f'{filepath}\t: {len(model.fsm)} model messages imported')
+    iteration = 0
+    (completed_process, working_dir) = execute_servertracer(args, iteration=iteration)
+    """ Update protocol model with last logs """
+    model = analyze_logs(args, model, working_dir)
+    iteration += 1
 
-    """ Analyze traces to create/refine a FSM """
-    filenames = []
-    if args.log: filenames.extend(args.log)
-    if args.dirlog: filenames.extend(utils.get_logs(args.dirlog))
-
-    for filename in filenames:
-        debug.debug(f'Log found\t: {filename}')
-
-    """ We have nothing to work on """
-    if not args.fsm_import and not filenames:
-        debug.error('Unable to find logs')
-        sys.exit(-1)
-
-    if filenames:
-        """ Proceed with CFG and FSM analysis """
-        try:
-            traces = synoptic.utils.get_traces(filenames)
-            model.analyze(traces)
-        except KeyboardInterrupt:
-            pass
-
-        if args.symbolic_analysis:
-            model.symbolic_analysis(traces, args.binary, args.symbolic_engine, args.timeout)
-
-        if args.cfg_pdf:
-            filepath = os.path.abspath(args.cfg_pdf)
-            model.cfg.export_graph(filepath)
-            debug.info(f'{filepath}\t: CFG graph')
-
-    if model.fsm.is_empty():
-        debug.warning('Empty model')
-
-    if args.fsm_export:
-        filepath = os.path.abspath(args.fsm_export)
-        model.fsm.export_to_file(filepath)
-        debug.info(f'{filepath}\t: FSM exported')
-    else:
-        debug.info(f'FSM infered\t: {str(model.fsm)}')
-
-    if args.fsm_pdf:
-        filepath = os.path.abspath(args.fsm_pdf)
-        model.fsm.export_graph(filepath)
-        debug.info(f'{filepath}\t: FSM graph')
-
-    """ Replay model to a target server """
-    if args.replay:
-        replayer.Replayer(args.server_ip, args.server_port, transport_layer=args.transport_layer).replay(model.fsm, delay=(args.delay / 1000), new_messages=args.new_messages)
+    try:
+        """
+        Execute until user interruption, binary execution error, or max. number of iterations
+        reached
+        """
+        while (completed_process.returncode == 0) and (iteration < args.n_iterations):
+            (completed_process, working_dir) = execute_servertracer(args, iteration=iteration)
+            if args.replay:
+                replayer.Replayer(args.replay_ip, args.replay_port, transport_layer=args.replay_transport_layer).replay(model.fsm, delay=(args.replay_delay / 1000), symbolic_messages=args.replay_symbolic_messages)
+            model = analyze_logs(args, model, working_dir)
+            iteration += 1
+    except KeyboardInterrupt:
+        debug.info('User interrupt')
+    finally:
+        debug.info('Analysis finished')

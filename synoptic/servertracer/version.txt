@@ -1,0 +1,2 @@
+PACKAGE synoptic.servertracer
+VERSION 0.1.0
