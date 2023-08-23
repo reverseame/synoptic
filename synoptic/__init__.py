@@ -31,8 +31,11 @@ def analyze_logs(args, model, working_dir):
     """ Export dynamic CFG """
     if args.export_pdf:
         cfg_pdf = os.path.join(working_dir, 'cfg.pdf')
-        model.cfg.export_graph(cfg_pdf)
-        debug.info(f'{cfg_pdf}\t: CFG graph exported')
+        if model.cfg.is_empty():
+            debug.warning('Empty CFG')
+        else:
+            model.cfg.export_graph(cfg_pdf)
+            debug.info(f'{cfg_pdf}\t: CFG graph exported')
 
     if model.fsm.is_empty():
         debug.warning('Empty FSM')
@@ -57,12 +60,19 @@ def execute_servertracer(args, iteration):
     """ Execute servertracer submodule """
     command = []
 
+    """ pintool knobs """
     if args.binary_privileges:
         command = ['sudo']
     command.extend([args.pin, '-follow_execv', '-t', os.path.abspath(args.pintool)])
     if args.debug:
         command.append('-debug')
-    command.extend(['-dirlog', working_dir, '--', args.binary])
+    command.extend(['-dirlog', working_dir])
+    if args.binary_modules:
+        command.append('-modules')
+        command.append(args.binary_modules)
+
+    """ binary arguments """
+    command.extend(['--', args.binary])
     """ Split string to list """
     command.extend(shlex.split(args.binary_args))
 
@@ -70,7 +80,7 @@ def execute_servertracer(args, iteration):
 
     """ At first iteration, waits till binary is finished """
     if iteration == 0:
-        completed_process = subprocess.run(command)
+        completed_process = subprocess.run(command, cwd=args.binary_cwd)
     else:
         import pdb; pdb.set_trace()
 
@@ -78,8 +88,6 @@ def execute_servertracer(args, iteration):
 
 def main():
     args = synoptic.args.ArgumentParser().parse_args(sys.argv[1:])
-
-    print(utils.TOOL_HEADER)
 
     if args.version:
         print_version()

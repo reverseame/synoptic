@@ -24,7 +24,10 @@ class Model:
         debug.info('CFG analysis...')
         self.cfg_analysis(traces)
         debug.info('FSM analysis...')
-        self.fsm_analysis(traces)
+        try:
+            self.fsm_analysis(traces)
+        except NotImplementedError:
+            pass
 
     def cfg_analysis(self, traces):
         for session in self.split_sessions(traces):
@@ -74,14 +77,16 @@ class Model:
                 routine = item['routine']
                 addr = int(item['ins-addr'], 16)
                 opcodes = bytes.fromhex(item['ins-opcodes'])
-                dis = next(self.md.disasm(opcodes, addr))           # Just dissasemble one instruction
+                dis = next(self.md.disasm(opcodes, addr))           # Just disassemble one instruction
 
                 """ Get control flow target """
                 if item['action'] in ['direct-call', 'indirect-call', 'direct-jump', 'indirect-jump', 'ret']:
                     target_addr = int(item['target-addr'], 16)
                     comment = ''
-                    if item['action'] in ['direct-call', 'indirect-call']:
+                    if item['action'] == 'direct-call':
                         comment = item['target']
+                    elif item['action'] in ['indirect-call', 'indirect-jump']:
+                        comment = f'{item["target"]} ({item["target-addr"]})'
                     ins = cfg.Ins(dis, addr, opcodes, routine=routine, routine_addr=routine_addr, target_addr=target_addr, comment=comment, trace=item)
                 else:
                     ins = cfg.Ins(dis, addr, opcodes, routine=routine, routine_addr=routine_addr, trace=item)
@@ -128,7 +133,7 @@ class Model:
         textual = False
 
         all_comparations = []
-        [all_comparations.extend(item['comparations']) for item in buffer_comparations]
+        [all_comparations.extend(item['comparations']) for item in buffer_comparations if 'comparations' in item]
         all_buffers = [item['buffer'] for item in buffer_comparations]
 
         """ Check for the count of all imm comparations """
@@ -152,8 +157,11 @@ class Model:
         return (textual, ret)
 
     def is_printable(self, buffer):
-        decoded = buffer.decode('utf-8')
-        return all([char in string.printable for char in decoded])
+        try:
+            decoded = buffer.decode('utf-8')
+            return all([char in string.printable for char in decoded])
+        except UnicodeDecodeError:
+            return False
 
     def get_keyword(self, buffer, delimiters, textual=False):
         if textual:
@@ -177,14 +185,21 @@ class Model:
         symbolic_engine = symbolic.SymbolicEngine(symbolic_engine, binary, timeout)
         binary_base_addr = self.get_base_addr(traces)
         results = self._symbolic_analysis(binary, symbolic_engine, binary_base_addr)
-        self.analyze_buffers(results)
+
+        if results:
+            try:
+                self.analyze_buffers(results)
+            except NotImplementedError:
+                pass
+        else:
+            debug.warning('No results found with symbolic analysis')
 
     def split_sessions(self, data):
         ret = []
 
         (index, fd) = (None, None)
 
-        """ Asume there will be always a close call matching the file descriptor of a accept call """
+        """ Assume there will be always a close call matching the file descriptor of a accept call """
         for (i, trace) in enumerate(data):
             if 'action' in trace:
                 if (fd is None) and (trace['action'] == 'accept'):
@@ -308,7 +323,7 @@ class Model:
 
     def _set_static_transitions(self, cfg, bbs):
         for bb in bbs:
-            """ Each basic block has several ouput transitions """
+            """ Each basic block has several output transitions """
             node = cfg.get_node_by_addr(bb['addr'])
             """ Get node fallthrough in case of node ending in a call ins """
             if node.group.tail.is_call():

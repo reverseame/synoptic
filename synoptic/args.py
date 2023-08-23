@@ -115,8 +115,10 @@ class ArgumentParser:
             """ Binary config """
             args.binary = config['binary']['path']
             args.binary_args = config['binary']['args']
+            args.binary_cwd = config['binary']['cwd'] if 'cwd' in config['binary'] else None    # Cwd could be optional
             args.binary_bitmode = config['binary']['bitmode']
             args.binary_privileges = self._get_field(config['binary'], 'privileges', bool)
+            args.binary_modules = config['binary']['modules'] if 'modules' in config['binary'] else []
             """ servertracer config """
             args.pin = config['servertracer']['pin']
             args.pintool = config['servertracer']['pintoolpath']
@@ -137,6 +139,8 @@ class ArgumentParser:
             debug.error(f'{os.path.abspath(args.conf)}\t: {str(e)}')
 
     def _check_args(self, args):
+        print(utils.TOOL_HEADER)
+
         if args.conf:
             self._parse_conf(args)
         else:
@@ -144,7 +148,9 @@ class ArgumentParser:
 
         """ Create working directory """
         if os.path.isdir(args.working_dir):
-            if not args.force_overwrite:
+            if args.force_overwrite:
+                debug.info(f'{args.working_dir}\t: Overriding folder content')
+            else:
                 self._get_user_confirmation(args.working_dir)
             self._create_working_dir(args.working_dir)
         elif os.path.exists(args.working_dir):
@@ -163,6 +169,9 @@ class ArgumentParser:
         """ Verify that all files exist """
         for filename in [args.binary, args.pin, args.pintool]:
             self._check_file(filename)
+
+        if (args.binary_cwd is not None) and not os.path.isdir(args.binary_cwd):
+            debug.error(f'{args.binary_cwd}\t: Not a directory')
 
         if args.binary_bitmode not in ['64-bit', '32-bit']:
             debug.error(f'{args.binary_bitmode}\t: Binary mode not recognized, should be either 64-bit or 32-bit')

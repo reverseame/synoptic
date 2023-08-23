@@ -2,7 +2,10 @@
 
 #include <map>
 #include <set>
+#include <vector>
 #include <array>
+#include <tuple>
+#include <sstream>
 #include <iostream>
 #include <algorithm>
 
@@ -15,7 +18,7 @@
 #include "moduleload_windows.h"
 #endif
 
-/* Number of I/O iteractions */
+/* Number of I/O iterations */
 int IOCounter = 0;
 
 /*
@@ -33,24 +36,24 @@ bool executionInterrupted = false;
 ADDRINT insFallthrough = 0;
 ADDRINT insTargetAddr = 0;
 
-/* Main executable limit addresses */
-ADDRINT MAIN_MODULE_LOW_ADDRESS = 0;
-ADDRINT MAIN_MODULE_HIGH_ADDRESS = 0;
+/* Modules limit addresses */
+std::vector<std::tuple<ADDRINT, ADDRINT>> moduleAddrs;
 
 /* Command line options */
 KNOB<bool> KnobDebug(KNOB_MODE_WRITEONCE, "pintool", "debug", "0", "Enable debug messages");
 KNOB<std::string> KnobLogDir(KNOB_MODE_WRITEONCE, "pintool", "dirlog", ".", "Absolute path of log directory (default to current directory)");
+KNOB<std::string> KnobModules(KNOB_MODE_WRITEONCE, "pintool", "modules", "", "List of additional modules to analyze, comma separated (default only to the main executable)");
 
 /* Keep track of tainted addresses */
-std::set<ADDRINT> taintedAdddrs;
+std::set<ADDRINT> taintedAddrs;
 /* Keep track of tainted registers per function */
 std::map<ADDRINT, std::array<bool, REG_LAST>> taintedRegs;
-/* Keep track of params pased to call ins */
+/* Keep track of params passed to call ins */
 std::map<ADDRINT, std::set<REG>> callParams;
 
 /* Linux x64 registers used to pass arguments to functions */
 std::array<REG, 6> linuxRegParams = {REG_RDI, REG_RSI, REG_RDX, REG_RCX, REG_R8, REG_R9};
-/* General pourpose x64 registers */
+/* General purpose x64 registers */
 std::array<REG, 14> generalRegister = {REG_RAX, REG_RBX, REG_RCX, REG_RDX, REG_RSI, REG_RDI, REG_R8, REG_R9, REG_R10, REG_R11, REG_R12, REG_R13, REG_R14, REG_R15};
 
 #define CF_DIRECT_CALL 0
@@ -63,7 +66,7 @@ void fini(INT32 code, VOID *v) {
     LOG_INFO("action=process-end return=%x\n", code);
     CLOSE_LOG();
     if (KnobDebug) {
-        PRINT_DEBUG("Analysis finished\t: Checkout \"%s\" folder\n", KnobLogDir.Value().c_str());
+        PRINT_DEBUG("Analysis finished\t\t: Checkout \"%s\" folder\n", KnobLogDir.Value().c_str());
     }
 }
 
@@ -151,53 +154,64 @@ void changeTaintRegValue(ADDRINT routineAddr, REG reg, bool tainted) {
     item->second.at(reg) = tainted;
 }
 
+bool addrIsFromTraceableModule(ADDRINT insAddr) {
+    std::vector<std::tuple<ADDRINT, ADDRINT>>::iterator it;
+
+    for (it = moduleAddrs.begin(); it != moduleAddrs.end(); ++it) {
+        if (insAddr >= std::get<0>(*it) && insAddr <= std::get<1>(*it)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
 bool addrIsTraceable(ADDRINT insAddr, USIZE insSize) {
     /* There is not tainted information */
-    if (taintedAdddrs.empty()) {
+    if (taintedAddrs.empty()) {
         return false;
     }
 
-    /* Address is not in the main module */
-    if ((insAddr > MAIN_MODULE_HIGH_ADDRESS) || (insAddr < MAIN_MODULE_LOW_ADDRESS)) {
-        return false;
-    }
-
-    /* We surprassed the spatial location threshold */
-    if (visitedAddrs.size() >= SPATIAL_THRESHOLD) {
-        if (!thresholdTriggered) {
-            LOG_INFO("io-counter=%d action=spatial-threshold-triggered\n", IOCounter);
-            thresholdTriggered = true;
-        }
-        return false;
-    } 
-
-    /* Only check for signal handler if there is a fallthrough defined */
-    if (insFallthrough == 0) {
-        executionInterrupted = false;
-        insFallthrough = insAddr + insSize;
-        visitedAddrs.insert(insAddr);
-    } else {
-        /*
-        * If new instruction is a signal handler or a timer, do not count its execution
-        * for spatial space. We consider that a signal handler is executed when current
-        * ins address does not match neither the fallthrough or the target address of a
-        * previous ins
-        */
-        if ((insAddr == insFallthrough) || (insAddr == insTargetAddr)) {
-            insFallthrough = insAddr + insSize;
-            if (executionInterrupted) {
-                LOG_INFO("io-counter=%d action=signal-finished\n", IOCounter);
-                executionInterrupted = false;
+    if (addrIsFromTraceableModule(insAddr)) {
+        /* We surpassed the spatial location threshold */
+        if (visitedAddrs.size() >= SPATIAL_THRESHOLD) {
+            if (!thresholdTriggered) {
+                LOG_INFO("io-counter=%d action=spatial-threshold-triggered\n", IOCounter);
+                thresholdTriggered = true;
             }
+            return false;
+        } 
+
+        /* Only check for signal handler if there is a fallthrough defined */
+        if (insFallthrough == 0) {
+            executionInterrupted = false;
+            insFallthrough = insAddr + insSize;
             visitedAddrs.insert(insAddr);
         } else {
-            /* Singal function*/
-            if (!executionInterrupted) {
-                LOG_INFO("io-counter=%d action=signal-detected\n", IOCounter);
-                executionInterrupted = true;
-                /* Do not count signal address for spatial location */
+            /*
+            * If new instruction is a signal handler or a timer, do not count its execution
+            * for spatial space. We consider that a signal handler is executed when current
+            * ins address does not match neither the fallthrough or the target address of a
+            * previous ins
+            */
+            if ((insAddr == insFallthrough) || (insAddr == insTargetAddr)) {
+                insFallthrough = insAddr + insSize;
+                if (executionInterrupted) {
+                    LOG_INFO("io-counter=%d action=signal-finished\n", IOCounter);
+                    executionInterrupted = false;
+                }
+                visitedAddrs.insert(insAddr);
+            } else {
+                /* Signal function */
+                if (!executionInterrupted) {
+                    LOG_INFO("io-counter=%d action=signal-detected\n", IOCounter);
+                    executionInterrupted = true;
+                    /* Do not count signal address for spatial location */
+                }
             }
         }
+    } else {
+        return false;
     }
 
     return true;
@@ -244,15 +258,15 @@ void regToAddr(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routin
         LOG_TAINT("io-counter=%d action=taint-addr routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
         logInsOpcodes(insAddr, insSize);
         LOG_RAW(" origin=from-reg addr=%s reg-addr=%s reg=%s\n", hexaddr(addr).c_str(), REG_StringShort(regAddr).c_str(), REG_StringShort(reg).c_str());
-        taintedAdddrs.insert(addr);
+        taintedAddrs.insert(addr);
     } else {
         /* reg not tainted --> mem not tainted */
         /* if mem is already not tainted, nothing to do */
-        if (taintedAdddrs.count(addr)) {
+        if (taintedAddrs.count(addr)) {
             LOG_TAINT("io-counter=%d action=free-addr routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
             logInsOpcodes(insAddr, insSize);
             LOG_RAW(" origin=from-reg addr=%s reg-addr=%s reg=%s\n", hexaddr(addr).c_str(), REG_StringShort(regAddr).c_str(), REG_StringShort(reg).c_str());
-            taintedAdddrs.erase(taintedAdddrs.find(addr));
+            taintedAddrs.erase(taintedAddrs.find(addr));
         } else {
             logIns(insAddr, insSize, insDis, routine, routineAddr);
         }
@@ -265,7 +279,7 @@ void addrToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routin
         return;
     }
 
-    if (taintedAdddrs.count(mem_r)) {
+    if (taintedAddrs.count(mem_r)) {
         LOG_TAINT("io-counter=%d action=taint-reg routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
         logInsOpcodes(insAddr, insSize);
         LOG_RAW(" origin=from-addr reg=%s addr=%s\n", REG_StringShort(reg_w).c_str(), hexaddr(mem_r).c_str());
@@ -329,11 +343,11 @@ void immToAddr(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routin
     }
 
     /* if mem is not tainted nothing to do */
-    if (taintedAdddrs.count(mem_w)) {
+    if (taintedAddrs.count(mem_w)) {
         LOG_TAINT("io-counter=%d action=free-addr routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter,routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
         logInsOpcodes(insAddr, insSize);
         LOG_RAW(" origin=from-imm addr=%s\n", hexaddr(mem_w).c_str());
-        taintedAdddrs.erase(taintedAdddrs.find(mem_w));
+        taintedAddrs.erase(taintedAddrs.find(mem_w));
     } else {
         logIns(insAddr, insSize, insDis, routine, routineAddr);
     }
@@ -416,7 +430,7 @@ REG getMemoryIndexReg(INS ins) {
 void analyzeCallParams(BBL bbl, ADDRINT callAddr) {
     std::map<ADDRINT, std::set<REG>>::iterator item = callParams.find(callAddr);
 
-    /* Return if this call instruction was previouslly processed */
+    /* Return if this call instruction was previously processed */
     if (item != callParams.end()) {
         return;
     }
@@ -433,7 +447,7 @@ void analyzeCallParams(BBL bbl, ADDRINT callAddr) {
         *       - mov reg, reg'
         *       - lea reg, [...]
         * For example, neither `mov rsi, imm` nor `xor rsi, rsi` could propagate a
-        * taint value, even though it is acctually a parameter
+        * taint value, even though it is actually a parameter
         */
         if ((INS_IsMov(ins) && !hasImm(ins)) || INS_IsLea(ins)) {
             REG reg = getWriteReg(ins);
@@ -469,13 +483,13 @@ void traceControlFlow(ADDRINT insAddr, USIZE insSize, std::string *insDis, char 
         target = "unknown";
     }
 
-    /* Do not update insTargetAddr if execution was interruped due to a signal or a timer */
+    /* Do not update insTargetAddr if execution was interrupted due to a signal or a timer */
     if (!executionInterrupted) {
-        /* Delete ins info if control flow is changed outside main executable */
-        if ((targetAddr > MAIN_MODULE_HIGH_ADDRESS) || (targetAddr < MAIN_MODULE_LOW_ADDRESS)) {
-            insFallthrough = 0;
-        } else {
+        if (addrIsFromTraceableModule(targetAddr)) {
             insTargetAddr = targetAddr;
+        } else {
+            /* Delete ins info if control flow is changed outside traceable module */
+            insFallthrough = 0;
         }
     }
 
@@ -502,7 +516,7 @@ void traceControlFlow(ADDRINT insAddr, USIZE insSize, std::string *insDis, char 
             deleteRegs(routineAddr);
             /*
             * TODO If there was any tainted params, taint return value too. How to
-            * retrieve routine-addr from targetAddr? Ret returns to the calle, not
+            * retrieve routine-addr from targetAddr? Ret returns to the callee, not
             * the beginning of the function
             */
             break;
@@ -523,7 +537,7 @@ void traceLea(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine
     }
 
     /* Address calculated with lea is tainted -> taint reg */
-    if (taintedAdddrs.count(leaAddr)) {
+    if (taintedAddrs.count(leaAddr)) {
         LOG_TAINT("io-counter=%d action=taint-reg routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
         logInsOpcodes(insAddr, insSize);
         LOG_RAW(" origin=from-lea reg=%s calculated-addr=%s\n", REG_StringShort(reg).c_str(), hexaddr(leaAddr).c_str());
@@ -679,7 +693,7 @@ void compareImmToAddr(ADDRINT insAddr, USIZE insSize, std::string *insDis, char 
         return;
     }
 
-    if (taintedAdddrs.count(mem_r) || regIsTainted(routineAddr, reg_r)) {
+    if (taintedAddrs.count(mem_r) || regIsTainted(routineAddr, reg_r)) {
         LOG_TAINT("io-counter=%d action=compare routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
         logInsOpcodes(insAddr, insSize);
         LOG_RAW(" origin=addr-to-imm addr=%s reg=%s imm=%s\n", hexaddr(mem_r).c_str(), REG_StringShort(reg_r).c_str(), hexaddr(imm).c_str());
@@ -827,7 +841,7 @@ void instrumentTrace(TRACE trace, void *v) {
     INS lastIns = BBL_InsTail(lastBbl);
     ADDRINT lastInsAddr = INS_Address(lastIns);
 
-    if ((lastInsAddr <= MAIN_MODULE_HIGH_ADDRESS) && (lastInsAddr >= MAIN_MODULE_LOW_ADDRESS)) {
+    if (addrIsFromTraceableModule(lastInsAddr)) {
         if (INS_IsCall(lastIns)) {
             analyzeCallParams(lastBbl, lastInsAddr);
         }
@@ -844,16 +858,30 @@ void moduleLoad(IMG img, void *v) {
             PRINT_DEBUG("Main module loaded\t\t: %s (%s)\n", IMG_Name(img).c_str(), hexaddr(image_low).c_str());
         }
         LOG_INFO("action=relocate image-low=%s image-high=%s main-executable=\"%s\"\n", hexaddr(image_low).c_str(), hexaddr(image_high).c_str(), IMG_Name(img).c_str());
-        MAIN_MODULE_LOW_ADDRESS = image_low;
-        MAIN_MODULE_HIGH_ADDRESS = image_high;
+        moduleAddrs.push_back(std::make_tuple(image_low, image_high));
+
         return;
+    } else if (KnobModules.SetByUser()) {
+        std::istringstream ss(KnobModules.Value());
+        std::string token;
+
+        while(std::getline(ss, token, ',')) {
+            if (token == IMG_Name(img)) {
+                if (KnobDebug) {
+                    PRINT_DEBUG("Module is now traceable \t: %s (%s)\n", IMG_Name(img).c_str(), hexaddr(image_low).c_str());
+                }
+                LOG_INFO("action=module image-low=%s image-high=%s module-name=\"%s\"\n", hexaddr(image_low).c_str(), hexaddr(image_high).c_str(), IMG_Name(img).c_str());
+                moduleAddrs.push_back(std::make_tuple(image_low, image_high));
+            }
+        }
+
     }
 
     if (KnobDebug) {
         PRINT_DEBUG("Module loaded\t\t\t: %s (%s)\n", IMG_Name(img).c_str(), hexaddr(image_low).c_str());
     }
 
-    replaceSignatures(KnobDebug, img, taintedAdddrs, taintedRegs, visitedAddrs, thresholdTriggered, IOCounter, insFallthrough);
+    replaceSignatures(KnobDebug, img, taintedAddrs, taintedRegs, visitedAddrs, thresholdTriggered, IOCounter, insFallthrough);
 }
 
 int usage() {

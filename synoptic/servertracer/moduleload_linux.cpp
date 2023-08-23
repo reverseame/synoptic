@@ -17,7 +17,7 @@ bool isNetworkSocket(int fd) {
 
     socklen_t saddr_len = sizeof(saddr);
 
-    /* It returns -1 if fd is not even a socket */
+    /* getsockname returns -1 if fd is not even a socket */
     if (getsockname(fd, (struct sockaddr *) &saddr, &saddr_len) != -1) {
         return (saddr.sa_family == AF_INET) || (saddr.sa_family == AF_INET6);
     }
@@ -128,7 +128,7 @@ int newDup2Function(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::string *imgName, int 
     return ret;
 }
 
-ssize_t newReadFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAdddrs, std::set<ADDRINT> &visitedAddrs, bool &thresholdTriggered, int &IOCounter, ADDRINT &insFallthrough, std::string *imgName, int fd, void *buf, size_t count) {
+ssize_t newReadFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAddrs, std::set<ADDRINT> &visitedAddrs, bool &thresholdTriggered, int &IOCounter, ADDRINT &insFallthrough, std::string *imgName, int fd, void *buf, size_t count) {
     ssize_t ret;
 
     PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
@@ -156,7 +156,7 @@ ssize_t newReadFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &tai
 
             /* Taint all recv data at byte level */
             for (int i = 0; i < ret; i++) {
-                taintedAdddrs.insert((UINT64) buf + i);
+                taintedAddrs.insert((UINT64) buf + i);
             }
 
             visitedAddrs.clear();
@@ -168,7 +168,7 @@ ssize_t newReadFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &tai
     return ret;
 }
 
-ssize_t newRecvFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAdddrs, std::set<ADDRINT> &visitedAddrs, bool &thresholdTriggered, int &IOCounter, ADDRINT &insFallthrough, std::string *imgName, int sockfd, void *buf, size_t len, int flags) {
+ssize_t newRecvFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAddrs, std::set<ADDRINT> &visitedAddrs, bool &thresholdTriggered, int &IOCounter, ADDRINT &insFallthrough, std::string *imgName, int sockfd, void *buf, size_t len, int flags) {
     ssize_t ret;
 
     PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
@@ -197,7 +197,7 @@ ssize_t newRecvFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &tai
 
             /* Taint all recv data at byte level */
             for (int i = 0; i < ret; i++) {
-                taintedAdddrs.insert((UINT64) buf + i);
+                taintedAddrs.insert((UINT64) buf + i);
             }
 
             visitedAddrs.clear();
@@ -209,7 +209,7 @@ ssize_t newRecvFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &tai
     return ret;
 }
 
-ssize_t newRecvFromFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAdddrs, std::set<ADDRINT> &visitedAddrs, bool &thresholdTriggered, int &IOCounter, ADDRINT &insFallthrough, std::string *imgName, int sockfd, void *buf, size_t len, int flags, struct sockaddr *src_addr, socklen_t *addrlen) {
+ssize_t newRecvFromFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAddrs, std::set<ADDRINT> &visitedAddrs, bool &thresholdTriggered, int &IOCounter, ADDRINT &insFallthrough, std::string *imgName, int sockfd, void *buf, size_t len, int flags, struct sockaddr *src_addr, socklen_t *addrlen) {
     ssize_t ret;
 
     PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
@@ -240,7 +240,7 @@ ssize_t newRecvFromFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> 
 
             /* Taint all recv data at byte level */
             for (int i = 0; i < ret; i++) {
-                taintedAdddrs.insert((UINT64) buf + i);
+                taintedAddrs.insert((UINT64) buf + i);
             }
 
             visitedAddrs.clear();
@@ -252,7 +252,7 @@ ssize_t newRecvFromFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> 
     return ret;
 }
 
-ssize_t newRecvMsgFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAdddrs, std::set<ADDRINT> &visitedAddrs, bool &thresholdTriggered, int &IOCounter, ADDRINT &insFallthrough, std::string *imgName, int sockfd, struct msghdr *msg, int flags) {
+ssize_t newRecvMsgFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAddrs, std::set<ADDRINT> &visitedAddrs, bool &thresholdTriggered, int &IOCounter, ADDRINT &insFallthrough, std::string *imgName, int sockfd, struct msghdr *msg, int flags) {
     ssize_t ret;
 
     PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
@@ -276,7 +276,7 @@ ssize_t newRecvMsgFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &
     return ret;
 }
 
-ssize_t newWriteFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAdddrs, std::map<ADDRINT, std::array<bool, REG_LAST>> &taintedRegs, std::string *imgName, int fd, const void *buf, size_t count) {
+ssize_t newWriteFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAddrs, std::map<ADDRINT, std::array<bool, REG_LAST>> &taintedRegs, std::string *imgName, int fd, const void *buf, size_t count) {
     ssize_t ret;
 
     PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
@@ -302,14 +302,14 @@ ssize_t newWriteFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &ta
         LOG_RAW("\n");
 
         /* Free all tainted data */
-        taintedAdddrs.clear();
+        taintedAddrs.clear();
         taintedRegs.clear();
     }
 
     return ret;
 }
 
-ssize_t newSendFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAdddrs, std::map<ADDRINT, std::array<bool, REG_LAST>> &taintedRegs, std::string *imgName, int sockfd, const void *buf, size_t len, int flags) {
+ssize_t newSendFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAddrs, std::map<ADDRINT, std::array<bool, REG_LAST>> &taintedRegs, std::string *imgName, int sockfd, const void *buf, size_t len, int flags) {
     ssize_t ret;
 
     PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
@@ -336,14 +336,14 @@ ssize_t newSendFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &tai
         LOG_RAW("\n");
 
         /* Free all tainted data */
-        taintedAdddrs.clear();
+        taintedAddrs.clear();
         taintedRegs.clear();
     }
 
     return ret;
 }
 
-ssize_t newSendToFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAdddrs, std::map<ADDRINT, std::array<bool, REG_LAST>> &taintedRegs, std::string *imgName, int sockfd, const void *buf, size_t len, int flags, const struct sockaddr *dest_addr, socklen_t addrlen) {
+ssize_t newSendToFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAddrs, std::map<ADDRINT, std::array<bool, REG_LAST>> &taintedRegs, std::string *imgName, int sockfd, const void *buf, size_t len, int flags, const struct sockaddr *dest_addr, socklen_t addrlen) {
     ssize_t ret;
 
     PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
@@ -372,14 +372,14 @@ ssize_t newSendToFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &t
         LOG_RAW("\n");
 
         /* Free all tainted data */
-        taintedAdddrs.clear();
+        taintedAddrs.clear();
         taintedRegs.clear();
     }
 
     return ret;
 }
 
-ssize_t newSendMsgFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAdddrs, std::map<ADDRINT, std::array<bool, REG_LAST>> &taintedRegs, std::string *imgName, int sockfd, const struct msghdr *msg, int flags) {
+ssize_t newSendMsgFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAddrs, std::map<ADDRINT, std::array<bool, REG_LAST>> &taintedRegs, std::string *imgName, int sockfd, const struct msghdr *msg, int flags) {
     ssize_t ret;
 
     PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
@@ -398,7 +398,7 @@ ssize_t newSendMsgFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &
             std::cerr << "msg read" << std::endl;
         }*/
         /* Free all tainted data */
-        taintedAdddrs.clear();
+        taintedAddrs.clear();
         taintedRegs.clear();
     }
 
@@ -504,7 +504,7 @@ void replaceDup2Function(IMG img, RTN rtn) {
     PROTO_Free(proto_dup2);
 }
 
-void replaceReadFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, std::set<ADDRINT> &visitedAddrs, bool &thresholdTriggered, int &IOCounter, ADDRINT &insFallthrough) {
+void replaceReadFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAddrs, std::set<ADDRINT> &visitedAddrs, bool &thresholdTriggered, int &IOCounter, ADDRINT &insFallthrough) {
     PROTO proto_tcp_activity = PROTO_Allocate(PIN_PARG(ssize_t), CALLINGSTD_DEFAULT,
                                         NULL,
                                         PIN_PARG(int),      // fd
@@ -516,7 +516,7 @@ void replaceReadFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, std
                                 IARG_PROTOTYPE, proto_tcp_activity,
                                 IARG_ORIG_FUNCPTR,
                                 IARG_CONTEXT,
-                                IARG_PTR, &taintedAdddrs,
+                                IARG_PTR, &taintedAddrs,
                                 IARG_PTR, &visitedAddrs,
                                 IARG_PTR, &thresholdTriggered,
                                 IARG_PTR, &IOCounter,
@@ -530,7 +530,7 @@ void replaceReadFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, std
     PROTO_Free(proto_tcp_activity);
 }
 
-void replaceRecvFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, std::set<ADDRINT> &visitedAddrs, bool &thresholdTriggered, int &IOCounter, ADDRINT &insFallthrough) {
+void replaceRecvFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAddrs, std::set<ADDRINT> &visitedAddrs, bool &thresholdTriggered, int &IOCounter, ADDRINT &insFallthrough) {
     PROTO proto_tcp_activity = PROTO_Allocate(PIN_PARG(ssize_t), CALLINGSTD_DEFAULT,
                                         NULL,
                                         PIN_PARG(int),      // sockfd
@@ -543,7 +543,7 @@ void replaceRecvFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, std
                                 IARG_PROTOTYPE, proto_tcp_activity,
                                 IARG_ORIG_FUNCPTR,
                                 IARG_CONTEXT,
-                                IARG_PTR, &taintedAdddrs,
+                                IARG_PTR, &taintedAddrs,
                                 IARG_PTR, &visitedAddrs,
                                 IARG_PTR, &thresholdTriggered,
                                 IARG_PTR, &IOCounter,
@@ -558,7 +558,7 @@ void replaceRecvFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, std
     PROTO_Free(proto_tcp_activity);
 }
 
-void replaceRecvFromFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, std::set<ADDRINT> &visitedAddrs, bool &thresholdTriggered, int &IOCounter, ADDRINT &insFallthrough) {
+void replaceRecvFromFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAddrs, std::set<ADDRINT> &visitedAddrs, bool &thresholdTriggered, int &IOCounter, ADDRINT &insFallthrough) {
     PROTO proto_tcp_activity = PROTO_Allocate(PIN_PARG(ssize_t), CALLINGSTD_DEFAULT,
                                         NULL,
                                         PIN_PARG(int),                  // sockfd
@@ -573,7 +573,7 @@ void replaceRecvFromFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs,
                                 IARG_PROTOTYPE, proto_tcp_activity,
                                 IARG_ORIG_FUNCPTR,
                                 IARG_CONTEXT,
-                                IARG_PTR, &taintedAdddrs,
+                                IARG_PTR, &taintedAddrs,
                                 IARG_PTR, &visitedAddrs,
                                 IARG_PTR, &thresholdTriggered,
                                 IARG_PTR, &IOCounter,
@@ -590,7 +590,7 @@ void replaceRecvFromFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs,
     PROTO_Free(proto_tcp_activity);
 }
 
-void replaceRecvMsgFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, std::set<ADDRINT> &visitedAddrs, bool &thresholdTriggered, int &IOCounter, ADDRINT &insFallthrough) {
+void replaceRecvMsgFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAddrs, std::set<ADDRINT> &visitedAddrs, bool &thresholdTriggered, int &IOCounter, ADDRINT &insFallthrough) {
     PROTO proto_tcp_activity = PROTO_Allocate(PIN_PARG(ssize_t), CALLINGSTD_DEFAULT,
                                         NULL,
                                         PIN_PARG(int),                  // sockfd
@@ -602,7 +602,7 @@ void replaceRecvMsgFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, 
                                 IARG_PROTOTYPE, proto_tcp_activity,
                                 IARG_ORIG_FUNCPTR,
                                 IARG_CONTEXT,
-                                IARG_PTR, &taintedAdddrs,
+                                IARG_PTR, &taintedAddrs,
                                 IARG_PTR, &visitedAddrs,
                                 IARG_PTR, &thresholdTriggered,
                                 IARG_PTR, &IOCounter,
@@ -616,7 +616,7 @@ void replaceRecvMsgFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, 
     PROTO_Free(proto_tcp_activity);
 }
 
-void replaceWriteFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, std::map<ADDRINT, std::array<bool, REG_LAST>> &taintedRegs) {
+void replaceWriteFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAddrs, std::map<ADDRINT, std::array<bool, REG_LAST>> &taintedRegs) {
     PROTO proto_tcp_activity = PROTO_Allocate(PIN_PARG(ssize_t), CALLINGSTD_DEFAULT,
                                         NULL,
                                         PIN_PARG(int),          // fd
@@ -628,7 +628,7 @@ void replaceWriteFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, st
                                 IARG_PROTOTYPE, proto_tcp_activity,
                                 IARG_ORIG_FUNCPTR,
                                 IARG_CONTEXT,
-                                IARG_PTR, &taintedAdddrs,
+                                IARG_PTR, &taintedAddrs,
                                 IARG_PTR, &taintedRegs,
                                 IARG_PTR, new std::string(IMG_Name(img)),
                                 IARG_FUNCARG_ENTRYPOINT_VALUE, 0,
@@ -639,7 +639,7 @@ void replaceWriteFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, st
     PROTO_Free(proto_tcp_activity);
 }
 
-void replaceSendFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, std::map<ADDRINT, std::array<bool, REG_LAST>> &taintedRegs) {
+void replaceSendFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAddrs, std::map<ADDRINT, std::array<bool, REG_LAST>> &taintedRegs) {
     PROTO proto_tcp_activity = PROTO_Allocate(PIN_PARG(ssize_t), CALLINGSTD_DEFAULT,
                                         NULL,
                                         PIN_PARG(int),          // sockfd
@@ -652,7 +652,7 @@ void replaceSendFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, std
                                 IARG_PROTOTYPE, proto_tcp_activity,
                                 IARG_ORIG_FUNCPTR,
                                 IARG_CONTEXT,
-                                IARG_PTR, &taintedAdddrs,
+                                IARG_PTR, &taintedAddrs,
                                 IARG_PTR, &taintedRegs,
                                 IARG_PTR, new std::string(IMG_Name(img)),
                                 IARG_FUNCARG_ENTRYPOINT_VALUE, 0,
@@ -664,7 +664,7 @@ void replaceSendFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, std
     PROTO_Free(proto_tcp_activity);
 }
 
-void replaceSendToFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, std::map<ADDRINT, std::array<bool, REG_LAST>> &taintedRegs) {
+void replaceSendToFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAddrs, std::map<ADDRINT, std::array<bool, REG_LAST>> &taintedRegs) {
     PROTO proto_tcp_activity = PROTO_Allocate(PIN_PARG(ssize_t), CALLINGSTD_DEFAULT,
                                         NULL,
                                         PIN_PARG(int),                      // sockfd
@@ -679,7 +679,7 @@ void replaceSendToFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, s
                                 IARG_PROTOTYPE, proto_tcp_activity,
                                 IARG_ORIG_FUNCPTR,
                                 IARG_CONTEXT,
-                                IARG_PTR, &taintedAdddrs,
+                                IARG_PTR, &taintedAddrs,
                                 IARG_PTR, &taintedRegs,
                                 IARG_PTR, new std::string(IMG_Name(img)),
                                 IARG_FUNCARG_ENTRYPOINT_VALUE, 0,
@@ -693,7 +693,7 @@ void replaceSendToFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, s
     PROTO_Free(proto_tcp_activity);
 }
 
-void replaceSendMsgFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, std::map<ADDRINT, std::array<bool, REG_LAST>> &taintedRegs) {
+void replaceSendMsgFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAddrs, std::map<ADDRINT, std::array<bool, REG_LAST>> &taintedRegs) {
     PROTO proto_tcp_activity = PROTO_Allocate(PIN_PARG(ssize_t), CALLINGSTD_DEFAULT,
                                         NULL,
                                         PIN_PARG(int),                      // sockfd
@@ -705,7 +705,7 @@ void replaceSendMsgFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, 
                                 IARG_PROTOTYPE, proto_tcp_activity,
                                 IARG_ORIG_FUNCPTR,
                                 IARG_CONTEXT,
-                                IARG_PTR, &taintedAdddrs,
+                                IARG_PTR, &taintedAddrs,
                                 IARG_PTR, &taintedRegs,
                                 IARG_PTR, new std::string(IMG_Name(img)),
                                 IARG_FUNCARG_ENTRYPOINT_VALUE, 0,
@@ -716,7 +716,7 @@ void replaceSendMsgFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAdddrs, 
     PROTO_Free(proto_tcp_activity);
 }
 
-void replaceSignatures(bool KnobDebug, IMG img, std::set<ADDRINT> &taintedAdddrs, std::map<ADDRINT, std::array<bool, REG_LAST>> &taintedRegs, std::set<ADDRINT> &visitedAddrs, bool &thresholdTriggered, int &IOCounter, ADDRINT &insFallthrough) {
+void replaceSignatures(bool KnobDebug, IMG img, std::set<ADDRINT> &taintedAddrs, std::map<ADDRINT, std::array<bool, REG_LAST>> &taintedRegs, std::set<ADDRINT> &visitedAddrs, bool &thresholdTriggered, int &IOCounter, ADDRINT &insFallthrough) {
     RTN rtn;
 
     rtn = RTN_FindByName(img, "socket");
@@ -761,7 +761,7 @@ void replaceSignatures(bool KnobDebug, IMG img, std::set<ADDRINT> &taintedAdddrs
 
     rtn = RTN_FindByName(img, "read");
     if (RTN_Valid(rtn)) {
-        replaceReadFunction(img, rtn, taintedAdddrs, visitedAddrs, thresholdTriggered, IOCounter, insFallthrough);
+        replaceReadFunction(img, rtn, taintedAddrs, visitedAddrs, thresholdTriggered, IOCounter, insFallthrough);
         if (KnobDebug) {
             PRINT_DEBUG("read replaced\t\t\t: %s\n", IMG_Name(img).c_str());
         }
@@ -769,7 +769,7 @@ void replaceSignatures(bool KnobDebug, IMG img, std::set<ADDRINT> &taintedAdddrs
 
     rtn = RTN_FindByName(img, "recv");
     if (RTN_Valid(rtn)) {
-        replaceRecvFunction(img, rtn, taintedAdddrs, visitedAddrs, thresholdTriggered, IOCounter, insFallthrough);
+        replaceRecvFunction(img, rtn, taintedAddrs, visitedAddrs, thresholdTriggered, IOCounter, insFallthrough);
         if (KnobDebug) {
             PRINT_DEBUG("recv replaced\t\t\t: %s\n", IMG_Name(img).c_str());
         }
@@ -777,7 +777,7 @@ void replaceSignatures(bool KnobDebug, IMG img, std::set<ADDRINT> &taintedAdddrs
 
     rtn = RTN_FindByName(img, "recvfrom");
     if (RTN_Valid(rtn)) {
-        replaceRecvFromFunction(img, rtn, taintedAdddrs, visitedAddrs, thresholdTriggered, IOCounter, insFallthrough);
+        replaceRecvFromFunction(img, rtn, taintedAddrs, visitedAddrs, thresholdTriggered, IOCounter, insFallthrough);
         if (KnobDebug) {
             PRINT_DEBUG("recvfrom replaced\t\t: %s\n", IMG_Name(img).c_str());
         }
@@ -785,7 +785,7 @@ void replaceSignatures(bool KnobDebug, IMG img, std::set<ADDRINT> &taintedAdddrs
 
     rtn = RTN_FindByName(img, "recvmsg");
     if (RTN_Valid(rtn)) {
-        replaceRecvMsgFunction(img, rtn, taintedAdddrs, visitedAddrs, thresholdTriggered, IOCounter, insFallthrough);
+        replaceRecvMsgFunction(img, rtn, taintedAddrs, visitedAddrs, thresholdTriggered, IOCounter, insFallthrough);
         if (KnobDebug) {
             PRINT_DEBUG("recvmsg replaced\t\t: %s\n", IMG_Name(img).c_str());
         }
@@ -793,7 +793,7 @@ void replaceSignatures(bool KnobDebug, IMG img, std::set<ADDRINT> &taintedAdddrs
 
     rtn = RTN_FindByName(img, "write");
     if (RTN_Valid(rtn)) {
-        replaceWriteFunction(img, rtn, taintedAdddrs, taintedRegs);
+        replaceWriteFunction(img, rtn, taintedAddrs, taintedRegs);
         if (KnobDebug) {
             PRINT_DEBUG("write replaced\t\t: %s\n", IMG_Name(img).c_str());
         }
@@ -801,7 +801,7 @@ void replaceSignatures(bool KnobDebug, IMG img, std::set<ADDRINT> &taintedAdddrs
 
     rtn = RTN_FindByName(img, "send");
     if (RTN_Valid(rtn)) {
-        replaceSendFunction(img, rtn, taintedAdddrs, taintedRegs);
+        replaceSendFunction(img, rtn, taintedAddrs, taintedRegs);
         if (KnobDebug) {
             PRINT_DEBUG("send replaced\t\t\t: %s\n", IMG_Name(img).c_str());
         }
@@ -809,7 +809,7 @@ void replaceSignatures(bool KnobDebug, IMG img, std::set<ADDRINT> &taintedAdddrs
 
     rtn = RTN_FindByName(img, "sendto");
     if (RTN_Valid(rtn)) {
-        replaceSendToFunction(img, rtn, taintedAdddrs, taintedRegs);
+        replaceSendToFunction(img, rtn, taintedAddrs, taintedRegs);
         if (KnobDebug) {
             PRINT_DEBUG("sendto replaced\t\t: %s\n", IMG_Name(img).c_str());
         }
@@ -817,7 +817,7 @@ void replaceSignatures(bool KnobDebug, IMG img, std::set<ADDRINT> &taintedAdddrs
 
     rtn = RTN_FindByName(img, "sendmsg");
     if (RTN_Valid(rtn)) {
-        replaceSendMsgFunction(img, rtn, taintedAdddrs, taintedRegs);
+        replaceSendMsgFunction(img, rtn, taintedAddrs, taintedRegs);
         if (KnobDebug) {
             PRINT_DEBUG("sendmsg replaced\t\t: %s\n", IMG_Name(img).c_str());
         }

@@ -267,7 +267,7 @@ class Node:
         if ('fallthrough' in self.group.tail.info) and (self.group.tail.info['fallthrough'] == node.id):
             return
 
-        raise CFGException(f'"{self.group.tail}" cannot be followed by "{node.group.leader}"')
+        raise CFGException(f'"{self.group.tail}" node cannot be followed by "{node.group.leader}"')
 
     def extend(self, node):
         self.group.extend(node.group)
@@ -326,7 +326,7 @@ class Node:
 class CFG:
     def __init__(self):
         self.id = None                  # Unique ID of the CFG
-        self.nodes = []                 # List of nodes withouth any order
+        self.nodes = []                 # List of nodes without any order
         self.entry_node = None          # Entry node of the CFG
         self.last_inserted = None       # Last node visited in the CFG
         self.next = []                  # CFGs reached from this CFG
@@ -352,7 +352,7 @@ class CFG:
     def set_final(self):
         """
         Only set CFG as final if there are not already defined edges at last_inserted, that is,
-        current CFG is less complete compared to previous interations
+        current CFG is less complete compared to previous interactions
         """
         if not self.last_inserted.edges:
             self.final_cfg = True
@@ -365,7 +365,7 @@ class CFG:
             """
             Only set CFG last_inserted as final node if there are not already defined
             edges at last_inserted, that is, current CFG is more incomplete than
-            previous interations
+            previous interactions
             """
             if not self.last_inserted.edges:
                 self.final_nodes.append(self.last_inserted)
@@ -405,7 +405,7 @@ class CFG:
         worklist = [node for node in self.nodes if node != self.entry_node]
 
         while worklist:
-            node = worklist.pop(0)                                          # Firt node in list
+            node = worklist.pop(0)                                          # First node in list
             predecessor_dominants = set(dominances[node.predecessors[0]])   # Create a new set with the same values
             """ Intersection of previous dominants """
             for predecessor in node.predecessors[1:]:
@@ -499,7 +499,7 @@ class CFG:
                 self.last_inserted = edge.dst
                 self._browse_sub_nodes(node)
             else:
-                raise CFGException(f'Unkown transition from "{self.branch_node.group.tail}" to "{node.group.leader}"')
+                raise CFGException(f'Unknown transition from "{self.branch_node.group.tail}" to "{node.group.leader}"')
         else:
             """ Add this transition to branch_node because is not yet defined """
             try:
@@ -524,7 +524,7 @@ class CFG:
     def _transition_to_node(self, node):
         """ Check if transition is already defined to the incoming node """
         for edge in self.last_inserted.edges:
-            """ Check if transition is already defined and cosume its destination """
+            """ Check if transition is already defined and consume its destination """
             if edge.dst == node:
                 edge.count += 1
                 self.last_inserted = edge.dst
@@ -554,7 +554,7 @@ class CFG:
             self.nodes.append(node)
 
     def _split_node(self, node, where):
-        """ Create new node with the reamining inss """
+        """ Create new node with the remaining inss """
         group = Group()
         for ins in node.group.inss[node.group.inss.index(where):]:
             group.add(ins)
@@ -582,7 +582,7 @@ class CFG:
         self._add_node_transition(new_node)
         self.last_inserted = node_index
 
-        """ Mantain previous edge count """
+        """ Maintain previous edge count """
         for edge in node.edges:
             if edge.dst == new_node:
                 edge.count = node.visit_count
@@ -600,7 +600,7 @@ class CFG:
         if node in self.nodes:
             """
             Transition to the already defined node if current last_inserted does not
-            containg a valid transition to node
+            contain a valid transition to node
             """
             if not self._transition_to_node(node):
                 node_found = self.nodes[self.nodes.index(node)]
@@ -612,7 +612,7 @@ class CFG:
             """ Check if any of the defined nodes is a subset of a new node """
             for n in self.nodes:
                 if n.is_subset(node):
-                    """ Strip node to not containg an already defined node """
+                    """ Strip node to not contain an already defined node """
                     node.strip(n.group.leader)
                     """ Add the stripped node """
                     if not self._transition_to_node(node):
@@ -634,7 +634,7 @@ class CFG:
                     break
             else:
                 """
-                New transition to node, we looped every node in CFG witouth finding
+                New transition to node, we looped every node in CFG without finding
                 a subset
                 """
                 self._add_node_transition(node)
@@ -670,7 +670,7 @@ class CFG:
                     elif self.last_inserted.is_subset(node):
                         """
                         Node could be a subnode of already defined one, so we need
-                        to navegate all its corresponding subnodes
+                        to navigate all its corresponding subnodes
                         """
                         self._browse_sub_nodes(node)
                     elif self.branch_node is not None:
