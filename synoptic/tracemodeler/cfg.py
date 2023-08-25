@@ -24,7 +24,7 @@ class CFGException(Exception):
     pass
 
 class Ins:
-    def __init__(self, dis, addr, opcodes, tainted=False, routine='', routine_addr=0x0, target_addr=0x0, comment='', trace=dict()):
+    def __init__(self, dis, addr, opcodes, tainted=False, routine='', routine_addr=0x0, target='', target_addr=0x0, target_module=False, comment='', trace=dict()):
         self.dis = dis
         self.addr = addr
         self.opcodes = opcodes
@@ -32,7 +32,9 @@ class Ins:
         self.tainted = tainted
         self.routine = routine
         self.routine_addr = routine_addr
+        self.target = target
         self.target_addr = target_addr
+        self.target_module = target_module
         self.comment = set([comment]) if comment else set()
         self.trace = trace
         self.type = self._get_ins_type()
@@ -132,14 +134,31 @@ class Ins:
         elif isinstance(comment, str):
             self.comment.add(comment)
 
-    def dumps(self, opcodes_padding=0, comment_padding=0):
+    def dumps(self, opcodes_padding=0, comment_padding=0, static=False):
         tab_padding = ' ' * 5
 
         string = f'{hex(self.addr)}{tab_padding}{self.opcodes.hex().ljust(opcodes_padding)}{tab_padding}{self.dis.mnemonic} {self.dis.op_str}'
 
-        if self.comment:
-            for comment in self.comment:                
-                string = f'{string.ljust(comment_padding)} ; {comment}'
+        """ Additional information only for dynamic executed instructions """
+        if static:
+            if self.comment:
+                string = f'{string.ljust(comment_padding)}'
+                for comment in self.comment:
+                    string += f' ; {comment}'
+        else:
+            if self.is_return() or self.is_plt_jmp():
+                string = f'{string.ljust(comment_padding)} ; {self.target} ({hex(self.target_addr)})'
+                for comment in self.comment:
+                    string += f' ; {comment}'
+            elif self.is_call():
+                string = f'{string.ljust(comment_padding)} ; {self.target}'
+                for comment in self.comment:
+                    string += f' ; {comment}'
+            else:
+                if self.comment:
+                    string = f'{string.ljust(comment_padding)}'
+                    for comment in self.comment:
+                        string += f' ; {comment}'
 
         return string
 
@@ -350,12 +369,13 @@ class CFG:
             self.refine = True
 
     def set_final(self):
-        """
-        Only set CFG as final if there are not already defined edges at last_inserted, that is,
-        current CFG is less complete compared to previous interactions
-        """
-        if not self.last_inserted.edges:
-            self.final_cfg = True
+        if not self.is_empty():
+            """
+            Only set CFG as final if there are not already defined edges at last_inserted, that is,
+            current CFG is less complete compared to previous interactions
+            """
+            if not self.last_inserted.edges:
+                self.final_cfg = True
 
     def is_final(self):
         return self.final_cfg
@@ -713,7 +733,7 @@ class CFG:
         opcodes_padding = max([len(ins.opcodes.hex()) for ins in node.group.inss])
         comment_padding = max([len(ins.dumps(opcodes_padding=opcodes_padding).split(';')[0]) for ins in node.group.inss])
 
-        label += '\l\l' + '\l'.join([ins.dumps(opcodes_padding=opcodes_padding, comment_padding=comment_padding) for ins in node.group.inss]) + '\l'     # '\l' means left-aligned, last one is mandatory to ensure alignment of label last line
+        label += '\l\l' + '\l'.join([ins.dumps(opcodes_padding=opcodes_padding, comment_padding=comment_padding, static=node.static) for ins in node.group.inss]) + '\l'     # '\l' means left-aligned, last one is mandatory to ensure alignment of label last line
 
         return label
 
@@ -910,14 +930,26 @@ class DynamicCFG:
                 self.last_cfg.add(group)
 
     def get_next_cfg(self, group):
-        if not group.tail.is_call():
-            raise CFGException(f'Could not retrieve next CFG, "{str(group.tail)}" is not a call ins')
-        
         addr = group.tail.info['target']
-        for cfg in self.cfgs:
-            if not cfg.is_empty():
-                if addr == cfg.id:
-                    return cfg
+
+        if group.tail.is_call():
+            for cfg in self.cfgs:
+                if not cfg.is_empty():
+                    if addr == cfg.id:
+                        return cfg
+
+        elif group.tail.is_return():
+            for cfg in self.cfgs:
+                if not cfg.is_empty():
+                    if 'fallthrough' in cfg.last_inserted.group.tail.info:
+                        if addr == cfg.last_inserted.group.tail.info['fallthrough']:
+                            return cfg
+
+        elif group.tail.is_plt_jmp():
+            for cfg in self.cfgs:
+                if not cfg.is_empty():
+                    if addr == cfg.id:
+                        return cfg
 
         return None
 
@@ -939,11 +971,12 @@ class DynamicCFG:
 
                 while pending_cfgs:
                     cfg = pending_cfgs.pop(0)
-                    cfg_output_filename = os.path.join(temp_dir, hex(cfg.id))
-                    if cfg_output_filename not in filenames:
-                        cfg.export_graph(cfg_output_filename)
-                        filenames.append(cfg_output_filename)
-                    pending_cfgs.extend(cfg.next)
+                    if not cfg.is_empty():
+                        cfg_output_filename = os.path.join(temp_dir, hex(cfg.id))
+                        if cfg_output_filename not in filenames:
+                            cfg.export_graph(cfg_output_filename)
+                            filenames.append(cfg_output_filename)
+                        pending_cfgs.extend(cfg.next)
 
                 """ Join temp files """
                 merger = PyPDF2.PdfMerger()

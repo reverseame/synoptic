@@ -3,6 +3,7 @@ import re
 import copy
 import json
 import PyPDF2
+import shutil
 import tempfile
 
 """ Disable logging for graphviz library """
@@ -208,7 +209,7 @@ class ProtocolFSM:
                 merger.write(output)
                 merger.close()
             else:
-                os.rename(f'{fsm_file}.gv.pdf', output)
+                shutil.move(f'{fsm_file}.gv.pdf', output)
 
     def _generate_fsm_graph(self, output):
         graph = graphviz.Digraph(output)

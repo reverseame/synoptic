@@ -115,10 +115,10 @@ class ArgumentParser:
             """ Binary config """
             args.binary = config['binary']['path']
             args.binary_args = config['binary']['args']
-            args.binary_cwd = config['binary']['cwd'] if 'cwd' in config['binary'] else None    # Cwd could be optional
+            args.binary_cwd = config['binary']['cwd'] if 'cwd' in config['binary'] else None                # Cwd could be optional
             args.binary_bitmode = config['binary']['bitmode']
             args.binary_privileges = self._get_field(config['binary'], 'privileges', bool)
-            args.binary_modules = config['binary']['modules'] if 'modules' in config['binary'] else []
+            args.binary_modules = config['binary']['modules'] if 'modules' in config['binary'] else []      # Modules could be optional
             """ servertracer config """
             args.pin = config['servertracer']['pin']
             args.pintool = config['servertracer']['pintoolpath']

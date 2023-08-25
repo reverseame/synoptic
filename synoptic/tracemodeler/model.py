@@ -22,23 +22,37 @@ class Model:
 
     def analyze(self, traces):
         debug.info('CFG analysis...')
-        self.cfg_analysis(traces)
+        try:
+            self.cfg_analysis(traces)
+        except AttributeError as e:
+            debug.warning(f'CFG analysis failed\t: {str(e)}')
         debug.info('FSM analysis...')
         try:
             self.fsm_analysis(traces)
-        except NotImplementedError:
-            pass
+        except NotImplementedError as e:
+            debug.warning(str(e))
 
     def cfg_analysis(self, traces):
+        modules = self.get_modules_limits(traces)
+
         for session in self.split_sessions(traces):
             for net_trace in self.split_network_activity(session):
                 try:
                     self.cfg.initialize()
-                    self.analyze_cfg_net_trace(net_trace)
+                    self.analyze_cfg_net_trace(net_trace, modules)
                 except cfg.CFGException as e:
                     debug.warning(str(e))
                 finally:
                     self.cfg.finalize()
+
+    def get_modules_limits(self, traces):
+        ret = []
+
+        for trace in traces:
+            if trace['action'] in ['relocate', 'module']:
+                ret.append((int(trace['image-low'], 0), int(trace['image-high'], 0)))
+
+        return ret
 
     def fsm_analysis(self, traces):
         self.fsm.initialize()
@@ -54,7 +68,7 @@ class Model:
 
         self.fsm.finalize()
 
-    def analyze_cfg_net_trace(self, net_trace):
+    def analyze_cfg_net_trace(self, net_trace, modules):
         print_debug = False
         group = cfg.Group()
         ins = None
@@ -63,6 +77,8 @@ class Model:
         for item in net_trace:
             if not print_debug:
                 if 'io-counter' in item:
+                    if item['io-counter'] == '2':
+                        raise AttributeError('Analysis stopped after one iteration')
                     debug.debug(f'Dynamic CFG refinement {item["io-counter"]}...')
                     print_debug = True
 
@@ -82,12 +98,10 @@ class Model:
                 """ Get control flow target """
                 if item['action'] in ['direct-call', 'indirect-call', 'direct-jump', 'indirect-jump', 'ret']:
                     target_addr = int(item['target-addr'], 16)
-                    comment = ''
-                    if item['action'] == 'direct-call':
-                        comment = item['target']
-                    elif item['action'] in ['indirect-call', 'indirect-jump']:
-                        comment = f'{item["target"]} ({item["target-addr"]})'
-                    ins = cfg.Ins(dis, addr, opcodes, routine=routine, routine_addr=routine_addr, target_addr=target_addr, comment=comment, trace=item)
+                    target = ''
+                    if item['action'] in ['direct-call', 'indirect-call', 'indirect-jump', 'ret']:
+                        target = item['target']
+                    ins = cfg.Ins(dis, addr, opcodes, routine=routine, routine_addr=routine_addr, target=target, target_addr=target_addr, target_module=self.is_addr_from_modules(target_addr, modules), trace=item)
                 else:
                     ins = cfg.Ins(dis, addr, opcodes, routine=routine, routine_addr=routine_addr, trace=item)
 
@@ -108,6 +122,13 @@ class Model:
         """ Add last group if we finished CFG construction and last instruction is standard """
         if (ins is not None) and (ins.is_standard()):
             self.cfg.add(group)
+
+    def is_addr_from_modules(self, addr, modules):
+        for (module_low, module_high) in modules:
+            if (addr >= module_low) and (addr <= module_high):
+                return True
+
+        return False
 
     def get_buffer_comparations(self, traces):
         ret = []
@@ -446,7 +467,7 @@ class Model:
             else:
                 debug.warning(f'Unable to find new keywords')
         else:
-            raise NotImplementedError
+            raise NotImplementedError('Binary protocol not implemented')
 
     def strip_buffer(self, buffer, textual):
         ret = buffer
