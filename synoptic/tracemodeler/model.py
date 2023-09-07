@@ -22,10 +22,7 @@ class Model:
 
     def analyze(self, traces):
         debug.info('CFG analysis...')
-        try:
-            self.cfg_analysis(traces)
-        except AttributeError as e:
-            debug.warning(f'CFG analysis failed\t: {str(e)}')
+        self.cfg_analysis(traces)
         debug.info('FSM analysis...')
         try:
             self.fsm_analysis(traces)
@@ -77,8 +74,6 @@ class Model:
         for item in net_trace:
             if not print_debug:
                 if 'io-counter' in item:
-                    if item['io-counter'] == '2':
-                        raise AttributeError('Analysis stopped after one iteration')
                     debug.debug(f'Dynamic CFG refinement {item["io-counter"]}...')
                     print_debug = True
 

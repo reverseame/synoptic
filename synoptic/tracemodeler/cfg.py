@@ -310,10 +310,10 @@ class Node:
         group = Group()
 
         for ins in self.group:
+            group.add(ins)
+
             if ins == where:
                 break
-            else:
-                group.add(ins)
 
         """ Swap one group for the new one """
         self.group = group
@@ -769,6 +769,11 @@ class CFG:
         pending_edges = [(self.entry_node, self.entry_node.edges)]
         already_seen =  []
 
+        """ CFG first transition """
+        if first:
+            graph.node('entry', label='', shape='circle', style='filled', color='black', fixedsize='true')
+            graph.edge('entry', hex(self.entry_node.id))
+
         while pending_edges:
             (node, edges) = pending_edges.pop(0)        # Get first tuple
             node_id = hex(node.id)
@@ -794,12 +799,6 @@ class CFG:
                         self._draw_satic_node(graph, node_id, label=label)
                     else:
                         graph.node(node_id, label=label)
-
-                """ CFG first transition """
-                if first:
-                    graph.node('entry', label='', shape='circle', style='filled', color='black', fixedsize='true')
-                    graph.edge('entry', node_id)
-                    first = False
 
                 for edge in edges:
                     edge_node_id = hex(edge.dst.id)
@@ -928,6 +927,14 @@ class DynamicCFG:
                     self.last_cfg = self.last_cfg.previous
             else:
                 self.last_cfg.add(group)
+
+    def _create_new_cfg(self):
+        cfg = CFG()
+        self.last_cfg.next.append(cfg)
+        temp = self.last_cfg
+        self.last_cfg = cfg
+        self.last_cfg.previous = temp
+        self.cfgs.append(self.last_cfg)
 
     def get_next_cfg(self, group):
         addr = group.tail.info['target']
