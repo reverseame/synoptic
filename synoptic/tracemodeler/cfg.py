@@ -348,7 +348,7 @@ class CFG:
         self.nodes = []                 # List of nodes without any order
         self.entry_node = None          # Entry node of the CFG
         self.last_inserted = None       # Last node visited in the CFG
-        self.next = []                  # CFGs reached from this CFG
+        self.next = []                 # CFGs reached from this CFG
         self.final_cfg = False          # CFG is the last executed
         self.final_nodes = []           # List of nodes that finalize CFG
         self.tainted = False            # CFG contains a tainted node?
@@ -853,7 +853,7 @@ class CFG:
 
     def __eq__(self, other):
         if isinstance(other, CFG):
-            return hash(self) == hash(other)
+            return self.id == other.id
 
         return False
 
@@ -884,49 +884,47 @@ class DynamicCFG:
             cfg = CFG()
             cfg.add(group)
             self.entry_cfg = cfg
-            self.last_cfg = self.entry_cfg
-            self.cfgs.append(self.entry_cfg)
+            self.last_cfg = cfg
+            self.cfgs.append(self.last_cfg)
+
             if group.tail.is_return():
-                group.tail.update_comment('return to undefined CFG')
+                self.last_cfg.finalize()
+                self._create_new_cfg()
         else:
-            """ Go to another CFG due to call function """
+            self.last_cfg.add(group)
+
+            """ Go to another CFG due to a control flow change """
             if group.tail.is_call():
-                self.last_cfg.add(group)
                 next_cfg = self.get_next_cfg(group)
 
                 """ Next CFG is not defined yet, so we create a new one """
                 if next_cfg is None:
-                    cfg = CFG()
-                    self.last_cfg.next.append(cfg)
-                    temp = self.last_cfg
-                    self.last_cfg = cfg
-                    self.last_cfg.previous = temp
-                    self.cfgs.append(self.last_cfg)
+                    self._create_new_cfg()
                 else:
+                    if next_cfg not in self.last_cfg.next:
+                        self.last_cfg.next.append(next_cfg)
+
+                    """ Initialize the target CFG due to a call """
                     next_cfg.previous = self.last_cfg
                     self.last_cfg = next_cfg
                     self.last_cfg.initialize()
+            elif group.tail.is_return():
+                next_cfg = self.get_next_cfg(group)
+
+                """ Next CFG is not defined yet, so we create a new one """
+                if next_cfg is None:
+                    self._create_new_cfg()
+                else:
+                    if next_cfg not in self.last_cfg.next:
+                        self.last_cfg.next.append(next_cfg)
+                        
+                    """ End current CFG """
+                    self.last_cfg.finalize()
+                    self.last_cfg = next_cfg
             elif group.tail.is_plt_jmp():
                 """ plt jmp, fallthrough to the previous CFG """
-                self.last_cfg.add(group)
                 self.last_cfg.finalize()
                 self.last_cfg = self.last_cfg.previous
-            elif group.tail.is_return():
-                """
-                Fallthrough to the same CFG if there is no information about the
-                previous CFG (we started tracing in the middle of a function)
-                """
-                if self.last_cfg.previous is None:
-                    group.tail.update_comment('return to undefined CFG')
-
-                self.last_cfg.add(group)
-
-                """ Return to previous CFG """
-                if self.last_cfg.previous is not None:
-                    self.last_cfg.finalize()
-                    self.last_cfg = self.last_cfg.previous
-            else:
-                self.last_cfg.add(group)
 
     def _create_new_cfg(self):
         cfg = CFG()
@@ -937,27 +935,26 @@ class DynamicCFG:
         self.cfgs.append(self.last_cfg)
 
     def get_next_cfg(self, group):
-        addr = group.tail.info['target']
+        if 'target' in group.tail.info:
+            addr = group.tail.info['target']
 
-        if group.tail.is_call():
             for cfg in self.cfgs:
                 if not cfg.is_empty():
-                    if addr == cfg.id:
-                        return cfg
-
-        elif group.tail.is_return():
-            for cfg in self.cfgs:
-                if not cfg.is_empty():
-                    if 'fallthrough' in cfg.last_inserted.group.tail.info:
-                        if addr == cfg.last_inserted.group.tail.info['fallthrough']:
+                    if group.tail.is_call():
+                        if addr == cfg.id:
                             return cfg
+                    elif group.tail.is_return():
+                        if 'fallthrough' in cfg.last_inserted.group.tail.info:
+                            if addr == cfg.last_inserted.group.tail.info['fallthrough']:
+                                return cfg
+                    elif group.tail.is_plt_jmp():
+                            if addr == cfg.id:
+                                return cfg
+                    else:
+                        """ Can't get next CFG for this type of ins """
+                        return None
 
-        elif group.tail.is_plt_jmp():
-            for cfg in self.cfgs:
-                if not cfg.is_empty():
-                    if addr == cfg.id:
-                        return cfg
-
+        """ Target CFG not found """
         return None
 
     def get_tainted_cfgs(self):
@@ -970,11 +967,14 @@ class DynamicCFG:
             """ Automatically deletes temp_dir and all its content """
             with tempfile.TemporaryDirectory() as temp_dir:
                 pending_cfgs = []
+
                 cfg = self.entry_cfg
                 cfg_output_filename = os.path.join(temp_dir, hex(cfg.id))
                 cfg.export_graph(cfg_output_filename, first=True)
                 filenames.append(cfg_output_filename)
                 pending_cfgs.extend(cfg.next)
+
+                already_seen = []
 
                 while pending_cfgs:
                     cfg = pending_cfgs.pop(0)
@@ -983,7 +983,11 @@ class DynamicCFG:
                         if cfg_output_filename not in filenames:
                             cfg.export_graph(cfg_output_filename)
                             filenames.append(cfg_output_filename)
-                        pending_cfgs.extend(cfg.next)
+
+                        for next_cfg in cfg.next:
+                            if next_cfg.id not in already_seen:
+                                pending_cfgs.append(next_cfg)
+                                already_seen.append(next_cfg.id)
 
                 """ Join temp files """
                 merger = PyPDF2.PdfMerger()
