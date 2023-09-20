@@ -1,15 +1,12 @@
-import signal
-
-import synoptic.debug as debug
 import synoptic.tracemodeler.symbolic_engine.angr_engine
 import synoptic.tracemodeler.symbolic_engine.binsec_engine
 
 class SymbolicEngine():
-    def __init__(self, symbolic, binary, timeout):
+    def __init__(self, symbolic, binary, binary_args, timeout):
         if symbolic == 'angr':
-            self.engine = synoptic.tracemodeler.symbolic_engine.angr_engine.AngrEngine(binary, timeout)
+            self.engine = synoptic.tracemodeler.symbolic_engine.angr_engine.AngrEngine(binary, binary_args, timeout)
         elif symbolic == 'binsec':
-            self.engine = synoptic.tracemodeler.symbolic_engine.binsec_engine.BinsecEngine(binary, timeout)
+            self.engine = synoptic.tracemodeler.symbolic_engine.binsec_engine.BinsecEngine(binary, binary_args, timeout)
         else:
             raise ValueError(f'{symbolic}\t: Unknown symbolic engine')
 

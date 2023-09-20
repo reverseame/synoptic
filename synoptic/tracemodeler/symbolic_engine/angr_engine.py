@@ -10,9 +10,10 @@ import synoptic.debug as debug
 import synoptic.utils as utils
 
 class AngrEngine():
-    def __init__(self, binary, timeout):
+    def __init__(self, binary, binary_args, timeout):
         self.name = 'angr'
         self.binary = binary
+        self.binary_args = binary_args
         self.timeout = timeout
         self.project = None
         self.state = None
@@ -53,15 +54,15 @@ class AngrEngine():
     def run(self, n_solutions):
         if self.buffer is None:
             debug.warning(f'Symbolic analysis\t: Symbolic buffer not defined, skipping...')
-            return
+            return []
         
         if self.goal_addr is None:
             debug.warning(f'Symbolic analysis\t: Goal not defined, skipping...')
-            return
+            return []
 
         if not self.cut_addr:
             debug.warning(f'Symbolic analysis\t: Cut not defined, skipping...')
-            return
+            return []
 
         sm = self.project.factory.simulation_manager(self.state)
         """ Timeout is reset after each result found """

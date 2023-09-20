@@ -14,4 +14,4 @@ test/
 samples/*/
 *.bck
 *.bck.*
-*.ini
+/*.ini

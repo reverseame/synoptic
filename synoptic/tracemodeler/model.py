@@ -197,8 +197,8 @@ class Model:
         """ No delimeters found, return same buffer """
         return buffer
 
-    def symbolic_analysis(self, traces, binary, symbolic_engine, timeout):
-        symbolic_engine = symbolic.SymbolicEngine(symbolic_engine, binary, timeout)
+    def symbolic_analysis(self, traces, binary, binary_args, symbolic_engine, timeout):
+        symbolic_engine = symbolic.SymbolicEngine(symbolic_engine, binary, binary_args, timeout)
         binary_base_addr = self.get_base_addr(traces)
         results = self._symbolic_analysis(binary, symbolic_engine, binary_base_addr)
 
@@ -407,8 +407,8 @@ class Model:
                 debug.warning(f'Symbolic analysis\t: User interrupt')
             except utils.TimeOutException:
                 debug.warning(f'Symbolic analysis\t: {symbolic_engine.get_name()} error\t: Exploration timeout after {symbolic_engine.get_timeout()} seconds')
-            except Exception as e:
-                debug.warning(f'Symbolic analysis\t: {symbolic_engine.get_name()} error\t: {str(e)}')
+            """except Exception as e:
+                debug.warning(f'Symbolic analysis\t: {symbolic_engine.get_name()} error\t: {str(e)}')"""
 
             """ Reset all information """
             symbolic_engine.clean_project()

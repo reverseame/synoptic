@@ -26,7 +26,7 @@ def analyze_logs(args, model, working_dir):
 
     """ Symbolic analysis of traces """
     if args.symbolic_analysis:
-        model.symbolic_analysis(traces, args.binary, args.symbolic_engine, args.symbolic_timeout)
+        model.symbolic_analysis(traces, args.binary, args.binary_args, args.symbolic_engine, args.symbolic_timeout)
 
     """ Export dynamic CFG """
     if args.export_pdf:
