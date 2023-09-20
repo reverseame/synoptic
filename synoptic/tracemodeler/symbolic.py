@@ -25,8 +25,9 @@ class SymbolicEngine():
     def symbolic_buffer(self, reg_id, reg_name, length=100):
         self.engine.symbolic_buffer(reg_id, reg_name, length)
 
-    def symbolic_reg(self, reg_id, reg_name):
-        self.engine.symbolic_reg(reg_id, reg_name, length)
+    def symbolic_reg(self, reg_id, reg_name, reg_size):
+        """ reg_size in bytes, for example: rax reg should be 8 bytes """
+        self.engine.symbolic_reg(reg_id, reg_name, reg_size)
 
     def start(self, start_addr):
         self.engine.start(start_addr)

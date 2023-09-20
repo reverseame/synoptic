@@ -383,6 +383,7 @@ class Model:
             debug.debug(f'Symbolic analysis\t: start-addr\t: {hex(start_addr)}')
             symbolic_engine.start(start_addr)
             self._analyze_symbolic_vars(symbolic_engine, start_node)
+            self._analyze_symbolic_regs(symbolic_engine, target_cfg, start_node)
             self._analyze_target_addrs(symbolic_engine, target_cfg)
 
             already_seen_count = 0
@@ -426,6 +427,32 @@ class Model:
                         tainted_reg_name = ins.dis.reg_name(tainted_reg_id)
                         debug.debug(f'Symbolic analysis\t: buffer\t: {tainted_reg_name}')
                         symbolic_engine.symbolic_buffer(tainted_reg_id, tainted_reg_name)
+
+    def _analyze_symbolic_regs(self, symbolic_engine, target_cfg, start_node):
+        pending_nodes = [start_node]
+        already_seen = []
+
+        while pending_nodes:
+            node = pending_nodes.pop(0)
+            already_seen.append(node)
+
+            """ Analyze node ins """
+            for ins in node.group:
+                """ cmp instruction """
+                if ins.dis.id == capstone.x86.X86_INS_CMP:
+                    (operand_dst, operand_src) = ins.dis.operands
+                    """ cmp reg_dst, reg_src """
+                    if (operand_dst.type == capstone.x86.X86_OP_REG) and (operand_src.type == capstone.x86.X86_OP_REG):
+                        for op in ins.dis.operands:
+                            reg_id = op.reg
+                            reg_name = ins.dis.reg_name(reg_id)
+                            reg_size = op.size
+                            symbolic_engine.symbolic_reg(reg_id, reg_name, reg_size)
+
+            """ Go to next nodes """
+            for edge in node.edges:
+                if (edge.dst is not None) and (edge.dst not in already_seen) and not edge.dst.static:
+                    pending_nodes.append(edge.dst)
 
     def _analyze_target_addrs(self, symbolic_engine, target_cfg):
         final_nodes = set(target_cfg.final_nodes)
