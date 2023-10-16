@@ -26,11 +26,12 @@ SYMBOL_INDEX = 2
 class ProtocolFSM:
     def __init__(self):
         self.entry_state = None
+        self.last_transition = None
         self.last_inserted = None
         self.states = []
         self.sequence = []
         self.refine = False
-        self.textual = False        # Textual or binary protocol
+        self.textual = False            # Textual or binary protocol
         self.keywords = []
         self.delimiters = []
         self.inferred_keywords = []
@@ -55,9 +56,22 @@ class ProtocolFSM:
             self.refine = True
 
     def finalize(self):
+        """ Store last message (for disconnection message)"""
+        self.last_transition = self._get_transition(self.sequence[-1][0], None)
         """ Translate each state structure to global symbols """
         for state in self.states:
             state.analyze_symbols(self.keywords, self.delimiters)
+
+    def reset_to(self, state):
+        self.last_inserted = self.states[self.states.index(state)]
+        self.refine = True
+
+    def get_state_from_transition(self, state_id, transition):
+        for state in self.states:
+            if state.id == state_id:
+                for trans in state:
+                    if trans == transition:
+                        return state
 
     def import_from_file(self, filename):
         with open(filename, 'r') as f:
@@ -97,7 +111,8 @@ class ProtocolFSM:
                 self.sequence.append(transition)
 
         """ Get final transition """
-        self.sequence.append(self._get_transition(dict_content['sequence'][-1], None))
+        self.last_transition = self._get_transition(dict_content['sequence'][-1], None)
+        self.sequence.append(self.last_transition)
 
         self.initialize()
 
@@ -274,11 +289,22 @@ class ProtocolFSM:
         """ Render graph """
         graph.render()
 
+    def get_messages(self):
+        ret = []
+
+        for transition in self.sequence:
+            ret.append(transition.message)
+
+        return ret
+
     def generate_new_messages(self):
+        ret = []
         symbols = sorted([transition.message.symbols for transition in self.sequence], key=lambda x: len(x))
 
         for inferred_keyword in self.inferred_keywords:
-            yield self._generate_new_message(symbols, inferred_keyword)
+            ret.append(self._generate_new_message(symbols, inferred_keyword))
+
+        return ret
 
     def _generate_new_message(self, symbols, inferred_keyword):
         buffer = self._set_up_message_buffer(symbols, inferred_keyword)
@@ -291,7 +317,7 @@ class ProtocolFSM:
 
     def _set_up_message_buffer(self, symbols, inferred_keyword):
         template = self._create_base_template(symbols)
-        return self.generate_buffer(template, inferred_keyword)
+        return self._generate_buffer(template, inferred_keyword)
 
     def _create_base_template(self, symbols):
         template = []
@@ -326,7 +352,7 @@ class ProtocolFSM:
 
         return template
 
-    def generate_buffer(self, template, keyword):
+    def _generate_buffer(self, template, keyword):
         buffer = bytearray()
 
         for symbol in template:
@@ -400,6 +426,7 @@ class State:
         if self.last_transition.is_final():
             self.last_transition.next = state
         else:
+            import pdb; pdb.set_trace()
             raise NotImplementedError
 
     def analyze_symbols(self, keywords, delimiters):

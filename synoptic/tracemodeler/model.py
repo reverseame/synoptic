@@ -292,13 +292,15 @@ class Model:
         bbs_info = r2.cmd('afbj')
 
         """
-        Is this a feature or a bug? Sometimes r2 doesn't list basic blocks in JSON
-        format, we need to do it a few times
+        Is this a feature or a bug? angr is messing with exceptions and affects
+        r2 somehow, and it doesn't list basic blocks in JSON format, we need to do it a few times
         """
-        """attempts = 1
+        """
+        attempts = 1
         while not bbs_info and (attempts <= 3):
             bbs_info = r2.cmd('afbj')
-            attempts += 1"""
+            attempts += 1
+        """
 
         if not bbs_info:
             debug.warning(f'Static analysis\t: Unable to find basic block information for function {function_addr:#x} ({function_name})')
@@ -412,6 +414,7 @@ class Model:
 
             """ Reset all information """
             symbolic_engine.clean_project()
+            debug.debug('Symbolic engine clean!')
 
         return ret
 

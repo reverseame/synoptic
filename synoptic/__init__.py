@@ -100,13 +100,17 @@ def main():
 
     model = synoptic.tracemodeler.model.Model(arch_mode=arch_mode)
 
+    '''
     iteration = 0
     (completed_process, working_dir) = execute_servertracer(args, iteration=iteration)
     """ Update protocol model with last logs """
     model = analyze_logs(args, model, working_dir)
     iteration += 1
+    '''
+
 
     try:
+        '''
         """
         Execute until user interruption, binary execution error, or max. number of iterations
         reached
@@ -117,6 +121,22 @@ def main():
                 replayer.Replayer(args.replay_ip, args.replay_port, transport_layer=args.replay_transport_layer).replay(model.fsm, delay=(args.replay_delay / 1000), symbolic_messages=args.replay_symbolic_messages)
             model = analyze_logs(args, model, working_dir)
             iteration += 1
+        '''
+        if args.replay:
+            with open('/home/xubuntu/shared/experiments/proftpd/complex/iteration-000/fsm.json', 'r') as f:
+                data = f.read()
+            model.fsm.loads(data)
+            model.fsm = replayer.Replayer(args.replay_ip, args.replay_port, args.replay_transport_layer, args.replay_delay / 1000).replay(model.fsm, symbolic_messages=args.replay_symbolic_messages)
+            
+            """ Export inferred FSM """
+            fsm_json = os.path.join('/tmp', 'fsm-inferred.json')
+            model.fsm.export_to_file(fsm_json)
+            debug.info(f'{fsm_json}\t: Inferred FSM exported')
+
+            if args.export_pdf:
+                fsm_pdf = os.path.join('/tmp', 'fsm-inferred.pdf')
+                model.fsm.export_graph(fsm_pdf)
+                debug.info(f'{fsm_pdf}\t: FSM graph exported')
     except KeyboardInterrupt:
         debug.info('User interrupt')
     finally:
