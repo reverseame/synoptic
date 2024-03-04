@@ -57,7 +57,7 @@ class ProtocolFSM:
 
     def finalize(self):
         """ Store last message (for disconnection message)"""
-        self.last_transition = self._get_transition(self.sequence[-1][0], None)
+        self.last_transition = self._get_transition(self.sequence[-1], None)
         """ Translate each state structure to global symbols """
         for state in self.states:
             state.analyze_symbols(self.keywords, self.delimiters)

@@ -100,13 +100,12 @@ def main():
 
     model = synoptic.tracemodeler.model.Model(arch_mode=arch_mode)
 
-    '''
+    
     iteration = 0
     (completed_process, working_dir) = execute_servertracer(args, iteration=iteration)
     """ Update protocol model with last logs """
     model = analyze_logs(args, model, working_dir)
     iteration += 1
-    '''
 
 
     try:
