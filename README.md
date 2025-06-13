@@ -1,235 +1,121 @@
-# protocol-modeler
+# Synoptic
 
-This project aims to infer the protocol message format and protocol finite state machine of an unknown protocol. This project relies on PIN Dynamic Binary Instrumentation to dynamically analyze the server implementing the target protocol during its normal execution.
+Synoptic (**SY**mbolic **N**etw**O**rk **P**ro**T**ocol **I**nferen**C**e) is a project that aims to infer protocol message format and the protocol finite state machine (FSM) of an unknown protocol. This project mixes [Pin dynamic binary instrumentation framework](https://www.intel.com/content/www/us/en/developer/articles/tool/pin-a-dynamic-binary-instrumentation-tool.html) and symbolic execution ([angr](https://github.com/angr/angr), [binsec](https://github.com/binsec/binsec)) to dynamically analyze the server implementing the target protocol during its normal execution.
 
-## Structure
+## Project structure
 
-- `server-tracer`: Pin tool that generate execution traces
+Synoptic is a Python script that orchestrates two submodules:
 
-- `trace-modeler`: script to analyze the execution trace and generate the protocol model (protocol FSM and message format), and also a script to send messages based on the protocol model
+- `servertracer`: Pintool that generates execution traces
+
+- `tracemodeler`: Python script that analyzes the execution trace and generates the protocol FSM and message format. It also replays messages to a server based on the protocol FSM and generates new messages found by symbolic analysis
 
 ## Requisites
 
-- `server-tracer`: Pin 3.22
-- `trace-analyzer`: Capstone
+- `servertracer`:
+  - Linux: [Pin 3.25](https://software.intel.com/sites/landingpage/pintool/downloads/pin-3.25-98650-g8f6168173-gcc-linux.tar.gz)
+  - Windows: [Pin 3.25](https://software.intel.com/sites/landingpage/pintool/downloads/pin-3.25-98650-g8f6168173-gcc-linux.tar.gz), [Visual Studio Community](https://visualstudio.microsoft.com/vs/community/) (tested on version 2022) with C++ Desktop workload
+- `tracemodeler`: [Python](https://www.python.org/), [pip](https://pip.pypa.io/en/stable/), [requirements.txt dependencies](trace-modeler/requirements.txt), and [radare2 5.8.4](https://github.com/radareorg/radare2/releases/tag/5.8.4). Optionally, you need to install [binsec](https://github.com/binsec/binsec) to use it as a symbolic engine
 
-## Compilation and Usage
+## Installation
 
-1. Export the following variable in your `.bashrc` file:
+See [INSTALL.md](INSTALL.md) to install `servertracer` and `tracemodeler` submodules.
 
-    ```Bash
-    export PIN_ROOT="/path/to/pin-3.22"
-    ```
-(Optional) Pin 3.22 in Linux gives a compilation error: you have to rename `/path/to/pin-3.22/extras/components/include/atomic/private/intel64/ops-impl-intel6` file to `ops-impl-intel64-asm.hpp`.
-
-```console
-$ export PIN_ROOT="/path/to/pin-3.22"
-```
-
-1. `make` will create the Pin's `server-tracer.so` tool under `obj-intel64` folder
-
-2. You can now run the following command to obtain execution `trace.log`:
+## Usage
 
 ```console
-$ /path/to/pin -t obj-intel64/server-tracer.so -- server-executable [args]
+$ python synoptic.py -h
+usage: synoptic.py [-h] [-v] [--force-overwrite] [--debug]
+                   [--log <file> [<file> ...]] [--dirlog <folder>] [--m32]
+                   [--fsm-export <file>] [--fsm-import <file>]
+                   [--fsm-pdf <file>] [--cfg-pdf <file>] [--symbolic-analysis]
+                   [--binary <file>] [--symbolic-engine <angr|binsec>]
+                   [--timeout <s>] [--replay] [--server-ip <ip>]
+                   [--server-port <port>] [--transport-layer <tcp|udp>]
+                   [--delay <ms>] [--new-messages]
+
+   __            __   __  ___    __ 
+  (__' \_/ |\ | /  \ |__)  |  | /  `
+  .__)  |  | \| \__/ |     |  | \__,
+
+This script orchestrates the generation and analysis of server execution traces to infer
+the Finite-State Machine (FSM) protocol, and uses symbolic analysis to attempt to find
+new messages not contained in the traces. It relies on the construction of a Dynamic
+Control-Flow Graph (CFG) from traces to analyze the execution flow of a program
+
+optional arguments:
+  -h, --help            show this help message and exit
+  -v, --version         display version and exit
+  --force-overwrite     force overwriting of existing files
+  --debug               display debug messages
+  --log <file> [<file> ...]
+                        a list of .log files
+  --dirlog <folder>     a folder with .log files
+  --m32                 traces are in 32-bit mode (64-bit by default)
+  --fsm-export <file>   export FSM to JSON file
+  --fsm-import <file>   import FSM from JSON file
+  --fsm-pdf <file>      create a PDF with the FSM
+  --cfg-pdf <file>      create a PDF with the dynamic CFG
+  --symbolic-analysis   activate symbolic analysis
+  --binary <file>       binary file to add static information to the dynamic
+                        CFG
+  --symbolic-engine <angr|binsec>
+                        symbolic engine to use for new message inference
+                        (default to angr)
+  --timeout <s>         symbolic exploration timeout, it is reset after each
+                        result found (default to 5 s)
+  --replay              send messages to a server based on the FSM
+  --server-ip <ip>      server IP
+  --server-port <port>  server listening port
+  --transport-layer <tcp|udp>
+                        transport layer (default to TCP)
+  --delay <ms>          delay between messages to be sent (in ms) (default to
+                        200 ms)
+  --new-messages        generate and send new messages based on symbolic
+                        analysis information
+
+usage examples:
+    Display a protocol FSM based on a trace:
+        $ python synoptic.py --log /path/to/trace.log
+
+    Export a protocol FSM for future use:
+        $ python synoptic.py --log /path/to/trace.log --fsm-export /path/to/fsm.json
+
+    Create dynamic CFG and FSM PDF files:
+        $ python synoptic.py --log /path/to/trace.log --cfg-pdf /path/to/cfg.pdf --fsm-pdf /path/to/fsm.pdf
+
+    Infer new keywords through symbolic analysis and export them to the FSM:
+        $ python synoptic.py --log /path/to/trace.log --fsm-export /path/to/fsm.json --symbolic-analysis --binary /path/to/binary
+
+    Replay messages to a server based on a previously exported FSM:
+        $ python synoptic.py --fsm-import /path/to/fsm.json --replay --server-ip <ip> --server-port <port>
+
+    Replay FSM messages and send new messages obtained through symbolic analysis:
+        $ python synoptic.py --fsm-import /path/to/fsm.json --replay --server-ip <ip> --server-port <port> --new-messages
 ```
 
-## BINSEC
+### server-tracer
 
-### Creating the core dump
-
-After setting up [BINSEC](https://github.com/binsec/binsec), you need to follow these instructions to create a valid core dump to be analyzed by BINSEC:
-
-1. Set dynamic linker to resolve all symbols at program startup instead of deferring function call resolution to the point when they are first referenced:
+If you only need to execute `servertracer` submodule:
 
 ```console
-$ export LD_BIND_NOW=1
+$ $PIN_ROOT/pin -follow_execv -t /absolute/path/to/synoptic/servertracer/obj-intel64/server_tracer.so -h -- /usr/bin/true
+
+This tool is part of
+   __            __   __  ___    __ 
+  (__' \_/ |\ | /  \ |__)  |  | /  `
+  .__)  |  | \| \__/ |     |  | \__,
+
+This pintool traces all data activity sent and received over the network
+
+Pin tools switches
+
+-debug  [default 0]
+	Enable debug messages
+-dirlog  [default .]
+	Absolute path of log directory (default to current directory)
 ```
 
-2. Load your executable in the GNU Debugger (remember to preserve the already defined environment variable if your gaining privileges):
+## License
 
-```console
-$ sudo --preserve-env=LD_BIND_NOW gdb --args /path/to/executable arg1 arg2
-```
-
-3. Create a core dump of the debugged process:
-
-```console
-(gdb) b main
-Breakpoint 1 at 0x35e0
-(gdb) r
-Starting program: /path/to/executable arg1 arg2
-[Thread debugging using libthread_db enabled]
-Using host libthread_db library "/lib/x86_64-linux-gnu/libthread_db.so.1".
-
-Breakpoint 1, 0x00005555555575e0 in main ()
-(gdb) generate-core-file core.snapshot
-warning: target file /proc/2785/cmdline contained unexpected null characters
-Saved corefile core.snapshot
-```
-
-### Analyzing the executable with BINSEC
-
-Now, you have to set goals and symbolic variables in a separated `.ini` file. For example, to obtain strings that satisfy the following code block:
-
-![Code block](doc/graph.png)
-
-We create the following `.ini` file:
-
-```ini
-starting from core
-
-# entrypoint from core dump (program counter)
-replace 0x5555555575e0 by
-    rbx := 0xfffff000000000             # input buffer
-    r13 := nondet                       # input len
-    assume 0 < r13 < 8                  # 0 < strlen(input) < 8
-    @[rbx, 128] := 0                    # clear buffer
-    for i<64> in 0 to r13 - 1 do
-        @[rbx + i] := nondet as token   # fill symbolic input
-        assume "A" <= token <= "Z"      # such that it is uppercase
-    end
-    jump at 0x55555555d0b3              # real entrypoint
-
-reach * 0x55555555d0e2 then print ascii stream token
-cut at 0x55555555d0e2
-cut at 0x55555555d270
-```
-
-First, we specify to BINSEC to analyze the generated core dump. Now, we replace the entrypoint of the core dump with our symbolic definitions. To obtain the entrypoint (program counter) we can use the gdb itself:
-
-```console
-$ gdb -c core.snapshot
-Core was generated by `/path/to/executable arg1 arg2'.
-Program terminated with signal SIGTRAP, Trace/breakpoint trap.
-#0  0x00005555555575e0 in ?? ()
-(gdb) info registers rip
-rip            0x5555555575e0      0x5555555575e0
-```
-
-Or with radare2:
-
-```console
-$ r2 core.snapshot 
-Setting up coredump arch-bits to: x86-64
-Setting up coredump: Registers have been set
-Setting up coredump: 53 maps have been found and created
- -- radare2-built farm beats the facebook one.
-[0x5555555575e0]> dr?rip
-0x5555555575e0
-```
-
-At the end of our function definition, we jump to our code block to start the analysis, that is, 0x90b3 in the previous image. To translate between mapped addresses in the coredump and the executable, we can tell to radare2 to map the executable in the base address that was used in the coredump. To obtain the base address, we can use either the rabin2 utility (installed alongside radare2):
-
-```console
-$ rabin2 -I core.snapshot
-arch     x86
-baddr    0x555555554000
-[...]
-```
-
-Or radare2:
-
-```console
-$ r2 core.snapshot
-Setting up coredump arch-bits to: x86-64
-Setting up coredump: Registers have been set
-Setting up coredump: 53 maps have been found and created
- -- We feed trolls
-[0x5555555575e0]> i
-fd       3
-file     core.snapshot
-size     0x1966d0
-humansz  1.6M
-mode     r-x
-format   elf64
-iorw     false
-block    0x100
-type     CORE (Core file)
-arch     x86
-baddr    0x555555554000
-[...]
-```
-
-Now, we can analyze our executable with the same base address as the one in the coredump, and translate our desired addresses:
-
-```console
-$ r2 -B 0x555555554000 /path/to/executable
-Warning: run r2 with -e bin.cache=true to fix relocations in disassembly
- -- Your project name should contain an uppercase letter, 8 vowels, some numbers, and the first 5 characters of your private bitcoin key.
-[0x555555557bc0]> pd 10 @ 0x55555555d0b3
-            0x55555555d0b3      4c8d35065b00.  lea r14, obj.ftpprocs   ; 0x555555562bc0 ; "v\xb4"
-            0x55555555d0ba      31ed           xor ebp, ebp
-        ┌─< 0x55555555d0bc      eb12           jmp 0x55555555d0d0
-        │   0x55555555d0be      6690           nop
-        │   0x55555555d0c0      83c501         add ebp, 1
-        │   0x55555555d0c3      4983c610       add r14, 0x10           ; 16
-        │   0x55555555d0c7      83fd20         cmp ebp, 0x20           ; 32
-       ┌──< 0x55555555d0ca      0f84a0010000   je 0x55555555d270
-       │└─> 0x55555555d0d0      498b36         mov rsi, qword [r14]
-       │    0x55555555d0d3      4c89ea         mov rdx, r13
-```
-
-### Use of BINSEC
-
-First, we need to activate OCaml toolchain:
-
-```console
-$ eval $(opam env)
-```
-
-And then, we can use BINSEC with the following options:
-
-```console
-$ binsec -sse -sse-script crackme.ini core.snapshot -sse-alternative-engine
-[...]
-[sse:result] Ascii stream token : "PORT"
-[sse:result] Ascii stream token : "PASV"
-[sse:result] Ascii stream token : "PASS"
-[sse:result] Ascii stream token : "TYPE"
-[sse:result] Ascii stream token : "LIST"
-[sse:result] Ascii stream token : "CDUP"
-[sse:result] Ascii stream token : "RETR"
-[sse:result] Ascii stream token : "REST"
-[sse:result] Ascii stream token : "ABOR"
-[sse:result] Ascii stream token : "DELE"
-
-[sse:info] Empty path worklist: halting ...
-[sse:info] SMT queries
-             Preprocessing simplifications
-               total          23301
-               sat            448
-               unsat          18382
-               constant enum  4471
-             
-             Satisfiability queries
-               total          6893
-               sat            296
-               unsat          6597
-               unknown        0
-               time           39.64
-               average        0.01
-             
-           Exploration
-             total paths                      289
-             completed/cut paths              57
-             pending paths                    232
-             stale paths                      0
-             failed assertions                0
-             branching points                 30069
-             max path depth                   1050
-             visited instructions (unrolled)  130844
-             visited instructions (static)    152
-```
-
-# TODO
-
-1. Keep track of all memory writes during server session (don't delete written tainted address after send)
-2. Analyze the execution trace to identify messages and message exchanges
-3. Create the protocol model
-
-# Ideas
-
-- Could symbolic execution improve state discovery?
-- Replay messages to analyze how new messages are parsed?
-- Network trace could be good to replay function?
+Licensed under the [GNU GPLv3](LICENSE.md) license.

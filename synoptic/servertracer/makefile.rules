@@ -22,7 +22,7 @@
 # This defines tests which run tools of the same name.  This is simply for convenience to avoid
 # defining the test name twice (once in TOOL_ROOTS and again in TEST_ROOTS).
 # Tests defined here should not be defined in TOOL_ROOTS and TEST_ROOTS.
-TEST_TOOL_ROOTS := server-tracer
+TEST_TOOL_ROOTS := server_tracer
 
 # This defines the tests to be run that were not already defined in TEST_TOOL_ROOTS.
 TEST_ROOTS :=
@@ -83,3 +83,6 @@ SANITY_SUBSET := $(TEST_TOOL_ROOTS) $(TEST_ROOTS)
 
 # This section contains the build rules for all binaries that have special build rules.
 # See makefile.default.rules for the default build rules.
+
+$(OBJDIR)server_tracer$(PINTOOL_SUFFIX): $(OBJDIR)server_tracer$(OBJ_SUFFIX) $(OBJDIR)log$(OBJ_SUFFIX) $(OBJDIR)utilities$(OBJ_SUFFIX) $(OBJDIR)moduleload_linux$(OBJ_SUFFIX)
+	$(LINKER) $(TOOL_LDFLAGS) $(LINK_EXE)$@ $^ $(TOOL_LPATHS) $(TOOL_LIBS)

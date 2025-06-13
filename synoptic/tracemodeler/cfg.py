@@ -1,0 +1,981 @@
+import os
+import PyPDF2
+import capstone.x86
+import tempfile
+
+""" Disable logging for graphviz library """
+import logging
+logging.getLogger('graphviz').setLevel(logging.WARNING)
+import graphviz
+
+""" Ins type """
+INS_TYPE_JUMP = 0           # Direct and indirect jump
+INS_TYPE_BRANCH = 1         # Conditional jump
+INS_TYPE_CALL = 2
+INS_TYPE_RETURN = 3
+INS_TYPE_STANDARD = 4       # Any other instruction
+
+""" Graphviz colors """
+COLOR_BRANCH_TAKEN = 'chartreuse3'
+COLOR_BRANCH_NOT_TAKEN = 'firebrick3'
+COLOR_TAINTED = 'lightblue'
+
+class CFGException(Exception):
+    pass
+
+class Ins:
+    def __init__(self, dis, addr, opcodes, tainted=False, routine='', routine_addr=0x0, target='', target_addr=0x0, target_module=False, comment='', trace=dict()):
+        self.dis = dis
+        self.addr = addr
+        self.opcodes = opcodes
+        self.size = len(opcodes)
+        self.tainted = tainted
+        self.routine = routine
+        self.routine_addr = routine_addr
+        self.target = target
+        self.target_addr = target_addr
+        self.target_module = target_module
+        self.comment = set([comment]) if comment else set()
+        self.trace = trace
+        self.type = self._get_ins_type()
+        self.info = self._get_ins_info()
+
+    def _get_ins_type(self):
+        if capstone.x86.X86_GRP_JUMP in self.dis.groups:
+            """ If not jmp instruction, assume is a branch related instruction (conditional jump) """
+            if self.dis.id == capstone.x86.X86_INS_JMP:
+                return INS_TYPE_JUMP
+            else:
+                return INS_TYPE_BRANCH
+        elif capstone.x86.X86_GRP_CALL in self.dis.groups:
+            return INS_TYPE_CALL
+        elif capstone.x86.X86_GRP_RET in self.dis.groups:
+            return INS_TYPE_RETURN
+
+        return INS_TYPE_STANDARD
+
+    def _get_ins_info(self):
+        ret = {}
+
+        if self.is_standard() or self.is_branch() or self.is_call():
+            ret['fallthrough'] = self.addr + self.size
+        
+        if self.is_call() or self.is_jump():
+            operand = self.dis.operands[0] 
+            if operand.type == capstone.x86.X86_OP_IMM:
+                ret['mode'] = 'direct'
+                ret['target'] = self.target_addr if self.target_addr else operand.imm
+            elif (operand.type == capstone.x86.X86_OP_MEM) or (operand.type == capstone.x86.X86_OP_REG):
+                ret['mode'] = 'indirect'
+                ret['target'] = self.target_addr
+            else:
+                raise NotImplementedError(f'{self.dis.mnemonic} {self.dis.op_str}\t: Ins not supported')
+
+        if self.is_return():
+            ret['target'] = self.target_addr
+
+        if self.is_branch():
+            operand = self.dis.operands[0]
+            if operand.type == capstone.x86.X86_OP_IMM:
+                ret['branch-target'] = operand.imm
+
+        return ret
+
+    def is_call(self):
+        return self.type == INS_TYPE_CALL
+
+    def is_return(self):
+        return self.type == INS_TYPE_RETURN
+
+    def is_jump(self):
+        return self.type == INS_TYPE_JUMP
+
+    def is_branch(self):
+        return self.type == INS_TYPE_BRANCH
+
+    def is_plt_jmp(self):
+        """ Assume any `jmp qword ptr [rip]` as plt jump """
+        if self.is_jump():
+            operand = self.dis.operands[0]
+            if operand.type == capstone.x86.X86_OP_MEM:
+                return operand.value.mem.base == capstone.x86.X86_REG_RIP
+
+        return False
+
+    def is_standard(self):
+        return self.type == INS_TYPE_STANDARD
+
+    def is_control_flow(self):
+        return not self.is_standard()
+
+    def is_branch_taken(self, ins):
+        if self.is_branch():
+            return self.info['branch-target'] == ins.addr
+
+        return False
+
+    def get_ins_offset(self):
+        if self.routine_addr:
+            return self.addr - self.routine_addr
+
+        return 0
+
+    def check_next_ins(self, ins):
+        if ins.addr != self.info['fallthrough']:
+            raise CFGException(f'"{str(self)}" does not fallthrough to "{str(ins)}"')
+
+    def taint(self, ins):
+        self.tainted = ins.tainted
+        self.update_comment(ins.comment)
+
+    def update_comment(self, comment):
+        if isinstance(comment, set):
+            self.comment.update(comment)
+        elif isinstance(comment, str):
+            self.comment.add(comment)
+
+    def dumps(self, opcodes_padding=0, comment_padding=0, static=False):
+        tab_padding = ' ' * 5
+
+        string = f'{hex(self.addr)}{tab_padding}{self.opcodes.hex().ljust(opcodes_padding)}{tab_padding}{self.dis.mnemonic} {self.dis.op_str}'
+
+        """ Additional information only for dynamic executed instructions """
+        if static:
+            if self.comment:
+                string = f'{string.ljust(comment_padding)}'
+                for comment in self.comment:
+                    string += f' ; {comment}'
+        else:
+            if self.is_return() or self.is_plt_jmp():
+                string = f'{string.ljust(comment_padding)} ; {self.target} ({hex(self.target_addr)})'
+                for comment in self.comment:
+                    string += f' ; {comment}'
+            elif self.is_call():
+                string = f'{string.ljust(comment_padding)} ; {self.target}'
+                for comment in self.comment:
+                    string += f' ; {comment}'
+            else:
+                if self.comment:
+                    string = f'{string.ljust(comment_padding)}'
+                    for comment in self.comment:
+                        string += f' ; {comment}'
+
+        return string
+
+    def __str__(self):
+        return self.dumps()
+
+    def __eq__(self, other):
+        if isinstance(other, Ins):
+            return (self.addr == other.addr) and (self.opcodes == other.opcodes)
+
+        return False
+
+class Group:
+    def __init__(self):
+        self.inss = []
+        self.leader = None
+        self.tail = None
+        self.taint_count = 0
+
+    def is_tainted(self):
+        return self.taint_count > 0
+
+    def add(self, ins):
+        if self.leader is None:
+            self.leader = ins
+        
+        if self.tail is not None:
+            self.tail.check_next_ins(ins)
+
+        self.tail = ins
+
+        self.inss.append(ins)
+
+    def extend(self, group):
+        for ins in group:
+            if ins not in self.inss:
+                self.add(ins)
+        
+        self.taint(group)
+
+    def taint(self, group):
+        """ We need to copy group's ins tainted info to current group """
+        if group.is_tainted():
+            """ We can have subsets, so we need to check every ins of both groups """
+            for my_ins in self.inss:
+                for ins in group.inss:
+                    if (my_ins == ins) and ins.tainted:
+                        my_ins.taint(ins)
+
+        """ Preserve taint count """
+        self.taint_count += group.taint_count
+
+    def contains(self, ins):
+        for i in self.inss:
+            if i == ins:
+                return True
+
+        return False
+
+    def __str__(self):
+        return '\n'.join([str(ins) for ins in self.inss])
+
+    def __len__(self):
+        return len(self.inss)
+
+    def __iter__(self):
+        for ins in self.inss:
+            yield ins
+
+    def __eq__(self, other):
+        if isinstance(other, Group):
+            return (self.leader == other.leader) and (self.tail == other.tail)
+
+        return False
+
+class Edge:
+    def __init__(self, dst):
+        self.dst = dst
+        self.count = 1
+        self.branch_taken = False
+
+    def __eq__(self, other):
+        if isinstance(other, Edge):
+            return self.dst == other.dst
+
+        return False
+
+class Node:
+    def __init__(self, group, static=False):
+        self.id = group.leader.addr
+        self.group = group
+        self.visit_count = 1
+        self.taint_count = group.taint_count
+        self.edges = []
+        self.predecessors = []
+        self.static = static
+
+    def taint(self, node):
+        self.group.taint(node.group)
+        """ Preserve taint count """
+        self.taint_count += node.taint_count
+
+    def visit(self):
+        self.visit_count += 1
+
+    def is_tainted(self):
+        return self.taint_count > 0
+
+    def check_next_node(self, node):
+        if self.group.tail.is_return():
+            return
+
+        if self.group.tail.is_jump():
+            if self.group.tail.info['target'] == node.id:
+                return
+
+        if self.group.tail.is_branch():
+            if (self.group.tail.info['branch-target'] == node.id) or (self.group.tail.info['fallthrough'] == node.id):
+                return
+
+        """ We can't know either fallthrough or target address during plt jmp """ 
+        if self.group.tail.is_plt_jmp():
+            return
+
+        if ('fallthrough' in self.group.tail.info) and (self.group.tail.info['fallthrough'] == node.id):
+            return
+
+        raise CFGException(f'"{self.group.tail}" node cannot be followed by "{node.group.leader}"')
+
+    def extend(self, node):
+        self.group.extend(node.group)
+        self.taint(node)
+
+    def is_subset(self, node):
+        """
+        A node is a subset of another if both have same inss
+        """
+        for ins in self.group:
+            if not node.group.contains(ins):
+                return False
+
+        return True
+
+    def strip(self, where):
+        """
+        Create a new group because the actual one is already contained in another
+        node
+        """
+        group = Group()
+
+        for ins in self.group:
+            if ins == where:
+                break
+            else:
+                group.add(ins)
+
+        """ Swap one group for the new one """
+        self.group = group
+
+    def copy_node_info(self, node):
+        self.visit_count = node.visit_count
+        self.taint_count = node.taint_count
+        self.edges = node.edges
+
+    def __eq__(self, other):
+        if isinstance(other, Node):
+            return self.group == other.group
+
+        return False
+
+    def __len__(self):
+        return len(self.group)
+
+    def __str__(self):
+        return str(self.group)
+
+    def __iter__(self):
+        for edge in self.edges:
+            yield edge
+
+    def __hash__(self):
+        return self.id
+
+class CFG:
+    def __init__(self):
+        self.id = None                  # Unique ID of the CFG
+        self.nodes = []                 # List of nodes without any order
+        self.entry_node = None          # Entry node of the CFG
+        self.last_inserted = None       # Last node visited in the CFG
+        self.next = []                  # CFGs reached from this CFG
+        self.final_cfg = False          # CFG is the last executed
+        self.final_nodes = []           # List of nodes that finalize CFG
+        self.tainted = False            # CFG contains a tainted node?
+        self.previous = None            # Previous CFG that calls this CFG
+        self.refine = False             # Do we need to refine an already constructed CFG?
+        self.branch_node = None         # Last node visited with a branch instruction
+
+    def taint(self, node):
+        """ Preserve if one of nodes was tainted at some time """
+        self.tainted = self.tainted or node.is_tainted() 
+
+    def is_empty(self):
+        return self.entry_node is None
+
+    def initialize(self):
+        if not self.is_empty():
+            self.last_inserted = self.entry_node
+            self.refine = True
+
+    def set_final(self):
+        if not self.is_empty():
+            """
+            Only set CFG as final if there are not already defined edges at last_inserted, that is,
+            current CFG is less complete compared to previous interactions
+            """
+            if not self.last_inserted.edges:
+                self.final_cfg = True
+
+    def is_final(self):
+        return self.final_cfg
+
+    def finalize(self):
+        if not self.is_empty():
+            """
+            Only set CFG last_inserted as final node if there are not already defined
+            edges at last_inserted, that is, current CFG is more incomplete than
+            previous interactions
+            """
+            if not self.last_inserted.edges:
+                self.final_nodes.append(self.last_inserted)
+
+    def reset_to_node(self, node):
+        if node in self.nodes:
+            self.last_inserted = self.nodes[self.nodes.index(node)]
+        else:
+            raise CFGException(f'{str(node.group.leader)}\t: Node not found in CFG')
+
+    def get_node_by_addr(self, addr):
+        for node in self.nodes:
+            if node.id == addr:
+                return node
+
+        return None
+
+    def get_node_by_id(self, id_):
+        for node in self.nodes:
+            if node.id == id_:
+                return node
+
+        return None
+
+    def get_tainted_loop_info(self):
+        """ Set initial dominants """
+        dominances = {}
+        for node in self.nodes:
+            """ Dominant of entry_node is a set of only itself """ 
+            if node is self.entry_node:
+                dominances[self.entry_node] = {self.entry_node}
+            else:
+                """ Set the rest with all nodes as dominants """
+                dominances[node] = set(self.nodes)
+
+        """ Analyze all nodes but entry_node """
+        worklist = [node for node in self.nodes if node != self.entry_node]
+
+        while worklist:
+            node = worklist.pop(0)                                          # First node in list
+            predecessor_dominants = set(dominances[node.predecessors[0]])   # Create a new set with the same values
+            """ Intersection of previous dominants """
+            for predecessor in node.predecessors[1:]:
+                predecessor_dominants &= dominances[predecessor]            # Intersection of all predecessor dominants
+            """ Add itself as dominant """
+            predecessor_dominants.add(node)
+            """ Override with new dominant calculation """
+            dominances[node] = predecessor_dominants
+
+        """ Loops are defined by back-edges to header """
+        loop_info = []
+
+        for node in self.nodes:
+            dominants = dominances[node]
+            """ Back-edge to the header is detected if any of node's successor is a dominant to node """
+            for edge in node.edges:
+                if edge.dst in dominants:
+                    info = {'header': edge.dst, 'back-edge': node}
+                
+                    """
+                    The header has at least two predecessors, the back-edge and a potential pre-header.
+                    The pre-header is a dominant basic block that falthroughs (or jumps) to the header,
+                    added for loop optimization
+                    """
+                    if len(edge.dst.predecessors) >= 2:
+                        for predecessor in edge.dst.predecessors:
+                            """ A pre-header is a header's dominant, while back-edges are not """
+                            if predecessor in dominances[edge.dst]:
+                                if predecessor.group.tail.is_standard() or predecessor.group.tail.is_jump():
+                                    info['pre-header'] = predecessor
+
+                    """ Return information if any node defining the loop is tainted """
+                    if any([node.is_tainted() for node in info.values()]):
+                        loop_info.append(info)
+
+        return loop_info
+
+    def _extend_last_node(self, node):
+        """ We are updating the CFG, so do not store last_inserted as final node """
+        while self.last_inserted in self.final_nodes:
+            self.final_nodes.remove(self.last_inserted)
+
+        self.last_inserted.extend(node)
+
+        """ CFG is not final until we end CFG construction again """
+        self.refine = False
+        self.final_cfg = False
+
+    def _browse_sub_nodes(self, node):
+        while self.last_inserted.is_subset(node) and (self.last_inserted not in self.final_nodes):
+            """ Subsets are consecutive, so only have one edge that actuates as a fallthrough """
+            self._transition_to_first_edge(node)
+
+    def _transition_to_first_edge(self, node):
+        if self.last_inserted in self.final_nodes:
+            self.last_inserted.visit()
+        else:
+            if self.last_inserted.edges:
+                """ Keep track of last branch node """
+                self.branch_node = self.last_inserted if self.last_inserted.group.tail.is_branch() else None
+                edge = self.last_inserted.edges[0]
+                edge.count += 1
+                """ Update node info """
+                self.last_inserted.taint(node)
+                self.last_inserted.visit()
+                self.taint(node)
+                self.last_inserted = edge.dst
+            else:
+                """
+                CFG node ends here because it does not have a transition defined,
+                so we deactivate refinement
+                """
+                self.refine = False
+                self.final_cfg = False
+                self.last_inserted.visit()
+
+    def _transition_to_second_edge(self, node):
+        """ Revert previous branch decision """
+        self.branch_node.edges[0].count -= 1
+        if len(self.branch_node.edges) == 2:
+            """ Take second branch """
+            edge = self.branch_node.edges[1]
+            if edge.dst == node:
+                edge.count += 1
+                self.last_inserted = edge.dst
+                """ Assume transition by the first edge again """
+                self._transition_to_first_edge(node)
+            elif edge.dst.is_subset(node):
+                """ If edge.dst is a subset, advance this transition and consume all subnodes """
+                edge.count += 1
+                self.last_inserted = edge.dst
+                self._browse_sub_nodes(node)
+            else:
+                raise CFGException(f'Unknown transition from "{self.branch_node.group.tail}" to "{node.group.leader}"')
+        else:
+            """ Add this transition to branch_node because is not yet defined """
+            try:
+                """
+                If incoming node ends in a standard instruction (incomplete
+                node) and is a subset of the current index node, it means that
+                trace was halted here, so don't add an incomplete node
+                """
+                if not(node.group.tail.is_standard() and node.is_subset(self.last_inserted)):
+                    temp = self.last_inserted
+                    self.last_inserted = self.branch_node
+                    self._add_node(node)
+            except CFGException:
+                """
+                Revert to real last_inserted because insertion in
+                branch_node failed and raised exception
+                """
+                self.branch_node.edges[0].count += 1
+                self.last_inserted = temp
+                raise
+
+    def _transition_to_node(self, node):
+        """ Check if transition is already defined to the incoming node """
+        for edge in self.last_inserted.edges:
+            """ Check if transition is already defined and consume its destination """
+            if edge.dst == node:
+                edge.count += 1
+                self.last_inserted = edge.dst
+                """ Update node info """
+                self.last_inserted.taint(node)
+                self.last_inserted.visit()
+                self.taint(node)
+                return True
+
+        return False
+
+    def _add_node_transition(self, node, count=1):
+        new_edge = Edge(node)
+        new_edge.count = count
+
+        """ Check if new branch edge transition follows true or false predicate """
+        if self.last_inserted.group.tail.is_branch():
+            new_edge.branch_taken = self.last_inserted.group.tail.is_branch_taken(node.group.leader)
+
+        self.last_inserted.edges.append(new_edge)
+        predecessor = self.last_inserted
+        self.last_inserted = node
+        self.last_inserted.predecessors.append(predecessor)
+
+        """ Keep track of all nodes """
+        if node not in self.nodes:
+            self.nodes.append(node)
+
+    def _split_node(self, node, where):
+        """ Create new node with the remaining inss """
+        group = Group()
+        for ins in node.group.inss[node.group.inss.index(where):]:
+            group.add(ins)
+        new_node = Node(group)
+
+        """ Delete already defined node """
+        self.nodes.remove(node)
+        node_was_final = False
+        while node in self.final_nodes:
+            self.final_nodes.remove(node)
+            node_was_final = True
+
+        """ Modify current node group to only contain instructions until next one leader """
+        node.strip(where)
+        self.nodes.append(node)
+
+        """ Replicate node information into new_node """
+        new_node.copy_node_info(node)
+        """ Delete defined edges, and create new edge to new node """
+        node.edges = []
+
+        """ Create transition from node to new one """
+        node_index = self.last_inserted
+        self.last_inserted = node
+        self._add_node_transition(new_node)
+        self.last_inserted = node_index
+
+        """ Maintain previous edge count """
+        for edge in node.edges:
+            if edge.dst == new_node:
+                edge.count = node.visit_count
+
+        """ Transfer final node to the new_node """
+        if node_was_final:
+            self.final_nodes.append(new_node)
+
+        return (node, new_node)
+
+    def _add_node(self, node):
+        self.last_inserted.check_next_node(node)
+
+        """ Search if node is already defined """
+        if node in self.nodes:
+            """
+            Transition to the already defined node if current last_inserted does not
+            contain a valid transition to node
+            """
+            if not self._transition_to_node(node):
+                node_found = self.nodes[self.nodes.index(node)]
+                """ Update info of previous defined node """
+                node_found.visit()
+                node_found.taint(node)
+                self._add_node_transition(node_found)
+        else:
+            """ Check if any of the defined nodes is a subset of a new node """
+            for n in self.nodes:
+                if n.is_subset(node):
+                    """ Strip node to not contain an already defined node """
+                    node.strip(n.group.leader)
+                    """ Add the stripped node """
+                    if not self._transition_to_node(node):
+                        self._add_node_transition(node)
+                    """ And transition to the already defined node """
+                    if not self._transition_to_node(n):
+                        self._add_node_transition(n)
+                    break
+                elif node.is_subset(n):
+                    """
+                    We need to split an already defined node into two and transition
+                    to the already defined
+                    """
+                    (stripped_node, new_node) = self._split_node(n, node.group.leader)
+                    """ Update new node info """
+                    new_node.visit()
+                    new_node.taint(node)
+                    self._add_node_transition(new_node)
+                    break
+            else:
+                """
+                New transition to node, we looped every node in CFG without finding
+                a subset
+                """
+                self._add_node_transition(node)
+
+        """ We added a new node, so we do not need to keep track of last branch_node """
+        self.branch_node = None
+
+    def add(self, group):
+        node = Node(group)
+
+        if self.is_empty():
+            self.entry_node = node
+            self.id = self.entry_node.id            # CFG ID is defined by its entry_node ID
+            self.last_inserted = self.entry_node
+            self.nodes.append(node)
+        else:
+            if self.refine:
+                if self.last_inserted == node:
+                    """
+                    Always assume transition by first edge, even if it is branch_node
+                    with two transitions. At the moment we cannot tell which edge
+                    should we take
+                    """
+                    self._transition_to_first_edge(node)
+                else:
+                    """
+                    Could be that last_inserted was interrupted during dynamic
+                    analysis and it was no complete, in that case, extend node
+                    with new node instructions
+                    """
+                    if (self.last_inserted.id == node.id) and (len(self.last_inserted.edges) == 0):
+                        self._extend_last_node(node)
+                    elif self.last_inserted.is_subset(node):
+                        """
+                        Node could be a subnode of already defined one, so we need
+                        to navigate all its corresponding subnodes
+                        """
+                        self._browse_sub_nodes(node)
+                    elif self.branch_node is not None:
+                        """
+                        Assuming first transition of branch_node was wrong. So,
+                        if branch_node is defined, revert transition and take the
+                        second one
+                        """
+                        try:
+                            self._transition_to_second_edge(node)
+                        except CFGException:
+                            """ Add new node, we are not refining the CFG anymore """
+                            self.refine = False
+                            self.final_cfg = False
+                            self._add_node(node)
+                    else:
+                        """
+                        Otherwise assume the node was not yet visited in the CFG
+
+                        If incoming node ends in a standard instruction (incomplete
+                        node) and is a subset of the current index node, it means that
+                        trace was halted here, so don't add an incomplete node
+                        """
+                        if not(node.group.tail.is_standard() and node.is_subset(self.last_inserted)):
+                            self._add_node(node)
+            else:
+                self._add_node(node)
+
+    def _generate_node_label(self, node):
+        label = f'; {node.group.leader.routine}'
+
+        offset = node.group.leader.get_ins_offset()
+        if offset > 0:
+            label += f' + {offset:#x}'
+
+        if node.is_tainted():
+            label += f' [taint {node.taint_count}/{node.visit_count}]'
+
+        """ Calculate paddings """
+        opcodes_padding = max([len(ins.opcodes.hex()) for ins in node.group.inss])
+        comment_padding = max([len(ins.dumps(opcodes_padding=opcodes_padding).split(';')[0]) for ins in node.group.inss])
+
+        label += '\l\l' + '\l'.join([ins.dumps(opcodes_padding=opcodes_padding, comment_padding=comment_padding, static=node.static) for ins in node.group.inss]) + '\l'     # '\l' means left-aligned, last one is mandatory to ensure alignment of label last line
+
+        return label
+
+    def _set_dynamic_node_style(self, graph):
+        graph.attr('node', shape='box', style='solid', fontname='monospace')
+
+    def _set_dynamic_edge_style(self, graph):
+        graph.attr('edge', style='solid', fontname='monospace')
+
+    def _draw_satic_node(self, graph, node_id, label):
+        graph.attr('node', shape='box', style='dashed', fontname='monospace')
+        graph.node(node_id, label=label)
+        """ Back to normal node CFG style """
+        self._set_dynamic_node_style(graph)
+
+    def _draw_satic_edge(self, graph, node_id, edge_node_id, label='', branch=False, color=''):
+        graph.attr('edge', style='dashed', fontname='monospace')
+        if branch:
+            graph.edge(node_id, edge_node_id, label=label, color=color)
+        else:
+            graph.edge(node_id, edge_node_id)
+        """ Back to normal edge CFG style """
+        self._set_dynamic_edge_style(graph)
+
+    def export_graph(self, output, first=False):
+        graph = graphviz.Digraph(name=output, format='pdf')
+
+        """ General CFG Style """
+        self._set_dynamic_node_style(graph)
+        self._set_dynamic_edge_style(graph)
+
+        """ Iterate """
+        pending_edges = [(self.entry_node, self.entry_node.edges)]
+        already_seen =  []
+
+        while pending_edges:
+            (node, edges) = pending_edges.pop(0)        # Get first tuple
+            node_id = hex(node.id)
+
+            if node_id not in already_seen:
+                """
+                Extend node to fallthrough to next node if it ends in a call
+                instruction
+                """
+                while node.group.tail.is_call() and edges:
+                    """ A call node only have one edge defined, the fallthrough """
+                    fallthrough_node = edges[0].dst
+                    node.extend(fallthrough_node)
+                    """ Update edges with the edges of the fallthrough """
+                    edges = fallthrough_node.edges
+
+                label = self._generate_node_label(node)
+
+                if node.is_tainted():
+                    graph.node(node_id, label=label, style='filled', fillcolor=COLOR_TAINTED)
+                else:
+                    if node.static:
+                        self._draw_satic_node(graph, node_id, label=label)
+                    else:
+                        graph.node(node_id, label=label)
+
+                """ CFG first transition """
+                if first:
+                    graph.node('entry', label='', shape='circle', style='filled', color='black', fixedsize='true')
+                    graph.edge('entry', node_id)
+                    first = False
+
+                for edge in edges:
+                    edge_node_id = hex(edge.dst.id)
+
+                    label = self._generate_node_label(edge.dst)
+                    if edge.dst.is_tainted():
+                        graph.node(edge_node_id, label=label, style='filled', fillcolor=COLOR_TAINTED)
+                    else:
+                        if edge.dst.static:
+                            self._draw_satic_node(graph, edge_node_id, label=label)
+                        else:
+                            graph.node(edge_node_id, label=label)
+
+                    if (not node.static and edge.dst.static) or (node.static and edge.dst.static) or (node.static and not edge.dst.static):
+                        """ True or false branch jump """
+                        if node.group.tail.is_branch():
+                            if edge.branch_taken:
+                                self._draw_satic_edge(graph, node_id, edge_node_id, label='t', branch=True, color=COLOR_BRANCH_TAKEN)
+                            else:
+                                self._draw_satic_edge(graph, node_id, edge_node_id, label='f', branch=True, color=COLOR_BRANCH_NOT_TAKEN)
+                        else:
+                            self._draw_satic_edge(graph, node_id, edge_node_id, branch=False)
+                    else:
+                        """ True or false branch jump """
+                        if node.group.tail.is_branch():
+                            if edge.branch_taken:
+                                graph.edge(node_id, edge_node_id, label=f't / {edge.count}', color=COLOR_BRANCH_TAKEN)
+                            else:
+                                graph.edge(node_id, edge_node_id, label=f'f / {edge.count}', color=COLOR_BRANCH_NOT_TAKEN)
+                        else:
+                            graph.edge(node_id, edge_node_id, label=str(edge.count))
+
+                    new_edges = (edge.dst, edge.dst.edges)
+                    pending_edges.append(new_edges)
+
+                already_seen.append(node_id)
+
+        """ CFG last transition """
+        if self.is_final() and len(self.final_nodes):
+            graph.node('final', label='', shape='doublecircle', style='filled', color='black', fixedsize='true')
+
+            already_seen = []
+            for last_node in self.final_nodes:
+                last_node_id = hex(last_node.id)
+                if last_node_id not in already_seen:
+                    graph.edge(last_node_id, 'final', label=f'{self.final_nodes.count(last_node)}')
+                    graph.node(last_node_id)
+                    already_seen.append(last_node_id)
+
+        """ Generate Graphviz DOT file (.gv) """
+        graph.render()
+
+    def __eq__(self, other):
+        if isinstance(other, CFG):
+            return hash(self) == hash(other)
+
+        return False
+
+    def __contains__(self, node):
+        return node in self.nodes
+
+class DynamicCFG:
+    def __init__(self):
+        self.cfgs = []              # List of all CFGs without any order
+        self.entry_cfg = None       # First CFG
+        self.last_cfg = None        # Last CFG constructed
+
+    def is_empty(self):
+        return self.entry_cfg is None
+
+    def initialize(self):
+        if not self.is_empty():
+            self.last_cfg = self.entry_cfg
+            self.last_cfg.initialize()
+
+    def finalize(self):
+        if not self.is_empty():
+            self.last_cfg.set_final()
+            self.last_cfg.finalize()
+
+    def add(self, group):
+        if self.is_empty():
+            cfg = CFG()
+            cfg.add(group)
+            self.entry_cfg = cfg
+            self.last_cfg = self.entry_cfg
+            self.cfgs.append(self.entry_cfg)
+            if group.tail.is_return():
+                group.tail.update_comment('return to undefined CFG')
+        else:
+            """ Go to another CFG due to call function """
+            if group.tail.is_call():
+                self.last_cfg.add(group)
+                next_cfg = self.get_next_cfg(group)
+
+                """ Next CFG is not defined yet, so we create a new one """
+                if next_cfg is None:
+                    cfg = CFG()
+                    self.last_cfg.next.append(cfg)
+                    temp = self.last_cfg
+                    self.last_cfg = cfg
+                    self.last_cfg.previous = temp
+                    self.cfgs.append(self.last_cfg)
+                else:
+                    next_cfg.previous = self.last_cfg
+                    self.last_cfg = next_cfg
+                    self.last_cfg.initialize()
+            elif group.tail.is_plt_jmp():
+                """ plt jmp, fallthrough to the previous CFG """
+                self.last_cfg.add(group)
+                self.last_cfg.finalize()
+                self.last_cfg = self.last_cfg.previous
+            elif group.tail.is_return():
+                """
+                Fallthrough to the same CFG if there is no information about the
+                previous CFG (we started tracing in the middle of a function)
+                """
+                if self.last_cfg.previous is None:
+                    group.tail.update_comment('return to undefined CFG')
+
+                self.last_cfg.add(group)
+
+                """ Return to previous CFG """
+                if self.last_cfg.previous is not None:
+                    self.last_cfg.finalize()
+                    self.last_cfg = self.last_cfg.previous
+            else:
+                self.last_cfg.add(group)
+
+    def get_next_cfg(self, group):
+        addr = group.tail.info['target']
+
+        for cfg in self.cfgs:
+            if not cfg.is_empty():
+                if group.tail.is_call():
+                    if addr == cfg.id:
+                        return cfg
+                elif group.tail.is_return():
+                    if 'fallthrough' in cfg.last_inserted.group.tail.info:
+                        if addr == cfg.last_inserted.group.tail.info['fallthrough']:
+                            return cfg
+                elif group.tail.is_plt_jmp():
+                    if addr == cfg.id:
+                        return cfg
+
+        return None
+
+    def get_tainted_cfgs(self):
+        return [cfg for cfg in self.cfgs if cfg.tainted]
+
+    def export_graph(self, output):
+        if not self.is_empty():
+            filenames = []
+
+            """ Automatically deletes temp_dir and all its content """
+            with tempfile.TemporaryDirectory() as temp_dir:
+                pending_cfgs = []
+                cfg = self.entry_cfg
+                cfg_output_filename = os.path.join(temp_dir, hex(cfg.id))
+                cfg.export_graph(cfg_output_filename, first=True)
+                filenames.append(cfg_output_filename)
+                pending_cfgs.extend(cfg.next)
+
+                while pending_cfgs:
+                    cfg = pending_cfgs.pop(0)
+                    if not cfg.is_empty():
+                        cfg_output_filename = os.path.join(temp_dir, hex(cfg.id))
+                        if cfg_output_filename not in filenames:
+                            cfg.export_graph(cfg_output_filename)
+                            filenames.append(cfg_output_filename)
+                        pending_cfgs.extend(cfg.next)
+
+                """ Join temp files """
+                merger = PyPDF2.PdfMerger()
+                for filename in filenames:
+                    merger.append(f'{filename}.gv.pdf')
+
+                merger.write(output)
+                merger.close()

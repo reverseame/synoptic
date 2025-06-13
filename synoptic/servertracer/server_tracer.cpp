@@ -1,0 +1,947 @@
+#include "pin.H"
+
+#include <map>
+#include <set>
+#include <vector>
+#include <array>
+#include <tuple>
+#include <sstream>
+#include <iostream>
+#include <algorithm>
+
+#include "log.h"
+#include "utilities.h"
+
+#if linux
+#include "moduleload_linux.h"
+#elif _WIN32 || _WIN64
+#include "moduleload_windows.h"
+#endif
+
+/* Number of I/O iterations */
+int IOCounter = 0;
+
+/*
+* Rely on spatial location to minimize runtime overhead. Usually,
+* message parsing is done just after receiving data over the network
+*/
+#define SPATIAL_THRESHOLD 1000
+bool thresholdTriggered = false;
+
+/* Keep track of visited addresses during tracing */
+std::set<ADDRINT> visitedAddrs;
+
+/* Look up for signal handlers or timers that interrupts normal execution flow */
+bool executionInterrupted = false;
+ADDRINT insFallthrough = 0;
+ADDRINT insTargetAddr = 0;
+
+/* Modules limit addresses */
+std::vector<std::tuple<ADDRINT, ADDRINT>> moduleAddrs;
+
+/* Command line options */
+KNOB<bool> KnobDebug(KNOB_MODE_WRITEONCE, "pintool", "debug", "0", "Enable debug messages");
+KNOB<std::string> KnobLogDir(KNOB_MODE_WRITEONCE, "pintool", "dirlog", ".", "Absolute path of log directory (default to current directory)");
+KNOB<std::string> KnobModules(KNOB_MODE_WRITEONCE, "pintool", "modules", "", "List of additional modules to analyze, comma separated (default only to the main executable)");
+
+/* Keep track of tainted addresses */
+std::set<ADDRINT> taintedAddrs;
+/* Keep track of tainted registers per function */
+std::map<ADDRINT, std::array<bool, REG_LAST>> taintedRegs;
+/* Keep track of params passed to call ins */
+std::map<ADDRINT, std::set<REG>> callParams;
+
+/* Linux x64 registers used to pass arguments to functions */
+std::array<REG, 6> linuxRegParams = {REG_RDI, REG_RSI, REG_RDX, REG_RCX, REG_R8, REG_R9};
+/* General purpose x64 registers */
+std::array<REG, 14> generalRegister = {REG_RAX, REG_RBX, REG_RCX, REG_RDX, REG_RSI, REG_RDI, REG_R8, REG_R9, REG_R10, REG_R11, REG_R12, REG_R13, REG_R14, REG_R15};
+
+#define CF_DIRECT_CALL 0
+#define CF_INDIRECT_CALL 1
+#define CF_DIRECT_JUMP 2
+#define CF_INDIRECT_JUMP 3
+#define CF_RET 4
+
+void fini(INT32 code, VOID *v) {
+    LOG_INFO("action=process-end return=%x\n", code);
+    CLOSE_LOG();
+    if (KnobDebug) {
+        PRINT_DEBUG("Analysis finished\t\t: Checkout \"%s\" folder\n", KnobLogDir.Value().c_str());
+    }
+}
+
+bool followChild(CHILD_PROCESS cProcess, VOID *val) {
+    if (KnobDebug) {
+        PRINT_DEBUG("New child process spawned\n");
+    }
+    LOG_INFO("action=new-child\n");
+    /* Flush log file before injecting into new process */
+    FLUSH_LOG();
+    /* true value to inject PIN into child process */
+    return true;
+}
+
+void followForkBefore(THREADID threadid, const CONTEXT *ctxt, VOID *v) {
+    /* Flush log file before fork */
+    FLUSH_LOG();
+}
+
+void followForkInParent(THREADID threadid, const CONTEXT *ctxt, VOID *v) {
+    LOG_INFO("action=process-forked\n");
+}
+
+void followForkInChild(THREADID threadid, const CONTEXT *ctxt, VOID *v) {
+    /* Change to corresponding log file */
+    std::string filename = getFilePath(KnobLogDir.Value(), getProcessId() + ".log");
+
+    if (KnobDebug) {
+        PRINT_DEBUG("New process forked\n");
+        PRINT_DEBUG("log file\t\t\t: %s\n", filename.c_str());
+    }
+    OPEN_LOG(filename.c_str());
+
+    LOG_INFO("action=new-process-forked\n");
+}
+
+bool regIsGeneral(REG reg) {
+    std::array<REG, 14>::iterator item = std::find(generalRegister.begin(), generalRegister.end(), reg);
+
+    return item != generalRegister.end();
+}
+
+bool regIsParam(REG reg) {
+    std::array<REG, 6>::iterator item = std::find(linuxRegParams.begin(), linuxRegParams.end(), reg);
+
+    return item != linuxRegParams.end();
+}
+
+void deleteRegs(ADDRINT routineAddr) {
+    std::map<ADDRINT, std::array<bool, REG_LAST>>::iterator item = taintedRegs.find(routineAddr);
+
+    if (item != taintedRegs.end()) {
+        taintedRegs.erase(item);
+    }
+}
+
+void initializeRegs(ADDRINT routineAddr) {
+    std::array<bool, REG_LAST> regs;
+    /* Set all regs to false */
+    std::fill(std::begin(regs), std::end(regs), false);
+    taintedRegs[routineAddr] = regs;
+}
+
+bool regIsTainted(ADDRINT routineAddr, REG reg) {
+    std::map<ADDRINT, std::array<bool, REG_LAST>>::iterator item = taintedRegs.find(routineAddr);
+
+    /* reg info for this routineAddr not found, initialize it */
+    if (item == taintedRegs.end()) {
+        initializeRegs(routineAddr);
+        item = taintedRegs.find(routineAddr);
+    }
+
+    return item->second.at(reg);
+}
+
+void changeTaintRegValue(ADDRINT routineAddr, REG reg, bool tainted) {
+    std::map<ADDRINT, std::array<bool, REG_LAST>>::iterator item = taintedRegs.find(routineAddr);
+
+    /* reg info for this routineAddr not found, initialize it */
+    if (item == taintedRegs.end()) {
+        initializeRegs(routineAddr);
+        item = taintedRegs.find(routineAddr);
+    }
+
+    item->second.at(reg) = tainted;
+}
+
+bool addrIsFromTraceableModule(ADDRINT insAddr) {
+    std::vector<std::tuple<ADDRINT, ADDRINT>>::iterator it;
+
+    for (it = moduleAddrs.begin(); it != moduleAddrs.end(); ++it) {
+        if (insAddr >= std::get<0>(*it) && insAddr <= std::get<1>(*it)) {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+bool addrIsTraceable(ADDRINT insAddr, USIZE insSize) {
+    /* There is not tainted information */
+    if (taintedAddrs.empty()) {
+        return false;
+    }
+
+    if (addrIsFromTraceableModule(insAddr)) {
+        /* We surpassed the spatial location threshold */
+        if (visitedAddrs.size() >= SPATIAL_THRESHOLD) {
+            if (!thresholdTriggered) {
+                LOG_INFO("io-counter=%d action=spatial-threshold-triggered\n", IOCounter);
+                thresholdTriggered = true;
+            }
+            return false;
+        } 
+
+        /* Only check for signal handler if there is a fallthrough defined */
+        if (insFallthrough == 0) {
+            executionInterrupted = false;
+            insFallthrough = insAddr + insSize;
+            visitedAddrs.insert(insAddr);
+        } else {
+            /*
+            * If new instruction is a signal handler or a timer, do not count its execution
+            * for spatial space. We consider that a signal handler is executed when current
+            * ins address does not match neither the fallthrough or the target address of a
+            * previous ins
+            */
+            if ((insAddr == insFallthrough) || (insAddr == insTargetAddr)) {
+                insFallthrough = insAddr + insSize;
+                if (executionInterrupted) {
+                    LOG_INFO("io-counter=%d action=signal-finished\n", IOCounter);
+                    executionInterrupted = false;
+                }
+                visitedAddrs.insert(insAddr);
+            } else {
+                /* Signal function */
+                if (!executionInterrupted) {
+                    LOG_INFO("io-counter=%d action=signal-detected\n", IOCounter);
+                    executionInterrupted = true;
+                    /* Do not count signal address for spatial location */
+                }
+            }
+        }
+    } else {
+        return false;
+    }
+
+    return true;
+}
+
+void logInsOpcodes(ADDRINT insAddr, USIZE insSize) {
+    /*
+    * Intel® 64 and IA-32 Architectures Software Developer’s Manual Volume 2A: Instruction Set Reference, A-L
+    * The maximum length of an Intel 64 and IA-32 instruction remains 15 bytes
+    */
+    void* buf[15];
+    int ret = PIN_SafeCopy(buf, (void*) insAddr, insSize);
+    
+    if ((ret > 0) && (ret == ((int)insSize))) {
+        for (int i = 0; i < ret; i++) {
+            LOG_RAW("%02x", ((unsigned char*) buf)[i]);
+        }
+    } else {
+        LOG_RAW("\"unable to get opcodes\"");
+    }
+}
+
+void logIns(ADDRINT insAddr, USIZE insSize, std::string *insDis, const char *routine, ADDRINT routineAddr) {
+    LOG_INFO("io-counter=%d action=log-ins routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
+    logInsOpcodes(insAddr, insSize);
+    LOG_RAW("\n");
+}
+
+void traceIns(ADDRINT insAddr, USIZE insSize, std::string *insDis, const char *routine, ADDRINT routineAddr) {
+    if (!addrIsTraceable(insAddr, insSize)) {
+        return;
+    }
+
+    logIns(insAddr, insSize, insDis, routine, routineAddr);
+}
+
+/* Register copied to memory */
+void regToAddr(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT routineAddr, REG regAddr, ADDRINT addr, REG reg) {
+    if (!addrIsTraceable(insAddr, insSize)) {
+        return;
+    }
+
+    if (regIsTainted(routineAddr, reg)) {
+        LOG_TAINT("io-counter=%d action=taint-addr routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
+        logInsOpcodes(insAddr, insSize);
+        LOG_RAW(" origin=from-reg addr=%s reg-addr=%s reg=%s\n", hexaddr(addr).c_str(), REG_StringShort(regAddr).c_str(), REG_StringShort(reg).c_str());
+        taintedAddrs.insert(addr);
+    } else {
+        /* reg not tainted --> mem not tainted */
+        /* if mem is already not tainted, nothing to do */
+        if (taintedAddrs.count(addr)) {
+            LOG_TAINT("io-counter=%d action=free-addr routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
+            logInsOpcodes(insAddr, insSize);
+            LOG_RAW(" origin=from-reg addr=%s reg-addr=%s reg=%s\n", hexaddr(addr).c_str(), REG_StringShort(regAddr).c_str(), REG_StringShort(reg).c_str());
+            taintedAddrs.erase(taintedAddrs.find(addr));
+        } else {
+            logIns(insAddr, insSize, insDis, routine, routineAddr);
+        }
+    }
+}
+
+/* Memory copied to register */
+void addrToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT routineAddr, ADDRINT mem_r, REG reg_w, REG regBase) {
+    if (!addrIsTraceable(insAddr, insSize)) {
+        return;
+    }
+
+    if (taintedAddrs.count(mem_r)) {
+        LOG_TAINT("io-counter=%d action=taint-reg routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
+        logInsOpcodes(insAddr, insSize);
+        LOG_RAW(" origin=from-addr reg=%s addr=%s\n", REG_StringShort(reg_w).c_str(), hexaddr(mem_r).c_str());
+        changeTaintRegValue(routineAddr, reg_w, true);
+        /* mem is tainted -> [base] reg is tainted */
+        if (regIsGeneral(regBase)) {
+            changeTaintRegValue(routineAddr, regBase, true);
+        }
+    } else if (regIsTainted(routineAddr, reg_w)) {
+        /* mem is clean -> reg is cleaned */
+        LOG_TAINT("io-counter=%d action=free-reg routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter , routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
+        logInsOpcodes(insAddr, insSize);
+        LOG_RAW(" origin=addr reg=%s addr=%s\n", REG_StringShort(reg_w).c_str(), hexaddr(mem_r).c_str());
+        changeTaintRegValue(routineAddr, reg_w, false);
+    } else {
+        logIns(insAddr, insSize, insDis, routine, routineAddr);
+    }
+}
+
+/* Reg copied to another reg */
+void regToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT routineAddr, REG reg_r, REG reg_w) {
+    if (!addrIsTraceable(insAddr, insSize)) {
+        return;
+    }
+
+    if (regIsTainted(routineAddr, reg_r)) {
+        LOG_TAINT("io-counter=%d action=taint-reg routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
+        logInsOpcodes(insAddr, insSize);
+        LOG_RAW(" origin=from-reg reg-taint=%s reg-origin=%s\n", REG_StringShort(reg_w).c_str(), REG_StringShort(reg_r).c_str());
+        changeTaintRegValue(routineAddr, reg_w, true);
+    } else if (regIsTainted(routineAddr, reg_w)) {
+        LOG_TAINT("io-counter=%d action=free-reg routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
+        logInsOpcodes(insAddr, insSize);
+        LOG_RAW(" origin=reg reg-free=%s reg-origin=%s\n", REG_StringShort(reg_w).c_str(), REG_StringShort(reg_r).c_str());
+        changeTaintRegValue(routineAddr, reg_w, false);
+    } else {
+        logIns(insAddr, insSize, insDis, routine, routineAddr);
+    }
+}
+
+/* Immediate copied to a register */
+void immToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT routineAddr, REG reg_w) {
+    if (!addrIsTraceable(insAddr, insSize)) {
+        return;
+    }
+
+    if (regIsTainted(routineAddr, reg_w)) {
+        LOG_TAINT("io-counter=%d action=free-reg routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
+        logInsOpcodes(insAddr, insSize);
+        LOG_RAW(" reg=%s\n", REG_StringShort(reg_w).c_str());
+        changeTaintRegValue(routineAddr, reg_w, false);
+    } else {
+        logIns(insAddr, insSize, insDis, routine, routineAddr);
+    }
+}
+
+/* Immediate copied to memory address */
+void immToAddr(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT routineAddr, ADDRINT mem_w) {
+    if (!addrIsTraceable(insAddr, insSize)) {
+        return;
+    }
+
+    /* if mem is not tainted nothing to do */
+    if (taintedAddrs.count(mem_w)) {
+        LOG_TAINT("io-counter=%d action=free-addr routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter,routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
+        logInsOpcodes(insAddr, insSize);
+        LOG_RAW(" origin=from-imm addr=%s\n", hexaddr(mem_w).c_str());
+        taintedAddrs.erase(taintedAddrs.find(mem_w));
+    } else {
+        logIns(insAddr, insSize, insDis, routine, routineAddr);
+    }
+}
+
+/* returns register */
+REG getReg(INS ins) {
+    for (unsigned int i = 0; i < INS_OperandCount(ins); i++) {
+        if (INS_OperandIsReg(ins, i)) {
+            return REG_FullRegName(INS_OperandReg(ins, i));
+        }
+    }
+
+    return REG_INVALID();
+}
+
+/* returns immediate */
+ADDRINT getImm(INS ins) {
+    for (unsigned int i = 0; i < INS_OperandCount(ins); i++) {
+        if (INS_OperandIsImmediate(ins, i)) {
+            return INS_OperandImmediate(ins, i);
+        }
+    }
+
+    return -1;
+}
+
+/* meant to be called only from instrumentation routines */
+bool hasImm(INS ins) {
+    for (unsigned int i = 0; i < INS_OperandCount(ins); i++) {
+        if (INS_OperandIsImmediate(ins, i)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/* returns the full name of the first register operand written */
+REG getWriteReg(INS ins) {
+    for (unsigned int i = 0; i < INS_OperandCount(ins); i++) {
+        if (INS_OperandIsReg(ins, i) && INS_OperandWritten(ins, i)) {
+            return REG_FullRegName(INS_OperandReg(ins, i));
+        }
+    }
+
+    return REG_INVALID();
+}
+
+/* returns the full name of the first register operand read */
+REG getReadReg(INS ins) {
+    for (unsigned int i = 0; i < INS_OperandCount(ins); i++) {
+        if (INS_OperandIsReg(ins, i) && INS_OperandRead(ins, i)) {
+            return REG_FullRegName(INS_OperandReg(ins, i));
+        }
+    }
+
+    return REG_INVALID();
+}
+
+/* returns the full name of the first register operand read */
+REG getMemoryBaseReg(INS ins) {
+    REG reg = INS_MemoryBaseReg(ins);
+    if (reg != REG_INVALID()) {
+        return REG_FullRegName(reg);
+    }
+
+    return REG_INVALID();
+}
+
+/* returns the full name of the first index register */
+REG getMemoryIndexReg(INS ins) {
+    REG reg = INS_MemoryIndexReg(ins);
+    if (reg != REG_INVALID()) {
+        return REG_FullRegName(reg);
+    }
+
+    return REG_INVALID();
+}
+
+void analyzeCallParams(BBL bbl, ADDRINT callAddr) {
+    std::map<ADDRINT, std::set<REG>>::iterator item = callParams.find(callAddr);
+
+    /* Return if this call instruction was previously processed */
+    if (item != callParams.end()) {
+        return;
+    }
+
+    /* Initialize with empty set */
+    callParams[callAddr] = std::set<REG>();
+    item = callParams.find(callAddr);
+
+    /* Assume parameters to call ins are in the same BBL */
+    for (INS ins = BBL_InsHead(bbl); INS_Valid(ins); ins = INS_Next(ins)) {
+        /*
+        * Check only for ins that could propagate taint:
+        *       - mov reg, [...]
+        *       - mov reg, reg'
+        *       - lea reg, [...]
+        * For example, neither `mov rsi, imm` nor `xor rsi, rsi` could propagate a
+        * taint value, even though it is actually a parameter
+        */
+        if ((INS_IsMov(ins) && !hasImm(ins)) || INS_IsLea(ins)) {
+            REG reg = getWriteReg(ins);
+            if ((reg != REG_INVALID()) && regIsParam(reg)) {
+                item->second.insert(reg);
+            }
+        }
+    }
+}
+
+void passTaintedParams(ADDRINT insAddr, ADDRINT routineAddr, ADDRINT targetAddr) {
+    std::map<ADDRINT, std::set<REG>>::iterator item = callParams.find(insAddr);
+
+    if (!item->second.empty()) {
+        for (std::set<REG>::iterator it = item->second.begin(); it != item->second.end(); ++it) {
+            /* Pass tainted reg to next function, a.k.a. targetAddr of call ins */
+            if (regIsTainted(routineAddr, *it)) {
+                changeTaintRegValue(targetAddr, *it, true);
+            }
+        }
+    }
+}
+
+/* Print in/direct control flow instruction */
+void traceControlFlow(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT routineAddr, int controlFlowType, ADDRINT targetAddr) {
+    if (!addrIsTraceable(insAddr, insSize)) {
+        return;
+    }
+
+    std::string target = RTN_FindNameByAddress(targetAddr);
+
+    if (target.empty()) {
+        target = "unknown";
+    }
+
+    /* Do not update insTargetAddr if execution was interrupted due to a signal or a timer */
+    if (!executionInterrupted) {
+        if (addrIsFromTraceableModule(targetAddr)) {
+            insTargetAddr = targetAddr;
+        } else {
+            /* Delete ins info if control flow is changed outside traceable module */
+            insFallthrough = 0;
+        }
+    }
+
+    const char *controlFlow;
+
+    switch(controlFlowType) {
+        case CF_DIRECT_CALL:
+            controlFlow = "direct-call";
+            passTaintedParams(insAddr, routineAddr, targetAddr);
+            break;
+        case CF_INDIRECT_CALL:
+            controlFlow = "indirect-call";
+            passTaintedParams(insAddr, routineAddr, targetAddr);
+            break;
+        case CF_DIRECT_JUMP:
+            controlFlow = "direct-jump";
+            break;
+        case CF_INDIRECT_JUMP:
+            controlFlow = "indirect-jump";
+            break;
+        case CF_RET:
+            controlFlow = "ret";
+            /* Delete tainted regs for current function due to function termination */
+            deleteRegs(routineAddr);
+            /*
+            * TODO If there was any tainted params, taint return value too. How to
+            * retrieve routine-addr from targetAddr? Ret returns to the callee, not
+            * the beginning of the function
+            */
+            break;
+        default:
+            controlFlow = "unknown";
+            break;
+    }
+
+
+    LOG_INFO("io-counter=%d action=%s routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, controlFlow, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
+    logInsOpcodes(insAddr, insSize);
+    LOG_RAW(" target-addr=%s target=\"%s\"\n", hexaddr(targetAddr).c_str(), target.c_str());
+}
+
+void traceLea(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT routineAddr, REG reg, REG regBase, ADDRINT leaAddr) {
+    if (!addrIsTraceable(insAddr, insSize)) {
+        return;
+    }
+
+    /* Address calculated with lea is tainted -> taint reg */
+    if (taintedAddrs.count(leaAddr)) {
+        LOG_TAINT("io-counter=%d action=taint-reg routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
+        logInsOpcodes(insAddr, insSize);
+        LOG_RAW(" origin=from-lea reg=%s calculated-addr=%s\n", REG_StringShort(reg).c_str(), hexaddr(leaAddr).c_str());
+        changeTaintRegValue(routineAddr, reg, true);
+        /* Taint [base] register if it was not tainted, it used during calculation */
+        if (!regIsTainted(routineAddr, regBase)) {
+            changeTaintRegValue(routineAddr, regBase, true);
+        }
+    } else if (regIsTainted(routineAddr, reg)) {
+        /* Free tainted reg */
+        LOG_TAINT("io-counter=%d action=free-reg routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
+        logInsOpcodes(insAddr, insSize);
+        LOG_RAW(" origin=from-lea reg=%s calculated-addr=%s\n", REG_StringShort(reg).c_str(), hexaddr(leaAddr).c_str());
+        changeTaintRegValue(routineAddr, reg, false);
+    } else {
+        logIns(insAddr, insSize, insDis, routine, routineAddr);
+    }
+}
+
+/* Analyzes mov instructions */
+void propagateMovTaint(INS ins, const char *routine, ADDRINT routineAddr) {
+    if (hasImm(ins)) {
+        /* [addr] <- imm */
+        if (INS_IsMemoryWrite(ins)) {
+            INS_InsertCall(
+                ins, IPOINT_BEFORE, (AFUNPTR)immToAddr,
+                IARG_INST_PTR,
+                IARG_UINT32, INS_Size(ins),
+                IARG_PTR, new std::string(INS_Disassemble(ins)),
+                IARG_PTR, routine,
+                IARG_ADDRINT, routineAddr,
+                IARG_MEMORYWRITE_EA,
+                IARG_END);
+        } else {
+            /* reg <- imm */
+            REG reg = getWriteReg(ins);
+            INS_InsertCall(
+                ins, IPOINT_BEFORE, (AFUNPTR)immToReg,
+                IARG_INST_PTR,
+                IARG_UINT32, INS_Size(ins),
+                IARG_PTR, new std::string(INS_Disassemble(ins)),
+                IARG_PTR, routine,
+                IARG_ADDRINT, routineAddr,
+                IARG_PTR, reg,
+                IARG_END);
+        }
+    } else if (INS_IsMemoryRead(ins)) {
+        /* reg <- [addr] */
+        REG reg = getWriteReg(ins);
+        REG regBase = getMemoryBaseReg(ins);
+
+        INS_InsertCall(
+            ins, IPOINT_BEFORE, (AFUNPTR)addrToReg,
+            IARG_INST_PTR,
+            IARG_UINT32, INS_Size(ins),
+            IARG_PTR, new std::string(INS_Disassemble(ins)),
+            IARG_PTR, routine,
+            IARG_ADDRINT, routineAddr,
+            IARG_MEMORYREAD_EA,
+            IARG_PTR, reg,
+            IARG_PTR, regBase,
+            IARG_END);
+    } else if (INS_IsMemoryWrite(ins)) {
+        /* [addr] <- reg */
+        REG regAddr = getMemoryBaseReg(ins);
+        REG reg = getReg(ins);
+        INS_InsertCall(
+            ins, IPOINT_BEFORE, (AFUNPTR)regToAddr,
+            IARG_INST_PTR,
+            IARG_UINT32, INS_Size(ins),
+            IARG_PTR, new std::string(INS_Disassemble(ins)),
+            IARG_PTR, routine,
+            IARG_ADDRINT, routineAddr,
+            IARG_PTR, regAddr,
+            IARG_MEMORYWRITE_EA,
+            IARG_PTR, reg,
+            IARG_END);
+    } else if (INS_RegR(ins, 0) != REG_INVALID()) {
+        /* reg <- reg */
+        REG reg_r = getReadReg(ins);
+        REG reg_w = getWriteReg(ins);
+        INS_InsertCall(
+            ins, IPOINT_BEFORE, (AFUNPTR)regToReg,
+            IARG_INST_PTR,
+            IARG_UINT32, INS_Size(ins),
+            IARG_PTR, new std::string(INS_Disassemble(ins)),
+            IARG_PTR, routine,
+            IARG_ADDRINT, routineAddr,
+            IARG_PTR, reg_r,
+            IARG_PTR, reg_w,
+            IARG_END);
+    } else {
+        PRINT_WARNING("Unable to propagate taint info: %s\n", INS_Disassemble(ins).c_str());
+    }
+}
+
+/* Analyzes lea instructions */
+void propagateLeaTaint(INS ins, const char *routine, ADDRINT routineAddr) {
+    /* reg <- [algorithmic calculation] */
+    REG reg = getReg(ins);
+    REG regBase = getMemoryBaseReg(ins);
+
+    INS_InsertCall(
+        ins, IPOINT_BEFORE, (AFUNPTR)traceLea,
+        IARG_INST_PTR,
+        IARG_UINT32, INS_Size(ins),
+        IARG_PTR, new std::string(INS_Disassemble(ins)),
+        IARG_PTR, routine,
+        IARG_ADDRINT, routineAddr,
+        IARG_PTR, reg,
+        IARG_PTR, regBase,
+        IARG_EXPLICIT_MEMORY_EA,
+        IARG_END);
+}
+
+void analyzeControlFlow(INS ins, const char *routine, ADDRINT routineAddr) {
+    int controlFlowType = -1;
+
+    if (INS_IsCall(ins)) {
+        /* call addr */
+        if (INS_IsDirectCall(ins)) {
+            controlFlowType = CF_DIRECT_CALL;
+        } else {
+            /* call [reg] */
+            controlFlowType = CF_INDIRECT_CALL;
+        }
+    } else if (INS_IsBranch(ins)) {
+        if (INS_IsDirectBranch(ins)) {
+            /* jmp addr */
+            controlFlowType = CF_DIRECT_JUMP;
+        } else {
+            /* jmp [reg] */
+            controlFlowType = CF_INDIRECT_JUMP;
+        }
+    } else if (INS_IsRet(ins)) {
+        controlFlowType = CF_RET;
+    }
+
+    INS_InsertCall(ins, IPOINT_BEFORE, (AFUNPTR)traceControlFlow,
+        IARG_INST_PTR,
+        IARG_UINT32, INS_Size(ins),
+        IARG_PTR, new std::string(INS_Disassemble(ins)),
+        IARG_PTR, routine,
+        IARG_ADDRINT, routineAddr,
+        IARG_PTR, controlFlowType,
+        IARG_BRANCH_TARGET_ADDR,
+        IARG_END);
+}
+
+/* Immediate compared to memory address */
+void compareImmToAddr(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT routineAddr, ADDRINT mem_r, REG reg_r, REG reg_r_index, ADDRINT imm) {
+    if (!addrIsTraceable(insAddr, insSize)) {
+        return;
+    }
+
+    if (taintedAddrs.count(mem_r) || regIsTainted(routineAddr, reg_r)) {
+        LOG_TAINT("io-counter=%d action=compare routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
+        logInsOpcodes(insAddr, insSize);
+        LOG_RAW(" origin=addr-to-imm addr=%s reg=%s imm=%s\n", hexaddr(mem_r).c_str(), REG_StringShort(reg_r).c_str(), hexaddr(imm).c_str());
+    /* If any of [reg_r + reg_r_index] is tainted -> tainted comparison */
+    } else if (regIsTainted(routineAddr, reg_r_index)) {
+        LOG_TAINT("io-counter=%d action=compare routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
+        logInsOpcodes(insAddr, insSize);
+        LOG_RAW(" origin=addr-to-imm addr=%s reg=%s imm=%s\n", hexaddr(mem_r).c_str(), REG_StringShort(reg_r_index).c_str(), hexaddr(imm).c_str());
+    } else {
+        logIns(insAddr, insSize, insDis, routine, routineAddr);
+    }
+}
+
+/* Immediate compared to register */
+void compareImmToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT routineAddr, REG reg, ADDRINT regValue, ADDRINT imm) {
+    if (!addrIsTraceable(insAddr, insSize)) {
+        return;
+    }
+
+    if (regIsTainted(routineAddr, reg)) {
+        LOG_TAINT("io-counter=%d action=compare routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
+        logInsOpcodes(insAddr, insSize);
+        LOG_RAW(" origin=reg-to-imm reg=%s reg-value=%s imm=%s\n", REG_StringShort(reg).c_str(), hexaddr(regValue).c_str(), hexaddr(imm).c_str());
+    } else {
+        logIns(insAddr, insSize, insDis, routine, routineAddr);
+    }
+}
+
+/* Register compared to register */
+void compareRegToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT routineAddr, REG reg1, REG reg2) {
+    if (!addrIsTraceable(insAddr, insSize)) {
+        return;
+    }
+
+    if (regIsTainted(routineAddr, reg1) || regIsTainted(routineAddr, reg2)) {
+        LOG_TAINT("io-counter=%d action=compare routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
+        logInsOpcodes(insAddr, insSize);
+        LOG_RAW(" origin=reg-to-reg reg1=%s reg2=%s\n", REG_StringShort(reg1).c_str(), REG_StringShort(reg2).c_str());
+    } else {
+        logIns(insAddr, insSize, insDis, routine, routineAddr);
+    }
+}
+
+void analyzeComparison(INS ins, const char *routine, ADDRINT routineAddr) {
+    if (hasImm(ins)) {
+        /* [addr] == imm */
+        if (INS_IsMemoryRead(ins)) {
+            REG reg = getMemoryBaseReg(ins);
+            REG reg_index = getMemoryIndexReg(ins);
+            ADDRINT imm = getImm(ins);
+            INS_InsertCall(
+                ins, IPOINT_BEFORE, (AFUNPTR)compareImmToAddr,
+                IARG_INST_PTR,
+                IARG_UINT32, INS_Size(ins),
+                IARG_PTR, new std::string(INS_Disassemble(ins)),
+                IARG_PTR, routine,
+                IARG_ADDRINT, routineAddr,
+                IARG_MEMORYOP_EA, 0,
+                IARG_PTR, reg,
+                IARG_PTR, reg_index,
+                IARG_PTR, imm,
+                IARG_END);
+        } else {
+            /* reg == imm */
+            REG reg = getReg(ins);
+            ADDRINT imm = getImm(ins);
+            INS_InsertCall(
+                ins, IPOINT_BEFORE, (AFUNPTR)compareImmToReg,
+                IARG_INST_PTR,
+                IARG_UINT32, INS_Size(ins),
+                IARG_PTR, new std::string(INS_Disassemble(ins)),
+                IARG_PTR, routine,
+                IARG_ADDRINT, routineAddr,
+                IARG_PTR, reg,
+                IARG_REG_VALUE, reg,
+                IARG_PTR, imm,
+                IARG_END);
+        }
+    } else if (INS_OperandIsReg(ins, 0) && INS_OperandIsReg(ins, 1)) {
+        /* reg == reg */
+        REG reg1 = REG_FullRegName(INS_OperandReg(ins, 0));
+        REG reg2 = REG_FullRegName(INS_OperandReg(ins, 1));
+        INS_InsertCall(
+            ins, IPOINT_BEFORE, (AFUNPTR)compareRegToReg,
+            IARG_INST_PTR,
+            IARG_UINT32, INS_Size(ins),
+            IARG_PTR, new std::string(INS_Disassemble(ins)),
+            IARG_PTR, routine,
+            IARG_ADDRINT, routineAddr,
+            IARG_PTR, reg1,
+            IARG_PTR, reg2,
+            IARG_END);
+    } else {
+        INS_InsertCall(
+            ins, IPOINT_BEFORE, (AFUNPTR)traceIns,
+            IARG_INST_PTR,
+            IARG_UINT32, INS_Size(ins),
+            IARG_PTR, new std::string(INS_Disassemble(ins)),
+            IARG_PTR, routine,
+            IARG_ADDRINT, routineAddr,
+            IARG_END);
+    }
+}
+
+/*
+* This function is called every time a new trace is encountered.
+*/
+void instrumentTrace(TRACE trace, void *v) {
+    const char *routine = "unknown";
+    ADDRINT routineAddr = 0;
+    RTN rtn = TRACE_Rtn(trace);
+    if (RTN_Valid(rtn)) {
+        routine = RTN_Name(rtn).c_str();
+        routineAddr = RTN_Address(rtn);
+    }
+
+    for (BBL bbl = TRACE_BblHead(trace); BBL_Valid(bbl); bbl = BBL_Next(bbl)) {
+        for (INS ins = BBL_InsHead(bbl); INS_Valid(ins); ins = INS_Next(ins)) {
+            /* Propagate taint for mov instructions */
+            if ((INS_Opcode(ins) >= XED_ICLASS_MOV) && (INS_Opcode(ins) <= XED_ICLASS_MOVZX)) {
+                propagateMovTaint(ins, routine, routineAddr);
+            } else if (INS_IsLea(ins)) {
+                /* Propagate taint for lea instructions */
+                propagateLeaTaint(ins, routine, routineAddr);
+            }
+            else if (INS_IsControlFlow(ins)) {
+                analyzeControlFlow(ins, routine, routineAddr);
+            } else if ((INS_Opcode(ins) == XED_ICLASS_CMP) || (INS_Opcode(ins) == XED_ICLASS_TEST)) {
+                analyzeComparison(ins, routine, routineAddr);
+            } else {
+                INS_InsertCall(
+                    ins, IPOINT_BEFORE, (AFUNPTR)traceIns,
+                    IARG_INST_PTR,
+                    IARG_UINT32, INS_Size(ins),
+                    IARG_PTR, new std::string(INS_Disassemble(ins)),
+                    IARG_PTR, routine,
+                    IARG_ADDRINT, routineAddr,
+                    IARG_END);
+            }
+        }
+    }
+
+    /* Analyze all call ins parameters, call are always at the end of a TRACE */
+    BBL lastBbl = TRACE_BblTail(trace);
+    INS lastIns = BBL_InsTail(lastBbl);
+    ADDRINT lastInsAddr = INS_Address(lastIns);
+
+    if (addrIsFromTraceableModule(lastInsAddr)) {
+        if (INS_IsCall(lastIns)) {
+            analyzeCallParams(lastBbl, lastInsAddr);
+        }
+    }
+}
+
+void moduleLoad(IMG img, void *v) {
+    ADDRINT image_low = IMG_LowAddress(img);
+    ADDRINT image_high = IMG_HighAddress(img);
+
+    /* Avoid to hook the main executable */
+    if (IMG_IsMainExecutable(img)) {
+        if (KnobDebug) {
+            PRINT_DEBUG("Main module loaded\t\t: %s (%s)\n", IMG_Name(img).c_str(), hexaddr(image_low).c_str());
+        }
+        LOG_INFO("action=relocate image-low=%s image-high=%s main-executable=\"%s\"\n", hexaddr(image_low).c_str(), hexaddr(image_high).c_str(), IMG_Name(img).c_str());
+        moduleAddrs.push_back(std::make_tuple(image_low, image_high));
+
+        return;
+    } else if (KnobModules.SetByUser()) {
+        std::istringstream ss(KnobModules.Value());
+        std::string token;
+
+        while(std::getline(ss, token, ',')) {
+            if (token == IMG_Name(img)) {
+                if (KnobDebug) {
+                    PRINT_DEBUG("Module is now traceable \t: %s (%s)\n", IMG_Name(img).c_str(), hexaddr(image_low).c_str());
+                }
+                LOG_INFO("action=module image-low=%s image-high=%s module-name=\"%s\"\n", hexaddr(image_low).c_str(), hexaddr(image_high).c_str(), IMG_Name(img).c_str());
+                moduleAddrs.push_back(std::make_tuple(image_low, image_high));
+            }
+        }
+
+    }
+
+    if (KnobDebug) {
+        PRINT_DEBUG("Module loaded\t\t\t: %s (%s)\n", IMG_Name(img).c_str(), hexaddr(image_low).c_str());
+    }
+
+    replaceSignatures(KnobDebug, img, taintedAddrs, taintedRegs, visitedAddrs, thresholdTriggered, IOCounter, insFallthrough);
+}
+
+int usage() {
+    std::cerr << std::endl << "This tool is part of" << std::endl;
+    std::cerr << "   __            __   __  ___    __ " << std::endl;
+    std::cerr << "  (__' \\_/ |\\ | /  \\ |__)  |  | /  `" << std::endl;
+    std::cerr << "  .__)  |  | \\| \\__/ |     |  | \\__," << std::endl;
+    std::cerr << std::endl << "This pintool traces all data activity sent and received over the network" << std::endl;
+    std::cerr << KNOB_BASE::StringKnobSummary() << std::endl;
+
+    return -1;
+}
+
+int main(int argc, char *argv[]) {
+    /* Symbol processing */
+    PIN_InitSymbols();
+
+    /* Init PIN framework */
+    if (PIN_Init(argc, argv)) {
+        return usage();
+    }
+
+    /* Output file to PID.log */
+    std::string filename = getFilePath(KnobLogDir.Value(), getProcessId() + ".log");
+
+    if (KnobDebug) {
+        PRINT_DEBUG("Analysis started\n");
+        PRINT_DEBUG("log file\t\t\t: %s\n", filename.c_str());
+    }
+
+    OPEN_LOG(filename.c_str());
+
+    LOG_INFO("action=process-begin\n");
+
+    /* Disassembly syntax to Intel format */
+    PIN_SetSyntaxIntel();
+
+    /* Replace calls on module load */
+    IMG_AddInstrumentFunction(moduleLoad, 0);
+
+    /* Instrument traces */
+    TRACE_AddInstrumentFunction(instrumentTrace, 0);
+
+    /* Follow child processes */
+    PIN_AddFollowChildProcessFunction(followChild, 0);
+
+    /* Follow before fork function in the parent process */
+    PIN_AddForkFunction(FPOINT_BEFORE, followForkBefore, 0);
+
+    /* Follow after fork function in the parent process */
+    PIN_AddForkFunction(FPOINT_AFTER_IN_PARENT, followForkInParent, 0);
+
+    /* Follow after fork function in the child process */
+    PIN_AddForkFunction(FPOINT_AFTER_IN_CHILD, followForkInChild, 0);
+
+    /* Function called on program exit */
+    PIN_AddFiniFunction(fini, 0);
+
+    /* Start program and never returns */
+    PIN_StartProgram();
+
+    return 0;
+}
