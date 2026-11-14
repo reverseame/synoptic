@@ -1,6 +1,6 @@
 # Synoptic quantitative evaluation environment.
 # Toolchain versions follow the paper: Pin 3.25, Python 3.10, angr 9.2.62,
-# Binsec 0.8.0, Capstone 5.0.0, radare2 5.8.4.
+# Capstone 5.0.0, radare2 5.8.4. Binsec is upgraded to 0.11.3 below.
 # Targets: the four FTP subjects of ProFuzzBench, built with gcc and without
 # fuzzer instrumentation.
 FROM ubuntu:22.04
@@ -81,6 +81,13 @@ RUN wget -q https://sourceforge.net/projects/bftpd/files/bftpd/bftpd-5.7/bftpd-5
 
 # angr 9.2.62 breaks with pycparser >= 2.22 (read-only lexer attributes)
 RUN pip3 install --no-cache-dir pycparser==2.21
+
+# Binsec 0.11.3 (latest release) with the native Bitwuzla binding, which Binsec selects by
+# default when available. Installed after the targets so that their binaries stay
+# byte-identical to those of the runs made with Binsec 0.8.0.
+RUN opam update -y \
+    && opam install -y --switch=4.14.1 bitwuzla-cxx binsec.0.11.3 unisim_archisec \
+    && opam clean -a -c -s --logs
 
 # Synoptic (build context = repository root) and its pintool
 COPY . /opt/synoptic

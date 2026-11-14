@@ -15,7 +15,7 @@ Synoptic is a Python script that orchestrates two submodules:
 - `servertracer`:
   - Linux: [Pin 3.25](https://software.intel.com/sites/landingpage/pintool/downloads/pin-3.25-98650-g8f6168173-gcc-linux.tar.gz)
   - Windows: [Pin 3.25](https://software.intel.com/sites/landingpage/pintool/downloads/pin-3.25-98650-g8f6168173-gcc-linux.tar.gz), [Visual Studio Community](https://visualstudio.microsoft.com/vs/community/) (tested on version 2022) with C++ Desktop workload
-- `tracemodeler`: [Python](https://www.python.org/), [pip](https://pip.pypa.io/en/stable/), [requirements.txt dependencies](trace-modeler/requirements.txt), and [radare2 5.8.4](https://github.com/radareorg/radare2/releases/tag/5.8.4). Optionally, you need to install [binsec](https://github.com/binsec/binsec) to use it as a symbolic engine
+- `tracemodeler`: [Python](https://www.python.org/), [pip](https://pip.pypa.io/en/stable/), [requirements.txt dependencies](trace-modeler/requirements.txt), and [radare2 5.8.4](https://github.com/radareorg/radare2/releases/tag/5.8.4). Optionally, you need to install [binsec](https://github.com/binsec/binsec) 0.11.3 to use it as a symbolic engine, together with its Bitwuzla binding (`opam install bitwuzla-cxx binsec.0.11.3 unisim_archisec`): with the default `z3` solver many queries time out and few keywords are found
 
 ## Installation
 
@@ -114,6 +114,8 @@ Pin tools switches
 	Enable debug messages
 -dirlog  [default .]
 	Absolute path of log directory (default to current directory)
+-threshold  [default 1000]
+	Distinct instruction addresses traced after each socket read
 ```
 
 ## License

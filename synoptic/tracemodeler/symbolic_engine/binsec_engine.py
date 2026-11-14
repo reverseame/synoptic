@@ -1,8 +1,8 @@
 import os
+import re
 import r2pipe
 import shutil
 import string
-import struct
 import tempfile
 import subprocess
 
@@ -24,7 +24,7 @@ class BinsecEngine:
         self.buffer = None
         self.regs = []
         self.goal_addr = None
-        self.cut_addr = None
+        self.cut_addr = []
         self.temp_dir = tempfile.mkdtemp()
 
     def get_name(self):
@@ -49,7 +49,7 @@ class BinsecEngine:
         self.goal_addr = self._translate_addr(goal_addr)
 
     def cut(self, cut_addr):
-        self.cut_addr = self._translate_addr(cut_addr)
+        self.cut_addr.append(self._translate_addr(cut_addr))
 
     def run(self, n_solutions):
         if self.buffer is None:
@@ -60,29 +60,31 @@ class BinsecEngine:
             debug.warning(f'Symbolic analysis\t: Goal not defined, skipping...')
             return []
 
-        if self.cut_addr is None:
+        if not self.cut_addr:
             debug.warning(f'Symbolic analysis\t: Cut not defined, skipping...')
             return []
 
         core_file = self._generate_core_dump()
         config_file = self._generate_config_file(core_file)
 
-        command = [self.binsec_path, '-sse', '-sse-script',
-                    config_file, core_file, '-fml-solver-timeout', str(self.timeout)]
+        command = [self.binsec_path, '-sse', '-sse-script', config_file, '-smt-timeout', str(self.timeout), core_file]
 
-        with subprocess.Popen(command, stdout=subprocess.PIPE, text=True) as p:
+        """ [sse:result] Value @[buffer<64>,<-,${length}] : 0x${little-endian hex value} """
+        result = re.compile(r'^\[sse:result\] Value @\[buffer<64>,<-,(\d+)\] : 0x([0-9a-fA-F]+)$')
+
+        with subprocess.Popen(command, stdout=subprocess.PIPE, text=True, errors='replace') as p:
             for line in p.stdout:
-                if '[sse:result] Ascii stream' in line:
-                    """ [sse:result] Ascii stream ${variable} : "${solution}"\n """
-                    solution = line.split(' : ')[-1][1:-2]
-                    yield [self._encode_buffer(solution)]
+                match = result.match(line.strip())
+                if match:
+                    length = int(match.group(1))
+                    yield [int(match.group(2), 16).to_bytes(length, 'little')]
 
     def clean_project(self):
         self.start_addr = None
         self.buffer = None
         self.regs = []
         self.goal_addr = None
-        self.cut_addr = None
+        self.cut_addr = []
 
     def _translate_addr(self, addr):
         return (addr - self.base_addr) + DEFAULT_LINUX_ADDR
@@ -124,31 +126,20 @@ class BinsecEngine:
         template_file = os.path.join(utils.TOOL_ROOT_DIR, 'synoptic', 'tracemodeler', 'symbolic_engine', 'binsec_templates', 'config.ini')
 
         with open(template_file, 'r') as f:
-            template_data = f.readlines()
+            template = string.Template(f.read())
+
+        (_, _, length) = self.buffer
+        script = template.substitute(core_program_counter=core_program_counter,
+                                     start_addr=hex(self.start_addr),
+                                     goal_addr=hex(self.goal_addr),
+                                     symbolic_data=self._set_up_regs() + self._set_up_buffer(),
+                                     buffer_length=length,
+                                     cut_data=''.join(f'cut at {hex(addr)}\n' for addr in self.cut_addr))
 
         config_file = os.path.join(self.temp_dir, 'config.ini')
 
         with open(config_file, 'w') as f:
-            for line in template_data:
-                if 'core_program_counter<64>' in line:
-                    template_string = string.Template(line)
-                    line = template_string.substitute(core_program_counter=core_program_counter)
-                elif 'start_addr<64>' in line:
-                    template_string = string.Template(line)
-                    line = template_string.substitute(start_addr=hex(self.start_addr))
-                elif 'goal_addr<64>' in line:
-                    template_string = string.Template(line)
-                    line = template_string.substitute(goal_addr=hex(self.goal_addr))
-                elif 'cut_addr<64>' in line:
-                    template_string = string.Template(line)
-                    line = template_string.substitute(cut_addr=hex(self.cut_addr))
-                elif 'symbolic_data' in line:
-                    template_string = string.Template(line)
-                    symbolic_data = self._set_up_regs()
-                    symbolic_data += self._set_up_buffer()
-                    line = template_string.substitute(symbolic_data=symbolic_data)
-
-                f.write(line)
+            f.write(script)
 
         return config_file
 
@@ -161,22 +152,16 @@ class BinsecEngine:
         return string
 
     def _set_up_buffer(self):
-        string = '\n\t# symbolic buffer\n'
+        string = '\n\t# symbolic buffer, its address kept in a variable to print it at the goal\n'
 
         (_, reg_name, length) = self.buffer
 
-        string += f'\t@[{reg_name}, {length}] := 0\n'
+        string += f'\tbuffer<64> := {reg_name}\n'
         string += f'\tfor i<64> in 0 to {length-1} do\n'
-        string += f'\t\t@[{reg_name} + i] := nondet as token\t# fill buffer with symbolic values\n'
+        string += f'\t\t@[buffer + i] := nondet\n'
         string += f'\tend\n'
 
         return string
-
-    def _encode_buffer(self, buffer):
-        for byte in range(0x00, 0xff):
-            buffer = buffer.replace(rf'\0{byte:02x}', chr(byte))
-
-        return buffer.encode()
 
     def __del__(self):
         """ Clean up temp folder """
