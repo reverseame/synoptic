@@ -6,6 +6,7 @@ import string
 import struct
 import capstone
 import collections
+import ctypes
 
 import synoptic.debug as debug
 import synoptic.utils as utils
@@ -408,6 +409,11 @@ class Model:
             except KeyboardInterrupt:
                 debug.warning(f'Symbolic analysis\t: User interrupt')
             except utils.TimeOutException:
+                debug.warning(f'Symbolic analysis\t: {symbolic_engine.get_name()} error\t: Exploration timeout after {symbolic_engine.get_timeout()} seconds')
+            except ctypes.ArgumentError as e:
+                """ The timeout signal can fire inside a native callback (e.g., unicorn), which wraps it """
+                if 'TimeOutException' not in str(e):
+                    raise
                 debug.warning(f'Symbolic analysis\t: {symbolic_engine.get_name()} error\t: Exploration timeout after {symbolic_engine.get_timeout()} seconds')
             """except Exception as e:
                 debug.warning(f'Symbolic analysis\t: {symbolic_engine.get_name()} error\t: {str(e)}')"""
