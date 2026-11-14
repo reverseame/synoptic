@@ -329,9 +329,12 @@ class ProtocolFSM:
         if all([self._is_keyword_symbol(symbol_list[0]) for symbol_list in symbols]):
             template.append('k')
 
-        """ Search for end delimiters in all symbol lists """
+        """
+        Search for end delimiters in all symbol lists, from the last position back to the second one
+        of the shortest list (symbols are sorted by length; the first position holds the keyword)
+        """
         delimiter = None
-        for i in range(-1, (len(min(symbols)) - 1) * -1, -1):
+        for i in range(-1, -len(symbols[0]), -1):
             for symbol in symbols:
                 if self._is_delimiter_symbol(symbol[i]):
                     """ Set up delimiter to first delimiter occurrence """

@@ -66,6 +66,55 @@ def fixed_acceptance(self, response_code):
     return (response_code[:1] == b'2') or (response_code in [b'150', b'331'])
 
 
+class Server:
+    """Uninstrumented server. The ProFuzzBench builds of some servers serve a single session and
+    exit, so the server is restarted whenever the replayer opens a control connection to it."""
+
+    def __init__(self, command, cwd, port):
+        self.command, self.cwd, self.port = command, cwd, port
+        self.process = None
+        self.starts = 0
+
+    def ensure_listening(self):
+        if listening(self.port):
+            return
+        if self.process is not None:
+            self.stop()
+        self.process = subprocess.Popen(self.command, cwd=self.cwd, stdout=subprocess.DEVNULL,
+                                        stderr=subprocess.DEVNULL, start_new_session=True)
+        self.starts += 1
+        deadline = time.time() + 60
+        while time.time() < deadline and not listening(self.port):
+            time.sleep(0.2)
+        if not listening(self.port):
+            raise RuntimeError(f'{self.command[0]}: server not listening')
+
+    def stop(self):
+        if self.process is None:
+            return
+        try:
+            os.killpg(self.process.pid, signal.SIGTERM)
+            self.process.wait(timeout=20)
+        except ProcessLookupError:
+            pass
+        except subprocess.TimeoutExpired:
+            os.killpg(self.process.pid, signal.SIGKILL)
+        self.process = None
+
+
+def supervise(server):
+    """Make every control connection of the replayer find a listening server."""
+    original_create_socket = replayer.Replayer.create_socket
+
+    def create_socket(self, host, port):
+        if port == server.port:
+            server.ensure_listening()
+        return original_create_socket(self, host, port)
+
+    replayer.Replayer.create_socket = create_socket
+
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('target', choices=sorted(TARGETS))
@@ -82,18 +131,14 @@ def main():
     server_args = [a for a in cfg['args'] if a != '-X']
     if args.conf:
         server_args[server_args.index('-c') + 1] = args.conf
-    server = subprocess.Popen([cfg['binary'], *server_args], cwd=cfg['cwd'], stdout=subprocess.DEVNULL,
-                              stderr=subprocess.DEVNULL, start_new_session=True)
+    server = Server([cfg['binary'], *server_args], cfg['cwd'], cfg['port'])
     records = []
     if args.fixed_acceptance:
         replayer.Replayer.resp_is_ok = fixed_acceptance
     instrument(records)
+    supervise(server)
     try:
-        deadline = time.time() + 60
-        while time.time() < deadline and not listening(cfg['port']):
-            time.sleep(1)
-        if not listening(cfg['port']):
-            raise RuntimeError(f'{args.target}: server not listening')
+        server.ensure_listening()
 
         with open(args.fsm) as f:
             fsm_text = f.read()
@@ -108,11 +153,7 @@ def main():
         seconds = round(time.time() - t0, 1)
         fsm.export_to_file(os.path.join(args.outdir, 'fsm-inferred.json'))
     finally:
-        os.killpg(server.pid, signal.SIGTERM)
-        try:
-            server.wait(timeout=20)
-        except subprocess.TimeoutExpired:
-            os.killpg(server.pid, signal.SIGKILL)
+        server.stop()
 
     # Candidates whose exchange failed never reach resp_is_ok: count them as rejected candidates.
     for record in records:
@@ -128,7 +169,7 @@ def main():
         'candidates': len(tested), 'accepted': sum(r['accepted'] for r in tested),
         'accepted_keywords': sorted({r['sent'].strip() for r in tested if r['accepted']}),
         'rejected_codes': dict(collections.Counter(r['code'] or 'error' for r in tested if not r['accepted'])),
-        'fsm_before': fsm_size(json.loads(fsm_text)), 'fsm_after': after,
+        'fsm_before': fsm_size(json.loads(fsm_text)), 'fsm_after': after, 'server_starts': server.starts,
         'records': records,
     }
     with open(os.path.join(args.outdir, 'replay.json'), 'w') as f:
