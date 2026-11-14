@@ -16,8 +16,11 @@ import synoptic.tracemodeler.symbolic as symbolic
 
 """ C-library functions whose calls compare a tainted string with another string """
 COMPARISON_FUNCTIONS = {'strcmp', 'strncmp', 'strcasecmp', 'strncasecmp', 'memcmp'}
-""" Comparison functions bounded by their third argument """
-BOUNDED_COMPARISON_FUNCTIONS = {'strncmp', 'strncasecmp', 'memcmp'}
+"""
+Comparison functions whose constant operand is not a C string, so it ends at the length argument.
+The strn* variants compare C strings: their bound is often the length of the input, not of the constant.
+"""
+BOUNDED_COMPARISON_FUNCTIONS = {'memcmp'}
 
 class Model:
     def __init__(self, arch_mode=capstone.CS_MODE_64):
