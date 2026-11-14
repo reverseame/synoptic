@@ -174,8 +174,12 @@ class Model:
             for char in count.keys():
                 try:
                     byte_char = struct.pack('=B', int(char, 0))
-                    """ If character is in any of the buffers, we considered it a delimiter """
-                    if any([byte_char in buffer for buffer in all_buffers]):
+                    """
+                    If character is in any of the buffers, we considered it a delimiter. Letters and
+                    digits are field content in textual protocols (e.g., a comparison with the type code
+                    'A' or 'I'), not delimiters
+                    """
+                    if (not byte_char.isalnum()) and any([byte_char in buffer for buffer in all_buffers]):
                         if byte_char not in ret:
                             ret.append(byte_char)
                 except struct.error:
