@@ -1,4 +1,5 @@
 #include <cstdarg>
+#include <cstring>
 #include <vector>
 
 #include "log.h"
@@ -14,7 +15,7 @@ Log* Log::getInstance() {
 	return instance;
 }
 
-Log::Log(void) : logfile(nullptr), logfilename(nullptr), owner(INVALID_THREADID) {
+Log::Log(void) : logfile(nullptr), logfilename(nullptr) {
 	PIN_InitLock(&lock);
 }
 
@@ -62,16 +63,20 @@ void Log::write(const char *fmt, ...) {
 	}
 
 	THREADID tid = PIN_ThreadId();
-	if (owner != tid) {
-		PIN_GetLock(&lock, tid + 1);
-		owner = tid;
+	PIN_GetLock(&lock, tid + 1);
+
+	std::vector<std::string> &records = pending[tid];
+	/* Every record starts with its timestamp (see __LOG__) */
+	if (records.empty() || (strncmp(text, "timestamp=", 10) == 0)) {
+		records.push_back(std::string());
+	}
+	records.back() += text;
+
+	/* Write completed records; an outer record still open stays buffered */
+	while (!records.empty() && !records.back().empty() && (records.back().back() == '\n')) {
+		fputs(records.back().c_str(), logfile);
+		records.pop_back();
 	}
 
-	fputs(text, logfile);
-
-	/* A newline ends the record: let other threads write */
-	if ((len > 0) && (text[len - 1] == '\n')) {
-		owner = INVALID_THREADID;
-		PIN_ReleaseLock(&lock);
-	}
+	PIN_ReleaseLock(&lock);
 }

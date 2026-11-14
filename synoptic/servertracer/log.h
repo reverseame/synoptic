@@ -1,6 +1,9 @@
 #pragma once
 
 #include <iostream>
+#include <map>
+#include <string>
+#include <vector>
 
 #include "pin.H"
 #include "utilities.h"
@@ -33,9 +36,11 @@
  * Singleton
  *
  * A record is written with several calls (LOG_INFO/LOG_TAINT followed by LOG_RAW
- * pieces) and ends with a newline. write() keeps the lock from the first piece
- * of a record until its newline, so records from different threads do not
- * interleave.
+ * pieces) and ends with a newline. Pieces are buffered per thread until the
+ * record is complete and then written at once, so records from different
+ * threads do not interleave. A record that starts while another record of the
+ * same thread is still open (e.g., instructions traced inside a hooked library
+ * call) is nested: it is written when complete and the outer record resumes.
  */
 class Log {
 private:
@@ -44,7 +49,7 @@ private:
     FILE *logfile;
     const char *logfilename;
     PIN_LOCK lock;
-    THREADID owner;
+    std::map<THREADID, std::vector<std::string>> pending;
 
 public:
 	static Log* getInstance();  // Get instance through function instead of constructor

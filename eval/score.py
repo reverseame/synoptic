@@ -16,6 +16,7 @@ import json
 import os
 import sys
 from collections import Counter
+from math import comb
 
 
 # --------------------------------------------------------------------------- metric 1
@@ -23,13 +24,17 @@ from collections import Counter
 def vocabulary(results_dir):
     gt = json.load(open(os.path.join(results_dir, 'ground_truth.json')))
     rows = []
-    for path in sorted(glob.glob(os.path.join(results_dir, 'runs', '*', '*', 'result.json'))):
+    paths = [(p, 'main') for p in sorted(glob.glob(os.path.join(results_dir, 'runs', '*', '*', 'result.json')))]
+    paths += [(p, 'threshold') for p in sorted(glob.glob(os.path.join(results_dir, 'sensitivity', '*', 'result.json')))]
+    paths += [(p, 'libc') for p in sorted(glob.glob(os.path.join(results_dir, 'libc*', '*', 'result.json')))]
+    for path, variant in paths:
         r = json.load(open(path))
         truth = set(gt[r['target']]['implemented'])
         observed = set(r['observed_keywords'])
         synoptic = observed | set(r['inferred_keywords'])
         row = {
-            'target': r['target'], 'condition': r['condition'], 'engine': r['engine'], 'implemented': len(truth),
+            'variant': variant, 'target': r['target'], 'condition': r['condition'], 'engine': r['engine'],
+            'threshold': r.get('threshold', 1000), 'implemented': len(truth),
             'observed': len(observed), 'inferred': len(set(r['inferred_keywords']) - observed),
             'recall_trace': len(observed & truth) / len(truth),
             'recall_synoptic': len(synoptic & truth) / len(truth),
