@@ -1,6 +1,7 @@
 import os
 import sys
 import glob
+import re
 import shlex
 import signal
 import datetime
@@ -80,17 +81,40 @@ def read_file(path):
         debug.error(f'{path}\t: Unable to read file\t: {str(ex)}')
         sys.exit(-1)
 
+""" key=value or key="value with spaces", as written by the pintool """
+_RECORD_FIELD = re.compile(r'([^\s="]+)=("[^"=]*"|[^\s"=]*)(?:\s+|$)')
+
+def _parse_line(line, delimiter):
+    """ Parse one trace record; fast path for pintool records, shlex for anything else """
+    if delimiter == '=' and '\\' not in line:
+        new_dict = {}
+        pos = 0
+        while pos < len(line):
+            match = _RECORD_FIELD.match(line, pos)
+            if not match:
+                break
+            (key, value) = match.groups()
+            new_dict[key] = value[1:-1] if value.startswith('"') else value
+            pos = match.end()
+        else:
+            return new_dict
+
+    new_dict = {}
+    for (key, value) in [item.split(delimiter) for item in shlex.split(line)]:
+        new_dict[key] = value
+    return new_dict
+
 def parse_data(data, delimiter='='):
     ret = []
 
     for (i, line) in enumerate(data, start=1):
         try:
-            new_dict = {}
-            splitted = shlex.split(line)
-            for (key, value) in [item.split(delimiter) for item in splitted]:
-                new_dict[key] = value
-            ret.append(new_dict)
+            ret.append(_parse_line(line, delimiter))
         except ValueError as e:
+            if i == len(data):
+                """ The traced process was stopped while the record was being written """
+                debug.warning(f'Truncated last record discarded\t: line {i}\t: "{line}"')
+                break
             debug.error(f'Parsing error\t: {str(e)}\t: line {i}\t: "{line}"')
             sys.exit(-1)
 

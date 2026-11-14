@@ -32,6 +32,7 @@ utils.TOOL_ROOT_DIR = '/opt/synoptic'
 
 PIN = os.path.join(os.environ.get('PIN_ROOT', '/opt/pin-3.25'), 'pin')
 PINTOOL = '/opt/synoptic/synoptic/servertracer/obj-intel64/server_tracer.so'
+EXIT_TIMEOUT = 120  # seconds for the traced server to exit after the session, and again after SIGINT
 T = os.environ.get('TARGETS', '/opt/targets')
 S = '/opt/subjects'
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -183,7 +184,8 @@ def replay_seed(target, seed_file, logdir, timeout, threshold, modules=''):
         for t in sess.data_threads:
             t.join(timeout)
         try:
-            proc.wait(timeout=20)
+            # A heavily instrumented server may need minutes to finish the session and flush its trace.
+            proc.wait(timeout=EXIT_TIMEOUT)
         except subprocess.TimeoutExpired:
             pass
         return sess.transcript
@@ -191,7 +193,7 @@ def replay_seed(target, seed_file, logdir, timeout, threshold, modules=''):
         if proc.poll() is None:
             os.killpg(proc.pid, signal.SIGINT)
             try:
-                proc.wait(timeout=20)
+                proc.wait(timeout=EXIT_TIMEOUT)
             except subprocess.TimeoutExpired:
                 os.killpg(proc.pid, signal.SIGKILL)
                 proc.wait()
@@ -235,7 +237,9 @@ def main():
     ap.add_argument('outdir')
     ap.add_argument('--engine', default='binsec', choices=['binsec', 'angr'])
     ap.add_argument('--timeout', type=int, default=5, help='symbolic timeout (s)')
-    ap.add_argument('--reply-timeout', type=int, default=20)
+    ap.add_argument('--reply-timeout', type=int, default=300,
+                    help='seconds to wait for each server reply; must exceed the instrumented response time, '
+                         'or the next request is sent early and merges with the pending one')
     ap.add_argument('--threshold', type=int, default=1000,
                     help='distinct instruction addresses traced after each read (pintool spatial threshold)')
     ap.add_argument('--modules', default='', help='additional modules to trace, comma separated (pintool -modules)')
