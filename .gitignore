@@ -16,3 +16,4 @@ samples/*/
 *.bck.*
 /*.ini
 .DS_Store
+eval/results/

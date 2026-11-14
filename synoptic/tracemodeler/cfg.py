@@ -634,6 +634,15 @@ class CFG:
                 if n.is_subset(node):
                     """ Strip node to not contain an already defined node """
                     node.strip(n.group.leader)
+                    if node.group.leader is None:
+                        """
+                        node starts with the already defined node n (n was split or
+                        truncated earlier): nothing remains to add, so transition to n
+                        """
+                        if not self._transition_to_node(n):
+                            n.visit()
+                            self._add_node_transition(n)
+                        break
                     """ Add the stripped node """
                     if not self._transition_to_node(node):
                         self._add_node_transition(node)

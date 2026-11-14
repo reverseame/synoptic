@@ -1,0 +1,23 @@
+USER ubuntu
+PASS ubuntu
+SYST
+FEAT
+EPSV
+LIST
+CWD /tmp
+EPSV
+LIST
+CWD test
+EPSV
+LIST
+EPSV
+NLST
+SIZE hello_world.txt
+TYPE I
+SIZE hello_world.txt
+SIZE hello_world.txt
+EPSV
+RETR hello_world.txt
+MDTM hello_world.txt
+TYPE A
+QUIT
