@@ -150,11 +150,13 @@ class Session:
             pass
 
 
-def replay_seed(target, seed_file, logdir, timeout, threshold):
+def replay_seed(target, seed_file, logdir, timeout, threshold, modules=''):
     """Start the target under Pin, replay one seed session, and stop the target."""
     cfg = TARGETS[target]
-    cmd = [PIN, '-follow_execv', '-t', PINTOOL, '-dirlog', logdir, '-threshold', str(threshold),
-           '--', cfg['binary'], *cfg['args']]
+    cmd = [PIN, '-follow_execv', '-t', PINTOOL, '-dirlog', logdir, '-threshold', str(threshold)]
+    if modules:
+        cmd += ['-modules', modules]
+    cmd += ['--', cfg['binary'], *cfg['args']]
     proc = subprocess.Popen(cmd, cwd=cfg['cwd'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                             start_new_session=True)
     try:
@@ -236,6 +238,7 @@ def main():
     ap.add_argument('--reply-timeout', type=int, default=20)
     ap.add_argument('--threshold', type=int, default=1000,
                     help='distinct instruction addresses traced after each read (pintool spatial threshold)')
+    ap.add_argument('--modules', default='', help='additional modules to trace, comma separated (pintool -modules)')
     args = ap.parse_args()
 
     prepare_environment()
@@ -245,13 +248,14 @@ def main():
     os.makedirs(logdir)
 
     result = {'target': args.target, 'condition': args.condition, 'engine': args.engine,
-              'timeout': args.timeout, 'threshold': args.threshold, 'seeds': [], 'transcripts': {}}
+              'timeout': args.timeout, 'threshold': args.threshold, 'modules': args.modules,
+              'seeds': [], 'transcripts': {}}
     t0 = time.time()
     for seed in seeds_for(args.target, args.condition):
         log(f'replaying {seed}')
         result['seeds'].append(os.path.basename(seed))
         result['transcripts'][os.path.basename(seed)] = replay_seed(args.target, seed, logdir, args.reply_timeout,
-                                                                    args.threshold)
+                                                                    args.threshold, args.modules)
     result['tracing_seconds'] = round(time.time() - t0, 1)
 
     logs = sorted(glob.glob(os.path.join(logdir, '*.log')))
