@@ -118,6 +118,8 @@ Pin tools switches
 	Distinct instruction addresses traced after each socket read
 ```
 
+Code outside the traced modules (e.g., the C library) runs without taint tracking. For every call into it, the pintool taints the caller's return value when an argument holds a tainted value or points to tainted memory, and logs the string arguments. `tracemodeler` resolves the called function through the import table and takes the strings compared with network data by `strcmp`, `strncmp`, `strcasecmp`, `strncasecmp`, and `memcmp` as keyword candidates. The pintool also taints the line copied by `fgets` from a socket stream, and propagates taint through table lookups indexed by a tainted value.
+
 ## License
 
 Licensed under the [GNU GPLv3](LICENSE.md) license.
