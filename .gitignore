@@ -17,3 +17,4 @@ samples/*/
 /*.ini
 .DS_Store
 eval/results/
+eval/replay/2023/synoptic-output.txt

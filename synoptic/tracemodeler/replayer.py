@@ -189,43 +189,45 @@ class Replayer:
 
         messages = fsm.generate_new_messages()
 
-        try:
-            """ Test all messages before any message """
+        """
+        Contexts: the initial state and every state reached along the observed sequence. The
+        disconnection message ends the session, so no context follows it
+        """
+        contexts = [[]] + [fsm.sequence[:i+1] for i in range(0, len(fsm.sequence)) if fsm.sequence[i].next is not None]
+
+        for sequence in contexts:
+            state = sequence[-1].next if sequence else fsm.entry_state
             for message in messages:
-                (resp, resp_code) = self._send_recv_message(message)
-                if self.resp_is_ok(resp_code):
-                    fsm.reset_to(fsm.entry_state)
-                    fsm.add(message)
-                    print(f'---> {fsm.last_inserted.dump()}')
-                    fsm.add(fsm.last_transition.message)
-
-                """ Reset connection """
-                self._send_recv_message(fsm.last_transition.message)
-
-            sequences = [fsm.sequence[:i+1] for i in range(0, len(fsm.sequence))]
-
-            for sequence in sequences:
-                for message in messages:
+                try:
                     """ Send all messages in sequence before testing new message """
-                    try:
-                        for transition in sequence:
-                            self._send_recv_message(transition.message)
+                    for transition in sequence:
+                        self._send_recv_message(transition.message)
 
-                        """ New transition message """
-                        (resp, resp_code) = self._send_recv_message(message)
-                        if self.resp_is_ok(resp_code):
-                            fsm.reset_to(transition.next)
-                            fsm.add(message)
-                            print(f'---> {fsm.last_inserted.dump()}')
-                            fsm.add(fsm.last_transition.message)
-                        """ Reset connection """
-                        self._send_recv_message(fsm.last_transition.message)
-                    except (AttributeError, OSError) as e:
-                        debug.warning(f'Error in query {repr(message.buffer)}\t: {str(e)}')
-        except Exception as e:
-            debug.warning(f'Fatal error\t: {str(e)}')
+                    """ New transition message """
+                    (resp, resp_code) = self._send_recv_message(message)
+                    if self.resp_is_ok(resp_code):
+                        fsm.reset_to(state)
+                        fsm.add(message)
+                        print(f'---> {fsm.last_inserted.dump()}')
+                        fsm.add(fsm.last_transition.message)
+                    """ Reset connection """
+                    self._send_recv_message(fsm.last_transition.message)
+                except Exception as e:
+                    debug.warning(f'Error in query {repr(message.buffer)}\t: {str(e)}')
+                    """ The session is in an unknown state: start the next query from a new connection """
+                    self._reconnect()
 
         return fsm
+
+    def _reconnect(self):
+        for sock in set(self.sockets + [self.socket]):
+            self.close(sock)
+        self.socket = self.create_socket(self.host, self.port)
+        self.sockets = [self.socket]
+        self.last_keyword = None
+        time.sleep(self.delay)
+        """ Consume welcome message """
+        self.recv(self.socket)
 
     def _send_recv_message(self, message):
         self.send(message, self.socket)
@@ -240,4 +242,4 @@ class Replayer:
 
     def resp_is_ok(self, response_code):
         """ FIXME Based in write response codes from traces """
-        return (response_code[:1] == b'2') or (response_code in [b'150' b'331'])
+        return (response_code[:1] == b'2') or (response_code in [b'150', b'331'])
