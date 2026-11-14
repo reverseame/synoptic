@@ -56,6 +56,9 @@ class ProtocolFSM:
             self.refine = True
 
     def finalize(self):
+        """ Nothing to finalize when the traces contain no message """
+        if not self.sequence:
+            return
         """ Store last message (for disconnection message)"""
         self.last_transition = self._get_transition(self.sequence[-1], None)
         """ Translate each state structure to global symbols """

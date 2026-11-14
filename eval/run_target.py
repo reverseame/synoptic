@@ -170,7 +170,12 @@ def replay_seed(target, seed_file, logdir, timeout):
         banner = sess.reply()
         sess.transcript.append(('<banner>', banner.decode(errors='replace')))
         for line in lines:
-            sess.command(line)
+            try:
+                sess.command(line)
+            except OSError as e:
+                # The server closed the control connection (e.g., after QUIT or REIN): end the session here.
+                sess.transcript.append((line.decode(errors='replace'), f'<connection closed: {e}>'))
+                break
         sess.close()
         for t in sess.data_threads:
             t.join(timeout)

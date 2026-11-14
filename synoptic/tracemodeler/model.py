@@ -136,7 +136,9 @@ class Model:
                 for item in net_trace:
                     if item['level'] == 'taint':
                         if item['action'] in ['recv', 'read']:
-                            buffer['buffer'] = bytes.fromhex(item['buffer-content'])
+                            """ A read that returns 0 or an error (e.g., peer closed) carries no buffer """
+                            if 'buffer-content' in item:
+                                buffer['buffer'] = bytes.fromhex(item['buffer-content'])
                         elif item['action'] == 'compare':
                             if ((item['origin'] == 'reg-to-reg') and (item['reg1'] != item['reg2'])) or (item['origin'] != 'reg-to-reg'):
                                 comparations.append(item)
@@ -214,20 +216,29 @@ class Model:
     def split_sessions(self, data):
         ret = []
 
-        (index, fd) = (None, None)
+        (index, fd, pid) = (None, None, None)
 
-        """ Assume there will be always a close call matching the file descriptor of a accept call """
+        """
+        A session runs from an accept call to the close call of the same file descriptor.
+        Servers that exit without closing the client socket end the session at process end.
+        """
         for (i, trace) in enumerate(data):
             if 'action' in trace:
                 if (fd is None) and (trace['action'] == 'accept'):
-                    (index, fd) = (i, trace['return'])
+                    (index, fd, pid) = (i, trace['return'], trace.get('pid'))
                 elif fd is not None:
                     """ Duplicate file descriptor """
                     if (trace['action'] == 'dup2') and (trace['file-descriptor'] == fd):
                         fd = trace['return']
                     elif (trace['action'] == 'close') and (fd == trace['file-descriptor']):
                         ret.append(data[index:i])
-                        (index, fd) = (None, None)
+                        (index, fd, pid) = (None, None, None)
+                    elif (trace['action'] == 'process-end') and (trace.get('pid') == pid):
+                        ret.append(data[index:i])
+                        (index, fd, pid) = (None, None, None)
+
+        if fd is not None:
+            ret.append(data[index:])
 
         return ret
 

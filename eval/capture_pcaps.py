@@ -27,7 +27,10 @@ def run_seed(target, seed):
         sess = Session(cfg['port'], 10)
         sess.reply()
         for line in [l for l in open(seed, 'rb').read().replace(b'\r\n', b'\n').split(b'\n') if l.strip()]:
-            sess.command(line)
+            try:
+                sess.command(line)
+            except OSError:
+                break  # the server closed the control connection
         sess.close()
         for t in sess.data_threads:
             t.join(10)
