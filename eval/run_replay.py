@@ -75,8 +75,16 @@ class Server:
         self.process = None
         self.starts = 0
 
+    # Time a single-session server may take to exit after its session ends
+    EXIT_GRACE = 1.0
+
     def ensure_listening(self):
-        if listening(self.port):
+        if self.process is not None and self.process.poll() is None:
+            try:
+                self.process.wait(timeout=self.EXIT_GRACE)
+            except subprocess.TimeoutExpired:
+                pass
+        if (self.process is not None) and (self.process.poll() is None) and listening(self.port):
             return
         if self.process is not None:
             self.stop()
