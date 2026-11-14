@@ -396,9 +396,15 @@ class Model:
             start_addr = start_node.id                
             debug.debug(f'Symbolic analysis\t: start-addr\t: {hex(start_addr)}')
             symbolic_engine.start(start_addr)
-            self._analyze_symbolic_vars(symbolic_engine, start_node)
-            self._analyze_symbolic_regs(symbolic_engine, target_cfg, start_node)
-            self._analyze_target_addrs(symbolic_engine, target_cfg)
+            try:
+                self._analyze_symbolic_vars(symbolic_engine, start_node)
+                self._analyze_symbolic_regs(symbolic_engine, target_cfg, start_node)
+                self._analyze_target_addrs(symbolic_engine, target_cfg)
+            except NotImplementedError as e:
+                """ The engine cannot model this loop (e.g., unsupported register): skip it """
+                debug.warning(f'Symbolic analysis\t: {symbolic_engine.get_name()} error\t: {str(e)}, skipping loop...')
+                symbolic_engine.clean_project()
+                continue
 
             already_seen_count = 0
             already_seen_threshold = 5
