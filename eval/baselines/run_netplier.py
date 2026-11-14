@@ -27,19 +27,25 @@ def main():
     t = time.time()
     np_ = NetPlier(messages=p.messages, direction_list=p.direction_list, output_dir=workdir, mode='ginsi',
                    multithread=False)
-    fid_inferred = np_.execute()
-    aligned = Alignment.get_messages_aligned(np_.messages, os.path.join(np_.output_dir, Alignment.FILENAME_OUTPUT_ONELINE))
-    labels = Clustering(fields=np_.fields, protocol_type=None).cluster_by_kw_inferred(fid_inferred, aligned)
-    seconds = round(time.time() - t, 2)
-
-    result = {'pcap': pcap, 'port': port, 'fid_inferred': list(fid_inferred), 'netplier_seconds': seconds,
-              'messages': {}}
-    for msg, label in zip(np_.messages, labels):
-        if str(msg.destination).endswith(f':{port}'):
-            result['messages'].setdefault(msg.data.hex(), {'netplier_label': label})
+    result = {'pcap': pcap, 'port': port, 'messages': {}, 'error': None}
+    try:
+        fid_inferred = np_.execute()
+    except (IndexError, ValueError) as e:
+        # NetPlier aborts when the alignment yields no keyword candidate field.
+        result['error'] = f'{type(e).__name__}: {e}'
+        result['aligned_fields'] = len(getattr(np_, 'fields', []) or [])
+        fid_inferred = None
+    if fid_inferred is not None:
+        aligned = Alignment.get_messages_aligned(np_.messages, os.path.join(np_.output_dir, Alignment.FILENAME_OUTPUT_ONELINE))
+        labels = Clustering(fields=np_.fields, protocol_type=None).cluster_by_kw_inferred(fid_inferred, aligned)
+        result['fid_inferred'] = list(fid_inferred)
+        for msg, label in zip(np_.messages, labels):
+            if str(msg.destination).endswith(f':{port}'):
+                result['messages'].setdefault(msg.data.hex(), {'netplier_label': label})
+    result['netplier_seconds'] = round(time.time() - t, 2)
     with open(out, 'w') as f:
         json.dump(result, f, indent=2)
-    print(f'{pcap}: keyword fields {list(fid_inferred)}, {len(set(labels))} labels')
+    print(f'{pcap}: error={result["error"]} labels={len({v["netplier_label"] for v in result["messages"].values()})}')
 
 
 if __name__ == '__main__':

@@ -475,9 +475,20 @@ class CFG:
         self.final_cfg = False
 
     def _browse_sub_nodes(self, node):
+        visited = set()
         while self.last_inserted.is_subset(node) and (self.last_inserted not in self.final_nodes):
-            """ Subsets are consecutive, so only have one edge that actuates as a fallthrough """
+            """
+            Subsets are consecutive, so only have one edge that actuates as a fallthrough.
+            Stop when a node has no outgoing edge or when the walk revisits a node
+            (self-loops and cycles of subsets would otherwise never end).
+            """
+            current = self.last_inserted
+            if id(current) in visited:
+                break
+            visited.add(id(current))
             self._transition_to_first_edge(node)
+            if self.last_inserted is current:
+                break
 
     def _transition_to_first_edge(self, node):
         if self.last_inserted in self.final_nodes:

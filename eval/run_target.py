@@ -11,6 +11,7 @@ CONDITION selects the seed sessions that form the initial trace:
 import argparse
 import glob
 import json
+import logging
 import os
 import re
 import shutil
@@ -271,6 +272,8 @@ def main():
     result['delimiters'] = [d.hex() for d in (model.fsm.delimiters or [])]
     result['messages'] = messages
 
+    # Debug level for the symbolic stage only: it logs start, goal and cut addresses and every solution.
+    logging.getLogger(utils.TOOL_NAME).setLevel(logging.DEBUG)
     t2 = time.time()
     try:
         model.symbolic_analysis(traces, TARGETS[args.target]['binary'], ' '.join(TARGETS[args.target]['args']),

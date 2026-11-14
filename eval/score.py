@@ -29,7 +29,7 @@ def vocabulary(results_dir):
         observed = set(r['observed_keywords'])
         synoptic = observed | set(r['inferred_keywords'])
         row = {
-            'target': r['target'], 'condition': r['condition'], 'implemented': len(truth),
+            'target': r['target'], 'condition': r['condition'], 'engine': r['engine'], 'implemented': len(truth),
             'observed': len(observed), 'inferred': len(set(r['inferred_keywords']) - observed),
             'recall_trace': len(observed & truth) / len(truth),
             'recall_synoptic': len(synoptic & truth) / len(truth),
@@ -123,9 +123,11 @@ def format_inference(results_dir):
         if bpath.endswith('-netplier.json'):
             continue
         target = os.path.basename(bpath)[:-5]
-        rpath = os.path.join(results_dir, 'runs', target, 'all', 'result.json')
-        if not os.path.exists(rpath):
+        # Message structures come from the trace and do not depend on the symbolic engine.
+        candidates = sorted(glob.glob(os.path.join(results_dir, 'runs', target, 'all-*', 'result.json')))
+        if not candidates:
             continue
+        rpath = candidates[0]
         base = json.load(open(bpath))['messages']
         syn = {}
         for m in json.load(open(rpath))['messages']:
@@ -149,14 +151,17 @@ def format_inference(results_dir):
                                  get_cluster=lambda _d, v: v['netzob_symbol']),
         }
         npath = os.path.join(results_dir, 'baselines', f'{target}-netplier.json')
-        if os.path.exists(npath):
-            labels = {bytes.fromhex(h): v['netplier_label']
-                      for h, v in json.load(open(npath))['messages'].items()}
+        netplier = json.load(open(npath)) if os.path.exists(npath) else None
+        if netplier and netplier['messages']:
+            labels = {bytes.fromhex(h): v['netplier_label'] for h, v in netplier['messages'].items()}
             tools['NetPlier'] = score_tool({d: labels[d] for d in common if d in labels},
                                            get_cluster=lambda _d, label: label)
         for tool, s in tools.items():
             rows.append({'target': target, 'tool': tool, 'unique_requests': len(base),
-                         'matched_in_trace': len(common), **s})
+                         'matched_in_trace': len(common), **s, 'error': ''})
+        if netplier and not netplier['messages']:
+            rows.append({'target': target, 'tool': 'NetPlier', 'unique_requests': len(base),
+                         'matched_in_trace': len(common), 'error': netplier.get('error') or 'no output'})
     return rows
 
 
