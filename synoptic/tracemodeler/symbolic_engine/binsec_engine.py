@@ -72,12 +72,21 @@ class BinsecEngine:
         """ [sse:result] Value @[buffer<64>,<-,${length}] : 0x${little-endian hex value} """
         result = re.compile(r'^\[sse:result\] Value @\[buffer<64>,<-,(\d+)\] : 0x([0-9a-fA-F]+)$')
 
-        with subprocess.Popen(command, stdout=subprocess.PIPE, text=True, errors='replace') as p:
+        p = subprocess.Popen(command, stdout=subprocess.PIPE, text=True, errors='replace')
+        try:
+            """ As with angr, the exploration timeout is reset after each result found """
+            utils.setup_timeout(self.timeout)
             for line in p.stdout:
                 match = result.match(line.strip())
                 if match:
+                    utils.disable_timeout()
                     length = int(match.group(1))
                     yield [int(match.group(2), 16).to_bytes(length, 'little')]
+                    utils.setup_timeout(self.timeout)
+        finally:
+            utils.disable_timeout()
+            p.kill()
+            p.wait()
 
     def clean_project(self):
         self.start_addr = None
