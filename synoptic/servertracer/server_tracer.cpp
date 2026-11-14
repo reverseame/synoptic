@@ -276,7 +276,7 @@ void regToAddr(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routin
 }
 
 /* Memory copied to register */
-void addrToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT routineAddr, ADDRINT mem_r, REG reg_w, REG regBase) {
+void addrToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT routineAddr, ADDRINT mem_r, REG reg_w, REG regBase, REG regIndex) {
     if (!addrIsTraceable(insAddr, insSize)) {
         return;
     }
@@ -290,6 +290,12 @@ void addrToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routin
         if (regIsGeneral(regBase)) {
             changeTaintRegValue(routineAddr, regBase, true);
         }
+    } else if ((regIndex != REG_INVALID()) && regIsTainted(routineAddr, regIndex)) {
+        /* Table lookup indexed by a tainted value (e.g., inlined toupper/tolower): the result depends on the input */
+        LOG_TAINT("io-counter=%d action=taint-reg routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
+        logInsOpcodes(insAddr, insSize);
+        LOG_RAW(" origin=from-index reg=%s index=%s addr=%s\n", REG_StringShort(reg_w).c_str(), REG_StringShort(regIndex).c_str(), hexaddr(mem_r).c_str());
+        changeTaintRegValue(routineAddr, reg_w, true);
     } else if (regIsTainted(routineAddr, reg_w)) {
         /* mem is clean -> reg is cleaned */
         LOG_TAINT("io-counter=%d action=free-reg routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter , routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
@@ -472,9 +478,58 @@ void passTaintedParams(ADDRINT insAddr, ADDRINT routineAddr, ADDRINT targetAddr)
         }
     }
 }
+/* Caller and target of the last call executed in a traceable module (PLT stubs jump on to the callee) */
+ADDRINT lastCallRoutine = 0;
+ADDRINT lastCallTarget = 0;
+
+/* Maximum number of bytes logged for each string argument of an external call */
+#define MAX_ARG_STRING 64
+
+/* Log up to MAX_ARG_STRING bytes at addr, stopping after the first null byte */
+void logArgString(const char *name, ADDRINT addr) {
+    unsigned char buf[MAX_ARG_STRING];
+    size_t copied = PIN_SafeCopy(buf, (void*) addr, MAX_ARG_STRING);
+
+    LOG_RAW(" %s=", name);
+    for (size_t i = 0; i < copied; i++) {
+        LOG_RAW("%02x", buf[i]);
+        if (buf[i] == 0) {
+            break;
+        }
+    }
+}
+
+/*
+* Summary of a call to code outside the traceable modules (e.g., the C library), whose
+* instructions are not traced: if an argument register holds a tainted value or points
+* to tainted memory, the return value depends on the network input, so the caller's rax
+* becomes tainted. Otherwise, the return value overwrites any tainted value in rax.
+* The string arguments are logged so that comparisons with constants can be recovered.
+*/
+void summarizeExternalCall(ADDRINT caller, ADDRINT callTarget, ADDRINT arg0, ADDRINT arg1, ADDRINT arg2) {
+    bool valueTainted = false;
+    for (std::array<REG, 6>::iterator it = linuxRegParams.begin(); it != linuxRegParams.end(); ++it) {
+        valueTainted = valueTainted || regIsTainted(caller, *it);
+    }
+    bool arg0Tainted = taintedAddrs.count(arg0) > 0;
+    bool arg1Tainted = taintedAddrs.count(arg1) > 0;
+
+    if (valueTainted || arg0Tainted || arg1Tainted) {
+        changeTaintRegValue(caller, REG_RAX, true);
+        LOG_RAW(" summary=taint-return caller-addr=%s call-target=%s arg-value-tainted=%d arg0-tainted=%d arg1-tainted=%d arg2=%s",
+            hexaddr(caller).c_str(), hexaddr(callTarget).c_str(), valueTainted, arg0Tainted, arg1Tainted, hexaddr(arg2).c_str());
+        if (arg0Tainted || arg1Tainted) {
+            logArgString("arg0-string", arg0);
+            logArgString("arg1-string", arg1);
+        }
+    } else if (regIsTainted(caller, REG_RAX)) {
+        changeTaintRegValue(caller, REG_RAX, false);
+        LOG_RAW(" summary=free-return caller-addr=%s call-target=%s", hexaddr(caller).c_str(), hexaddr(callTarget).c_str());
+    }
+}
 
 /* Print in/direct control flow instruction */
-void traceControlFlow(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT routineAddr, int controlFlowType, ADDRINT targetAddr) {
+void traceControlFlow(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT routineAddr, int controlFlowType, ADDRINT targetAddr, ADDRINT arg0, ADDRINT arg1, ADDRINT arg2) {
     if (!addrIsTraceable(insAddr, insSize)) {
         return;
     }
@@ -485,9 +540,11 @@ void traceControlFlow(ADDRINT insAddr, USIZE insSize, std::string *insDis, char 
         target = "unknown";
     }
 
+    bool externalTarget = !addrIsFromTraceableModule(targetAddr);
+
     /* Do not update insTargetAddr if execution was interrupted due to a signal or a timer */
     if (!executionInterrupted) {
-        if (addrIsFromTraceableModule(targetAddr)) {
+        if (!externalTarget) {
             insTargetAddr = targetAddr;
         } else {
             /* Delete ins info if control flow is changed outside traceable module */
@@ -501,10 +558,14 @@ void traceControlFlow(ADDRINT insAddr, USIZE insSize, std::string *insDis, char 
         case CF_DIRECT_CALL:
             controlFlow = "direct-call";
             passTaintedParams(insAddr, routineAddr, targetAddr);
+            lastCallRoutine = routineAddr;
+            lastCallTarget = targetAddr;
             break;
         case CF_INDIRECT_CALL:
             controlFlow = "indirect-call";
             passTaintedParams(insAddr, routineAddr, targetAddr);
+            lastCallRoutine = routineAddr;
+            lastCallTarget = targetAddr;
             break;
         case CF_DIRECT_JUMP:
             controlFlow = "direct-jump";
@@ -530,7 +591,16 @@ void traceControlFlow(ADDRINT insAddr, USIZE insSize, std::string *insDis, char 
 
     LOG_INFO("io-counter=%d action=%s routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, controlFlow, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
     logInsOpcodes(insAddr, insSize);
-    LOG_RAW(" target-addr=%s target=\"%s\"\n", hexaddr(targetAddr).c_str(), target.c_str());
+    LOG_RAW(" target-addr=%s target=\"%s\"", hexaddr(targetAddr).c_str(), target.c_str());
+    /* A call leaving the traceable modules, either directly or through a PLT stub (jump after a call) */
+    if (externalTarget) {
+        if ((controlFlowType == CF_DIRECT_CALL) || (controlFlowType == CF_INDIRECT_CALL)) {
+            summarizeExternalCall(routineAddr, targetAddr, arg0, arg1, arg2);
+        } else if (((controlFlowType == CF_INDIRECT_JUMP) || (controlFlowType == CF_DIRECT_JUMP)) && (lastCallRoutine != 0)) {
+            summarizeExternalCall(lastCallRoutine, lastCallTarget, arg0, arg1, arg2);
+        }
+    }
+    LOG_RAW("\n");
 }
 
 void traceLea(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routine, ADDRINT routineAddr, REG reg, REG regBase, ADDRINT leaAddr) {
@@ -590,6 +660,7 @@ void propagateMovTaint(INS ins, const char *routine, ADDRINT routineAddr) {
         /* reg <- [addr] */
         REG reg = getWriteReg(ins);
         REG regBase = getMemoryBaseReg(ins);
+        REG regIndex = getMemoryIndexReg(ins);
 
         INS_InsertCall(
             ins, IPOINT_BEFORE, (AFUNPTR)addrToReg,
@@ -601,6 +672,7 @@ void propagateMovTaint(INS ins, const char *routine, ADDRINT routineAddr) {
             IARG_MEMORYREAD_EA,
             IARG_PTR, reg,
             IARG_PTR, regBase,
+            IARG_PTR, regIndex,
             IARG_END);
     } else if (INS_IsMemoryWrite(ins)) {
         /* [addr] <- reg */
@@ -686,6 +758,9 @@ void analyzeControlFlow(INS ins, const char *routine, ADDRINT routineAddr) {
         IARG_ADDRINT, routineAddr,
         IARG_PTR, controlFlowType,
         IARG_BRANCH_TARGET_ADDR,
+        IARG_REG_VALUE, REG_RDI,
+        IARG_REG_VALUE, REG_RSI,
+        IARG_REG_VALUE, REG_RDX,
         IARG_END);
 }
 

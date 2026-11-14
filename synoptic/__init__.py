@@ -24,6 +24,10 @@ def analyze_logs(args, model, working_dir):
     traces = utils.get_traces(filenames)
     model.analyze(traces)
 
+    """ Keywords compared with network data inside C-library calls """
+    if args.binary:
+        model.library_analysis(traces, args.binary)
+
     """ Symbolic analysis of traces """
     if args.symbolic_analysis:
         model.symbolic_analysis(traces, args.binary, args.binary_args, args.symbolic_engine, args.symbolic_timeout)

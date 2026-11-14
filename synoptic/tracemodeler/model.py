@@ -14,12 +14,19 @@ import synoptic.tracemodeler.cfg as cfg
 import synoptic.tracemodeler.fsm
 import synoptic.tracemodeler.symbolic as symbolic
 
+""" C-library functions whose calls compare a tainted string with another string """
+COMPARISON_FUNCTIONS = {'strcmp', 'strncmp', 'strcasecmp', 'strncasecmp', 'memcmp'}
+""" Comparison functions bounded by their third argument """
+BOUNDED_COMPARISON_FUNCTIONS = {'strncmp', 'strncasecmp', 'memcmp'}
+
 class Model:
     def __init__(self, arch_mode=capstone.CS_MODE_64):
         self.fsm = synoptic.tracemodeler.fsm.ProtocolFSM()
         self.cfg = synoptic.tracemodeler.cfg.DynamicCFG()
         self.md = capstone.Cs(capstone.CS_ARCH_X86, arch_mode)
         self.md.detail = True
+        """ Keywords recovered from comparisons made by C-library calls """
+        self.library_keywords = []
 
     def analyze(self, traces):
         debug.info('CFG analysis...')
@@ -199,6 +206,47 @@ class Model:
 
         """ No delimeters found, return same buffer """
         return buffer
+
+    def library_analysis(self, traces, binary):
+        """
+        Recover keywords from C-library comparisons between network data and constant strings.
+        The program tracer logs the string arguments of calls into untraced modules that read
+        tainted memory; the import table of the binary names the called function.
+        """
+        if not self.fsm.textual:
+            return
+
+        binary_base_addr = self.get_base_addr(traces)
+        r2 = r2pipe.open(binary, flags=['-2'])
+        imports = {item['plt']: item['name'] for item in json.loads(r2.cmd('iij')) if item.get('plt')}
+        r2.quit()
+
+        """ Constants compared at each call site, identified by caller and function """
+        comparisons = collections.defaultdict(list)
+        for item in traces:
+            if (item.get('summary') != 'taint-return') or (item['arg0-tainted'] == item['arg1-tainted']):
+                continue
+            function = imports.get(int(item['call-target'], 0) - binary_base_addr)
+            if function not in COMPARISON_FUNCTIONS:
+                continue
+            constant_arg = 'arg1-string' if item['arg0-tainted'] == '1' else 'arg0-string'
+            constant = bytes.fromhex(item[constant_arg]).split(b'\x00')[0]
+            if function in BOUNDED_COMPARISON_FUNCTIONS:
+                constant = constant[:int(item['arg2'], 0)]
+            if constant and self.is_printable(constant) and not constant.isspace():
+                comparisons[(item['caller-addr'], function)].append(constant.upper())
+
+        known_keywords = [keyword.upper() for keyword in self.fsm.keywords + self.fsm.inferred_keywords]
+        for ((caller, function), constants) in comparisons.items():
+            """ As with symbolic results, a call site must compare against at least one observed keyword """
+            if not any([constant in known_keywords for constant in constants]):
+                continue
+            new_keywords = [constant for constant in dict.fromkeys(constants) if constant not in known_keywords]
+            if new_keywords:
+                debug.info(f'Library analysis\t: {len(new_keywords)} keywords compared by {function} in {caller}\t: {new_keywords}')
+                self.library_keywords.extend(new_keywords)
+                self.fsm.inferred_keywords.extend(new_keywords)
+                known_keywords.extend(new_keywords)
 
     def symbolic_analysis(self, traces, binary, binary_args, symbolic_engine, timeout):
         symbolic_engine = symbolic.SymbolicEngine(symbolic_engine, binary, binary_args, timeout)
@@ -504,8 +552,8 @@ class Model:
         keywords = [self.strip_buffer(keyword, self.fsm.textual) for keyword in keywords]
 
         if self.fsm.textual:
-            """ Any keyword not previously found could be a new keyword """
-            new_keywords = [keyword.upper() for keyword in keywords if keyword.upper() not in [fsm_keyword.upper() for fsm_keyword in self.fsm.keywords]]
+            """ Any keyword not previously found (observed or recovered from library comparisons) could be a new keyword """
+            new_keywords = [keyword.upper() for keyword in keywords if keyword.upper() not in [fsm_keyword.upper() for fsm_keyword in self.fsm.keywords + self.fsm.inferred_keywords]]
             """ Ensure that at least one of the inferred keywords is in the previous known keywords """
             if new_keywords and any([keyword.upper() in [fsm_keyword.upper() for fsm_keyword in self.fsm.keywords] for keyword in keywords]):
                 debug.info(f'Symbolic analysis\t: {len(new_keywords)} keywords inferred\t: {new_keywords}')

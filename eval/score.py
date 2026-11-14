@@ -31,12 +31,15 @@ def vocabulary(results_dir):
         r = json.load(open(path))
         truth = set(gt[r['target']]['implemented'])
         observed = set(r['observed_keywords'])
+        library = set(r.get('library_keywords', []))
         synoptic = observed | set(r['inferred_keywords'])
         row = {
             'variant': variant, 'target': r['target'], 'condition': r['condition'], 'engine': r['engine'],
             'threshold': r.get('threshold', 1000), 'implemented': len(truth),
-            'observed': len(observed), 'inferred': len(set(r['inferred_keywords']) - observed),
+            'observed': len(observed), 'library': len(library - observed),
+            'inferred': len(set(r['inferred_keywords']) - observed - library),
             'recall_trace': len(observed & truth) / len(truth),
+            'recall_library': len((observed | library) & truth) / len(truth),
             'recall_synoptic': len(synoptic & truth) / len(truth),
             'precision_synoptic': len(synoptic & truth) / len(synoptic) if synoptic else 0.0,
             'not_implemented': ' '.join(sorted(synoptic - truth)),

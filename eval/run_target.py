@@ -289,6 +289,11 @@ def main():
     result['delimiters'] = [d.hex() for d in (model.fsm.delimiters or [])]
     result['messages'] = messages
 
+    # Keywords that the SUT compares with network data inside C-library calls (e.g., strncasecmp)
+    if model.fsm.delimiters is not None:
+        model.library_analysis(traces, TARGETS[args.target]['binary'])
+    result['library_keywords'] = sorted({k.decode(errors='replace').upper() for k in model.library_keywords})
+
     # Debug level for the symbolic stage only: it logs start, goal and cut addresses and every solution.
     logging.getLogger(utils.TOOL_NAME).setLevel(logging.DEBUG)
     t2 = time.time()

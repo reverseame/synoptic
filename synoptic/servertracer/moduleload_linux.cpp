@@ -168,6 +168,37 @@ ssize_t newReadFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &tai
     return ret;
 }
 
+/* Offset of _fileno in glibc's struct _IO_FILE on x86-64 */
+#define GLIBC_FILE_FILENO_OFFSET 0x70
+
+/*
+* fgets copies a line from the stream buffer, which the hooked read() inside the C library
+* already tainted, into the caller's buffer. The copy happens in untraced code, so taint the
+* copied bytes here. The read() record already logged the data, so no record is written.
+*/
+char* newFgetsFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAddrs, char *s, int size, void *stream) {
+    char *ret;
+
+    PIN_CallApplicationFunction(ctx, PIN_ThreadId(),
+                                CALLINGSTD_DEFAULT, orgFuncPtr,
+                                NULL,
+                                PIN_PARG(char*), &ret,
+                                PIN_PARG(char*), s,
+                                PIN_PARG(int), size,
+                                PIN_PARG(void*), stream,
+                                PIN_PARG_END());
+
+    int fd = -1;
+    if ((ret != NULL) && (PIN_SafeCopy(&fd, (char*) stream + GLIBC_FILE_FILENO_OFFSET, sizeof(fd)) == sizeof(fd)) && isNetworkSocket(fd)) {
+        char c;
+        for (int i = 0; (i < size) && (PIN_SafeCopy(&c, s + i, 1) == 1) && (c != 0); i++) {
+            taintedAddrs.insert((ADDRINT) s + i);
+        }
+    }
+
+    return ret;
+}
+
 ssize_t newRecvFunction(AFUNPTR orgFuncPtr, CONTEXT *ctx, std::set<ADDRINT> &taintedAddrs, std::set<ADDRINT> &visitedAddrs, bool &thresholdTriggered, int &IOCounter, ADDRINT &insFallthrough, std::string *imgName, int sockfd, void *buf, size_t len, int flags) {
     ssize_t ret;
 
@@ -530,6 +561,27 @@ void replaceReadFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAddrs, std:
     PROTO_Free(proto_tcp_activity);
 }
 
+void replaceFgetsFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAddrs) {
+    PROTO proto_fgets = PROTO_Allocate(PIN_PARG(char*), CALLINGSTD_DEFAULT,
+                                        NULL,
+                                        PIN_PARG(char*),    // s
+                                        PIN_PARG(int),      // size
+                                        PIN_PARG(void*),    // stream
+                                        PIN_PARG_END());
+
+    RTN_ReplaceSignature(rtn, AFUNPTR(newFgetsFunction),
+                                IARG_PROTOTYPE, proto_fgets,
+                                IARG_ORIG_FUNCPTR,
+                                IARG_CONTEXT,
+                                IARG_PTR, &taintedAddrs,
+                                IARG_FUNCARG_ENTRYPOINT_VALUE, 0,
+                                IARG_FUNCARG_ENTRYPOINT_VALUE, 1,
+                                IARG_FUNCARG_ENTRYPOINT_VALUE, 2,
+                                IARG_END);
+
+    PROTO_Free(proto_fgets);
+}
+
 void replaceRecvFunction(IMG img, RTN rtn, std::set<ADDRINT> &taintedAddrs, std::set<ADDRINT> &visitedAddrs, bool &thresholdTriggered, int &IOCounter, ADDRINT &insFallthrough) {
     PROTO proto_tcp_activity = PROTO_Allocate(PIN_PARG(ssize_t), CALLINGSTD_DEFAULT,
                                         NULL,
@@ -764,6 +816,14 @@ void replaceSignatures(bool KnobDebug, IMG img, std::set<ADDRINT> &taintedAddrs,
         replaceReadFunction(img, rtn, taintedAddrs, visitedAddrs, thresholdTriggered, IOCounter, insFallthrough);
         if (KnobDebug) {
             PRINT_DEBUG("read replaced\t\t\t: %s\n", IMG_Name(img).c_str());
+        }
+    }
+
+    rtn = RTN_FindByName(img, "fgets");
+    if (RTN_Valid(rtn)) {
+        replaceFgetsFunction(img, rtn, taintedAddrs);
+        if (KnobDebug) {
+            PRINT_DEBUG("fgets replaced\t\t: %s\n", IMG_Name(img).c_str());
         }
     }
 
