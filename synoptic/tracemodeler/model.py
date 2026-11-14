@@ -184,6 +184,16 @@ class Model:
                             ret.append(byte_char)
                 except struct.error:
                     pass
+            """
+            The line terminator may be handled in library code (e.g., by fgets) and never compared in
+            traced code: whitespace that ends every buffer also delimits the messages
+            """
+            suffix = os.path.commonprefix([buffer[::-1] for buffer in all_buffers])[::-1] if all_buffers else b''
+            terminator = suffix[len(suffix.rstrip()):]
+            for byte in terminator:
+                byte_char = bytes([byte])
+                if byte_char not in ret:
+                    ret.append(byte_char)
         else:
             raise NotImplementedError('Binary protocol not implemented')
 
