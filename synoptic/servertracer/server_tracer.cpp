@@ -23,9 +23,10 @@ int IOCounter = 0;
 
 /*
 * Rely on spatial location to minimize runtime overhead. Usually,
-* message parsing is done just after receiving data over the network
+* message parsing is done just after receiving data over the network.
+* Tracing after a read stops once this many distinct instruction addresses
+* of the traced modules have been visited (-threshold knob, default 1000).
 */
-#define SPATIAL_THRESHOLD 1000
 bool thresholdTriggered = false;
 
 /* Keep track of visited addresses during tracing */
@@ -43,6 +44,7 @@ std::vector<std::tuple<ADDRINT, ADDRINT>> moduleAddrs;
 KNOB<bool> KnobDebug(KNOB_MODE_WRITEONCE, "pintool", "debug", "0", "Enable debug messages");
 KNOB<std::string> KnobLogDir(KNOB_MODE_WRITEONCE, "pintool", "dirlog", ".", "Absolute path of log directory (default to current directory)");
 KNOB<std::string> KnobModules(KNOB_MODE_WRITEONCE, "pintool", "modules", "", "List of additional modules to analyze, comma separated (default only to the main executable)");
+KNOB<UINT32> KnobThreshold(KNOB_MODE_WRITEONCE, "pintool", "threshold", "1000", "Distinct instruction addresses traced after each network read (spatial threshold)");
 
 /* Keep track of tainted addresses */
 std::set<ADDRINT> taintedAddrs;
@@ -174,7 +176,7 @@ bool addrIsTraceable(ADDRINT insAddr, USIZE insSize) {
 
     if (addrIsFromTraceableModule(insAddr)) {
         /* We surpassed the spatial location threshold */
-        if (visitedAddrs.size() >= SPATIAL_THRESHOLD) {
+        if (visitedAddrs.size() >= KnobThreshold.Value()) {
             if (!thresholdTriggered) {
                 LOG_INFO("io-counter=%d action=spatial-threshold-triggered\n", IOCounter);
                 thresholdTriggered = true;
