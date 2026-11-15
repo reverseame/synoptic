@@ -253,7 +253,6 @@ class Node:
         self.visit_count = 1
         self.taint_count = group.taint_count
         self.edges = []
-        self.predecessors = []
         self.static = static
 
     def taint(self, node):
@@ -410,55 +409,120 @@ class CFG:
 
         return None
 
-    def get_tainted_loop_info(self):
-        """ Set initial dominants """
-        dominances = {}
+    def _get_predecessors(self):
+        """ Predecessors of each node, derived from the current edges (node splits move edges) """
+        predecessors = {node: [] for node in self.nodes}
         for node in self.nodes:
-            """ Dominant of entry_node is a set of only itself """ 
-            if node is self.entry_node:
-                dominances[self.entry_node] = {self.entry_node}
-            else:
-                """ Set the rest with all nodes as dominants """
-                dominances[node] = set(self.nodes)
+            for edge in node.edges:
+                if edge.dst in predecessors and node not in predecessors[edge.dst]:
+                    predecessors[edge.dst].append(node)
 
-        """ Analyze all nodes but entry_node """
-        worklist = [node for node in self.nodes if node != self.entry_node]
+        return predecessors
 
-        while worklist:
-            node = worklist.pop(0)                                          # First node in list
-            predecessor_dominants = set(dominances[node.predecessors[0]])   # Create a new set with the same values
-            """ Intersection of previous dominants """
-            for predecessor in node.predecessors[1:]:
-                predecessor_dominants &= dominances[predecessor]            # Intersection of all predecessor dominants
-            """ Add itself as dominant """
-            predecessor_dominants.add(node)
-            """ Override with new dominant calculation """
-            dominances[node] = predecessor_dominants
+    def _get_immediate_dominators(self, predecessors):
+        """
+        Immediate dominator of each node (Cooper, Harvey, and Kennedy, "A Simple, Fast Dominance
+        Algorithm"), iterated until no node changes. Roots are the entry node and any node without
+        predecessors, and their immediate dominator is None. Nodes not reachable from a root are
+        left out and only dominate themselves
+        """
+        roots = {node for node in self.nodes if node is self.entry_node or not predecessors[node]}
+
+        """ Postorder of the nodes reachable from the roots (iterative depth-first search) """
+        postorder = []
+        visited = set()
+        for root in roots:
+            if root in visited:
+                continue
+            visited.add(root)
+            stack = [(root, iter(root.edges))]
+            while stack:
+                node, edges = stack[-1]
+                for edge in edges:
+                    if edge.dst in predecessors and edge.dst not in visited:
+                        visited.add(edge.dst)
+                        stack.append((edge.dst, iter(edge.dst.edges)))
+                        break
+                else:
+                    stack.pop()
+                    postorder.append(node)
+
+        """ A virtual node above all roots, last in postorder """
+        virtual_root = object()
+        order = {node: index for index, node in enumerate(postorder)}
+        order[virtual_root] = len(postorder)
+        idom = {virtual_root: virtual_root}
+        for root in roots:
+            idom[root] = virtual_root
+
+        def intersect(a, b):
+            while a is not b:
+                while order[a] < order[b]:
+                    a = idom[a]
+                while order[b] < order[a]:
+                    b = idom[b]
+            return a
+
+        changed = True
+        while changed:
+            changed = False
+            for node in reversed(postorder):
+                if node in roots:
+                    continue
+                new_idom = None
+                for predecessor in predecessors[node]:
+                    if predecessor in idom:
+                        new_idom = predecessor if new_idom is None else intersect(predecessor, new_idom)
+                if idom.get(node) is not new_idom:
+                    idom[node] = new_idom
+                    changed = True
+
+        del idom[virtual_root]
+        return {node: (None if dominator is virtual_root else dominator) for node, dominator in idom.items()}
+
+    @staticmethod
+    def _dominates(idom, a, b):
+        """ a dominates b if a is on the immediate-dominator chain of b (b included) """
+        if b not in idom:
+            return a is b
+        while b is not None:
+            if b is a:
+                return True
+            b = idom[b]
+        return False
+
+    def get_tainted_loop_info(self):
+        predecessors = self._get_predecessors()
+        idom = self._get_immediate_dominators(predecessors)
 
         """ Loops are defined by back-edges to header """
         loop_info = []
 
         for node in self.nodes:
-            dominants = dominances[node]
-            """ Back-edge to the header is detected if any of node's successor is a dominant to node """
+            """ Back-edge to the header is detected if any of node's successor dominates node """
             for edge in node.edges:
-                if edge.dst in dominants:
-                    info = {'header': edge.dst, 'back-edge': node}
-                
+                header = edge.dst
+                if self._dominates(idom, header, node):
+                    info = {'header': header, 'back-edge': node}
+
                     """
                     The header has at least two predecessors, the back-edge and a potential pre-header.
-                    The pre-header is a dominant basic block that falthroughs (or jumps) to the header,
-                    added for loop optimization
+                    The pre-header is a predecessor outside the loop that dominates the header and
+                    falls through (or jumps) to it, added for loop optimization. The predecessors that
+                    dominate the header lie on its dominator chain, so the closest one is found first
                     """
-                    if len(edge.dst.predecessors) >= 2:
-                        for predecessor in edge.dst.predecessors:
-                            """ A pre-header is a header's dominant, while back-edges are not """
-                            if predecessor in dominances[edge.dst]:
-                                if predecessor.group.tail.is_standard() or predecessor.group.tail.is_jump():
-                                    info['pre-header'] = predecessor
+                    if len(predecessors[header]) >= 2:
+                        candidates = [predecessor for predecessor in predecessors[header]
+                                      if predecessor.group.tail.is_standard() or predecessor.group.tail.is_jump()]
+                        dominator = idom.get(header)
+                        while dominator is not None:
+                            if any(dominator is candidate for candidate in candidates):
+                                info['pre-header'] = dominator
+                                break
+                            dominator = idom[dominator]
 
                     """ Return information if any node defining the loop is tainted """
-                    if any([node.is_tainted() for node in info.values()]):
+                    if any([loop_node.is_tainted() for loop_node in info.values()]):
                         loop_info.append(info)
 
         return loop_info
@@ -576,9 +640,7 @@ class CFG:
             new_edge.branch_taken = self.last_inserted.group.tail.is_branch_taken(node.group.leader)
 
         self.last_inserted.edges.append(new_edge)
-        predecessor = self.last_inserted
         self.last_inserted = node
-        self.last_inserted.predecessors.append(predecessor)
 
         """ Keep track of all nodes """
         if node not in self.nodes:
