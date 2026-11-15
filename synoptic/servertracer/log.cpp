@@ -22,15 +22,23 @@ Log::Log(void) : logfile(nullptr), logfilename(nullptr) {
 void Log::openLogFile(const char *filename) {
 	logfilename = filename;
 	logfile = fopen(logfilename, "w");
+	/* e.g., a forked child that runs with fewer privileges than the directory requires */
+	if (logfile == nullptr) {
+		fprintf(stderr, "synoptic.servertracer\t: ERROR\t: unable to open log file %s\n", filename);
+	}
 }
 
 void Log::closeLogfile() {
-	fflush(logfile);
-	fclose(logfile);
+	if (logfile != nullptr) {
+		fflush(logfile);
+		fclose(logfile);
+	}
 }
 
 void Log::flushLogfile() {
-	fflush(logfile);
+	if (logfile != nullptr) {
+		fflush(logfile);
+	}
 }
 
 FILE* Log::getLogFile() {
@@ -74,7 +82,9 @@ void Log::write(const char *fmt, ...) {
 
 	/* Write completed records; an outer record still open stays buffered */
 	while (!records.empty() && !records.back().empty() && (records.back().back() == '\n')) {
-		fputs(records.back().c_str(), logfile);
+		if (logfile != nullptr) {
+			fputs(records.back().c_str(), logfile);
+		}
 		records.pop_back();
 	}
 

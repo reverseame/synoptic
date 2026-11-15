@@ -330,33 +330,19 @@ class ProtocolFSM:
             template.append('k')
 
         """
-        Search for end delimiters in all symbol lists, from the last position back to the second one
-        of the shortest list (symbols are sorted by length; the first position holds the keyword)
+        Search for end delimiters shared by all symbol lists, from the last position back to the second
+        one of the shortest list (symbols are sorted by length; the first position holds the keyword).
+        The search stops at the first position that does not hold the same delimiter in every list.
         """
-        delimiter = None
+        suffix = []
         for i in range(-1, -len(symbols[0]), -1):
-            for symbol in symbols:
-                if self._is_delimiter_symbol(symbol[i]):
-                    """ Set up delimiter to first delimiter occurrence """
-                    if delimiter is None:
-                        delimiter = symbol[i]
-                    """ Ensure all delimiters are placed in the same position """
-                    if symbol[i] != delimiter:
-                        delimiter = None
-                        break
-                else:
-                    break
-            else:
-                """ Delimiter is placed in the same position for all symbols """
-                if i == -1:
-                    template.insert(len(template), delimiter)       # `insert` function inserts a element **before** index, we need to set index properly
-                else:
-                    template.insert(i + 1, delimiter)
+            column = {symbol_list[i] for symbol_list in symbols}
+            delimiter = column.pop() if len(column) == 1 else None
+            if (delimiter is None) or not self._is_delimiter_symbol(delimiter):
+                break
+            suffix.insert(0, delimiter)
 
-                """ Reset delimiter """
-                delimiter = None
-
-        return template
+        return template + suffix
 
     def _generate_buffer(self, template, keyword):
         buffer = bytearray()
@@ -507,14 +493,15 @@ class Message:
             """ Strip special chars at the end """
             buffer = self.buffer.rstrip()
 
-        for delimiter in delimiters:
-            """
-            Assume that a delimiter at the end of buffer does not correspond to
-            keyword delimitation, only as buffer termination
-            """
-            if (delimiter in buffer) and (delimiter != buffer[-1]):
-                self.keyword = buffer.split(delimiter)[0]
-                return
+        """
+        The keyword ends at the first delimiter in the buffer. A delimiter found only at the end of
+        the buffer terminates the buffer rather than the keyword.
+        """
+        positions = [position for position in (buffer.find(delimiter) for delimiter in delimiters)
+                     if 0 <= position < len(buffer) - 1]
+        if positions:
+            self.keyword = buffer[:min(positions)]
+            return
 
         """ Default keyword to decoded buffer in textual protocols """
         if textual:
@@ -532,14 +519,11 @@ class Message:
         ret = []
 
         for buffer in buffers:
-            if delimiter in buffer:
-                items = buffer.split(delimiter)
-                for (item1, item2) in zip(items[:-1], items[1:]):
-                    if item1: ret.append(item1)
+            for (i, item) in enumerate(buffer.split(delimiter)):
+                if i:
                     ret.append(delimiter)
-                    if item2: ret.append(item2)
-            else:
-                ret.append(buffer)
+                if item:
+                    ret.append(item)
 
         return ret
 

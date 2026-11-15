@@ -7,7 +7,7 @@ cd "$(dirname "$0")"
 EVAL=$PWD
 mkdir -p results/logs results/runs results/baselines
 
-TARGETS=${TARGETS:-"proftpd-1.3.8 proftpd lightftp pureftpd bftpd"}
+TARGETS=${TARGETS:-"proftpd-1.3.8 proftpd lightftp pureftpd bftpd exim live555"}
 CONDITIONS=${CONDITIONS:-"first all"}
 ENGINES=${ENGINES:-"angr binsec"}
 JOBS=${JOBS:-2}
@@ -32,7 +32,7 @@ docker run --rm -v "$EVAL:/opt/synoptic/eval" -w /opt/synoptic/eval synoptic-eva
   python3 capture_pcaps.py results/pcaps $TARGETS > results/logs/capture.log 2>&1
 
 for t in $TARGETS; do
-  port=21; [ "$t" = lightftp ] && port=2200
+  case "$t" in lightftp) port=2200;; exim) port=25;; live555) port=8554;; *) port=21;; esac
   docker run --rm --cpus 2 --memory 4g -v "$EVAL:/eval" synoptic-baselines:latest \
     python3 /eval/baselines/run_format_baselines.py "/eval/results/pcaps/$t.pcap" "$port" "/eval/results/baselines/$t.json" \
     > "results/logs/baselines-$t.log" 2>&1 || echo "NEMESYS/Netzob failed for $t"

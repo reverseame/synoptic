@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Extract the command vocabulary of each FTP target from its source code.
+"""Extract the command vocabulary of each target from its source code.
 
 For every target we report the set of commands that the server implements
 (it dispatches them to a handler). For ProFTPD we also report the command
@@ -69,12 +69,37 @@ def pureftpd(root):
     return {'implemented': cmds}
 
 
+def exim(root):
+    """Commands of the cmd_list table that smtp_read_command() matches with strncmpic(). The names
+    are lowercase and may include the argument prefix ("mail from:"); the keyword is the first word.
+    Entries under #ifdef SUPPORT_TLS count only if the build enables TLS."""
+    src = open(os.path.join(root, 'src', 'src', 'smtp_in.c')).read()
+    block = src[src.index('static smtp_cmd_list cmd_list[]'):]
+    block = block[:block.index('};')]
+    config = open(os.path.join(root, 'src', 'build-Linux-x86_64', 'config.h')).read()
+    if re.search(r'^#define\s+SUPPORT_TLS\b', config, re.M) is None:
+        block = re.sub(r'#ifdef\s+SUPPORT_TLS.*?#endif', '', block, flags=re.S)
+    entries = re.findall(r'\{\s*"([a-z_ :]+)"\s*,\s*([^,]+),', block)
+    cmds = sorted({name.split()[0].upper() for name, length in entries if length.strip() != '0'})
+    return {'implemented': cmds}
+
+
+def live555(root):
+    """Request names that RTSPServer::RTSPClientConnection::handleRequestBytes() and the session
+    handlers compare with strcmp(), including the HTTP methods of RTSP-over-HTTP tunneling."""
+    src = open(os.path.join(root, 'liveMedia', 'RTSPServer.cpp')).read()
+    cmds = sorted(set(re.findall(r'strcmp\(cmdName,\s*"([A-Z_]+)"\)', src)))
+    return {'implemented': cmds}
+
+
 EXTRACTORS = {
     'proftpd-1.3.8': proftpd,
     'proftpd': proftpd,
     'lightftp': lightftp,
     'bftpd': bftpd,
     'pureftpd': pureftpd,
+    'exim': exim,
+    'live555': live555,
 }
 
 

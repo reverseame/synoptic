@@ -1,8 +1,8 @@
 # Synoptic quantitative evaluation environment.
 # Toolchain versions follow the paper: Pin 3.25, Python 3.10, angr 9.2.62,
 # Capstone 5.0.0, radare2 5.8.4. Binsec is upgraded to 0.11.3 below.
-# Targets: the four FTP subjects of ProFuzzBench, built with gcc and without
-# fuzzer instrumentation.
+# Targets: the four FTP subjects of ProFuzzBench, and its SMTP (Exim) and RTSP (Live555)
+# subjects, built with gcc and without fuzzer instrumentation.
 FROM ubuntu:22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -88,6 +88,29 @@ RUN pip3 install --no-cache-dir pycparser==2.21
 RUN opam update -y \
     && opam install -y --switch=4.14.1 bitwuzla-cxx binsec.0.11.3 unisim_archisec \
     && opam clean -a -c -s --logs
+
+# Targets of two other text protocols of ProFuzzBench, added after the FTP runs (the layers above,
+# and therefore the FTP binaries, are unchanged): Exim (SMTP) and Live555 (RTSP), with the
+# ProFuzzBench commits and patches.
+RUN apt-get update && apt-get install -y --no-install-recommends libpcre3-dev libdb-dev libgdbm-dev psmisc \
+    && rm -rf /var/lib/apt/lists/*
+ENV PFB=/opt/profuzzbench/subjects
+
+# Exim, installed into /usr/exim and configured with the ProFuzzBench configure patch
+RUN git clone -q https://github.com/Exim/exim $TARGETS/exim && cd $TARGETS/exim && git checkout -q 38903fb \
+    && patch -p1 < $PFB/SMTP/Exim/exim-rand.patch && patch -p1 < $PFB/SMTP/Exim/exim-log-bug.patch \
+    && cd src && mkdir Local && cp src/EDITME Local/Makefile && (cd Local && patch -p1 < $PFB/SMTP/Exim/exim.patch) \
+    && make clean all install >/dev/null \
+    && cd /usr/exim && patch -p1 < $PFB/SMTP/Exim/exim.configure.patch && chmod 1777 /var/mail
+
+# Live555 (testOnDemandRTSPServer with the AFLNet sample media); fuzzing.patch selects the AFL
+# compilers, which we replace by the system ones
+RUN git clone -q https://github.com/rgaufman/live555.git $TARGETS/live555 && cd $TARGETS/live555 && git checkout -q ceeb4f4 \
+    && patch -p1 < $PFB/RTSP/Live555/fuzzing.patch \
+    && sed -i 's/afl-clang-fast++/c++/g; s/afl-clang-fast/cc/g' config.linux \
+    && ./genMakefiles linux && make -j4 >/dev/null \
+    && git clone -q --depth 1 https://github.com/profuzzbench/aflnet.git /tmp/aflnet \
+    && cp /tmp/aflnet/tutorials/live555/sample_media_sources/*.* testProgs/ && rm -rf /tmp/aflnet
 
 # Synoptic (build context = repository root) and its pintool
 COPY . /opt/synoptic

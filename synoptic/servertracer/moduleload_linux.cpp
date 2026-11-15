@@ -11,6 +11,9 @@
 #include <string>
 #include <iostream>
 
+/* Defined in server_tracer.cpp: the fgets hook is one of the summaries of untraced code */
+extern KNOB<bool> KnobSummaries;
+
 /* Checks if fd is a internet socket */
 bool isNetworkSocket(int fd) {
     struct sockaddr saddr;
@@ -820,7 +823,7 @@ void replaceSignatures(bool KnobDebug, IMG img, std::set<ADDRINT> &taintedAddrs,
     }
 
     rtn = RTN_FindByName(img, "fgets");
-    if (RTN_Valid(rtn)) {
+    if (KnobSummaries && RTN_Valid(rtn)) {
         replaceFgetsFunction(img, rtn, taintedAddrs);
         if (KnobDebug) {
             PRINT_DEBUG("fgets replaced\t\t: %s\n", IMG_Name(img).c_str());

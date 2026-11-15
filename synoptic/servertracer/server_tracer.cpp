@@ -45,6 +45,7 @@ KNOB<bool> KnobDebug(KNOB_MODE_WRITEONCE, "pintool", "debug", "0", "Enable debug
 KNOB<std::string> KnobLogDir(KNOB_MODE_WRITEONCE, "pintool", "dirlog", ".", "Absolute path of log directory (default to current directory)");
 KNOB<std::string> KnobModules(KNOB_MODE_WRITEONCE, "pintool", "modules", "", "List of additional modules to analyze, comma separated (default only to the main executable)");
 KNOB<UINT32> KnobThreshold(KNOB_MODE_WRITEONCE, "pintool", "threshold", "1000", "Distinct instruction addresses traced after each network read (spatial threshold)");
+KNOB<bool> KnobSummaries(KNOB_MODE_WRITEONCE, "pintool", "summaries", "1", "Summarize calls into untraced code, taint fgets lines, and taint table lookups with a tainted index");
 
 /* Keep track of tainted addresses */
 std::set<ADDRINT> taintedAddrs;
@@ -290,7 +291,7 @@ void addrToReg(ADDRINT insAddr, USIZE insSize, std::string *insDis, char *routin
         if (regIsGeneral(regBase)) {
             changeTaintRegValue(routineAddr, regBase, true);
         }
-    } else if ((regIndex != REG_INVALID()) && regIsTainted(routineAddr, regIndex)) {
+    } else if (KnobSummaries && (regIndex != REG_INVALID()) && regIsTainted(routineAddr, regIndex)) {
         /* Table lookup indexed by a tainted value (e.g., inlined toupper/tolower): the result depends on the input */
         LOG_TAINT("io-counter=%d action=taint-reg routine=\"%s\" routine-addr=%s ins-addr=%s ins-dis=\"%s\" ins-opcodes=", IOCounter, routine, hexaddr(routineAddr).c_str(), hexaddr(insAddr).c_str(), insDis->c_str());
         logInsOpcodes(insAddr, insSize);
@@ -482,6 +483,30 @@ void passTaintedParams(ADDRINT insAddr, ADDRINT routineAddr, ADDRINT targetAddr)
 ADDRINT lastCallRoutine = 0;
 ADDRINT lastCallTarget = 0;
 
+/*
+* Return address and calling routine of every traced call into a traceable module, per thread.
+* Register taint is kept per routine, so the taint of the return value (rax) is passed to the
+* caller when the callee returns (e.g., a getc-like routine that returns an input byte).
+*/
+std::map<THREADID, std::vector<std::pair<ADDRINT, ADDRINT>>> callStacks;
+
+void returnToCaller(ADDRINT routineAddr, ADDRINT returnAddr) {
+    bool returnTainted = regIsTainted(routineAddr, REG_RAX);
+    std::vector<std::pair<ADDRINT, ADDRINT>> &stack = callStacks[PIN_ThreadId()];
+
+    /* Calls or returns outside the tracing window may be missing: match the return address */
+    for (size_t i = stack.size(); i-- > 0;) {
+        if (stack[i].first == returnAddr) {
+            ADDRINT caller = stack[i].second;
+            stack.resize(i);
+            if (caller != routineAddr) {
+                changeTaintRegValue(caller, REG_RAX, returnTainted);
+            }
+            return;
+        }
+    }
+}
+
 /* Maximum number of bytes logged for each string argument of an external call */
 #define MAX_ARG_STRING 64
 
@@ -507,6 +532,9 @@ void logArgString(const char *name, ADDRINT addr) {
 * The string arguments are logged so that comparisons with constants can be recovered.
 */
 void summarizeExternalCall(ADDRINT caller, ADDRINT callTarget, ADDRINT arg0, ADDRINT arg1, ADDRINT arg2) {
+    if (!KnobSummaries) {
+        return;
+    }
     bool valueTainted = false;
     for (std::array<REG, 6>::iterator it = linuxRegParams.begin(); it != linuxRegParams.end(); ++it) {
         valueTainted = valueTainted || regIsTainted(caller, *it);
@@ -560,12 +588,18 @@ void traceControlFlow(ADDRINT insAddr, USIZE insSize, std::string *insDis, char 
             passTaintedParams(insAddr, routineAddr, targetAddr);
             lastCallRoutine = routineAddr;
             lastCallTarget = targetAddr;
+            if (!externalTarget) {
+                callStacks[PIN_ThreadId()].push_back(std::make_pair(insAddr + insSize, routineAddr));
+            }
             break;
         case CF_INDIRECT_CALL:
             controlFlow = "indirect-call";
             passTaintedParams(insAddr, routineAddr, targetAddr);
             lastCallRoutine = routineAddr;
             lastCallTarget = targetAddr;
+            if (!externalTarget) {
+                callStacks[PIN_ThreadId()].push_back(std::make_pair(insAddr + insSize, routineAddr));
+            }
             break;
         case CF_DIRECT_JUMP:
             controlFlow = "direct-jump";
@@ -575,13 +609,9 @@ void traceControlFlow(ADDRINT insAddr, USIZE insSize, std::string *insDis, char 
             break;
         case CF_RET:
             controlFlow = "ret";
+            returnToCaller(routineAddr, targetAddr);
             /* Delete tainted regs for current function due to function termination */
             deleteRegs(routineAddr);
-            /*
-            * TODO If there was any tainted params, taint return value too. How to
-            * retrieve routine-addr from targetAddr? Ret returns to the callee, not
-            * the beginning of the function
-            */
             break;
         default:
             controlFlow = "unknown";

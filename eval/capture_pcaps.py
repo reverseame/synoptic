@@ -13,7 +13,7 @@ import subprocess
 import sys
 import time
 
-from run_target import TARGETS, Session, listening, prepare_environment, seeds_for
+from run_target import TARGETS, listening, open_session, prepare_environment, seeds_for
 
 
 def run_seed(target, seed):
@@ -24,13 +24,8 @@ def run_seed(target, seed):
         deadline = time.time() + 30
         while time.time() < deadline and not listening(cfg['port']):
             time.sleep(0.2)
-        sess = Session(cfg['port'], 10)
-        sess.reply()
-        for line in [l for l in open(seed, 'rb').read().replace(b'\r\n', b'\n').split(b'\n') if l.strip()]:
-            try:
-                sess.command(line)
-            except OSError:
-                break  # the server closed the control connection
+        sess = open_session(target, 10)
+        sess.play(open(seed, 'rb').read())
         sess.close()
         for t in sess.data_threads:
             t.join(10)

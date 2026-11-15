@@ -3,7 +3,7 @@
 
 Usage: run_replay.py TARGET FSM_JSON OUTDIR [--conf FILE] [--delay MS]
 
-The server runs as a standalone daemon, because the replayer reconnects after every QUIT. The
+The server runs as a standalone daemon, because the replayer reconnects after every session reset. The
 replayer loads FSM_JSON (an fsm.json exported by the analysis), sends every recovered keyword from
 the initial state and from each state of the observed sequence, and adds accepted ones to the FSM.
 OUTDIR receives replay.json (one record per exchange, candidate counts) and fsm-inferred.json.
@@ -12,6 +12,7 @@ import argparse
 import collections
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -35,10 +36,10 @@ def fsm_size(fsm_dict):
     return len(states), sum(len(transitions) for transitions in states.values())
 
 
-def instrument(records):
+def instrument(records, cls):
     """Record every exchange of the replayer, and which of them were judged as candidates."""
-    original_exchange = replayer.Replayer._send_recv_message
-    original_is_ok = replayer.Replayer.resp_is_ok
+    original_exchange = cls._send_recv_message
+    original_is_ok = cls.resp_is_ok
 
     def exchange(self, message):
         record = {'sent': message.buffer.decode(errors='replace'), 'code': None, 'error': None}
@@ -57,13 +58,61 @@ def instrument(records):
         records[-1]['accepted'] = bool(accepted)
         return accepted
 
-    replayer.Replayer._send_recv_message = exchange
-    replayer.Replayer.resp_is_ok = is_ok
+    cls._send_recv_message = exchange
+    cls.resp_is_ok = is_ok
 
 
 def fixed_acceptance(self, response_code):
     """resp_is_ok with the intended list of accepted non-2xx codes, for replayers that predate the fix"""
     return (response_code[:1] == b'2') or (response_code in [b'150', b'331'])
+
+
+class SMTPReplayer(replayer.Replayer):
+    """Analyst glue for SMTP. There is no data channel, and QUIT ends the session, after which the
+    replayer reconnects as it does for FTP. Positive completion (2xx) and positive intermediate (3xx,
+    e.g., 354 after DATA) replies accept the command."""
+
+    def _send_post_analysis(self, message):
+        pass
+
+    def _recv_post_analysis(self, response):
+        if self.last_keyword is not None and self.last_keyword.upper() == b'QUIT':
+            self._reconnect()
+        return response
+
+    def resp_is_ok(self, response_code):
+        return response_code[:1] in (b'2', b'3')
+
+
+class RTSPReplayer(replayer.Replayer):
+    """Analyst glue for RTSP. The status code follows the protocol version, and no request closes the
+    session: instead of sending the last observed request to reset the session, the replayer reconnects.
+    The RTP streams started by PLAY are not received."""
+
+    def replay(self, fsm, symbolic_messages):
+        self.reset_message = fsm.last_transition.message
+        return super().replay(fsm, symbolic_messages)
+
+    def _send_recv_message(self, message):
+        if message is self.reset_message:
+            self._reconnect()
+            return (b'', b'')
+        return super()._send_recv_message(message)
+
+    def _send_post_analysis(self, message):
+        pass
+
+    def _recv_post_analysis(self, response):
+        return response
+
+    def _get_response_code(self, response):
+        return re.search(rb'^RTSP/\d\.\d (\d+)', response).group(1)
+
+    def resp_is_ok(self, response_code):
+        return response_code[:1] == b'2'
+
+
+REPLAYERS = {'ftp': replayer.Replayer, 'smtp': SMTPReplayer, 'rtsp': RTSPReplayer}
 
 
 class Server:
@@ -143,7 +192,8 @@ def main():
     records = []
     if args.fixed_acceptance:
         replayer.Replayer.resp_is_ok = fixed_acceptance
-    instrument(records)
+    replayer_class = REPLAYERS[cfg['protocol']]
+    instrument(records, replayer_class)
     supervise(server)
     try:
         server.ensure_listening()
@@ -156,7 +206,7 @@ def main():
         log(f'replaying {len(candidates)} candidates from {len(model.fsm.sequence)} contexts')
 
         t0 = time.time()
-        fsm = replayer.Replayer('127.0.0.1', cfg['port'], 'tcp', args.delay / 1000).replay(
+        fsm = replayer_class('127.0.0.1', cfg['port'], 'tcp', args.delay / 1000).replay(
             model.fsm, symbolic_messages=True)
         seconds = round(time.time() - t0, 1)
         fsm.export_to_file(os.path.join(args.outdir, 'fsm-inferred.json'))

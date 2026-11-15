@@ -79,6 +79,50 @@ def neutral(data):
     return {len(data) - 1} if data.endswith(b'\r\n') else set()
 
 
+def truth_fields_rtsp(data):
+    """Ground-truth RTSP request fields: method, SP, URI, SP, version on the request line, and name,
+    ': ', value on each header line; every CRLF is a field, and the empty line ends the request."""
+    lines = data.split(b'\r\n')
+    cuts, pos = set(), 0
+    for idx, line in enumerate(lines):
+        last = idx == len(lines) - 1
+        if last and not line:
+            break
+        if idx == 0:
+            off = pos
+            for part in line.split(b' ')[:-1]:
+                off += len(part)
+                cuts.update((off, off + 1))
+                off += 1
+        elif line:
+            name, sep, _value = line.partition(b': ')
+            if sep:
+                cuts.update((pos + len(name), pos + len(name) + 2))
+        end = pos + len(line)
+        if not last:
+            cuts.update((end, end + 2))
+        pos = end + 2
+    cuts.discard(0)
+    cuts.discard(len(data))
+    return lines[0].split(b' ', 1)[0].upper(), cuts
+
+
+def neutral_rtsp(data):
+    """The CR|LF split of every line terminator is neither required nor penalized."""
+    return {i + 1 for i in range(len(data) - 1) if data[i:i + 2] == b'\r\n'}
+
+
+# Ground truth per protocol: request fields, neutral splits, and the messages that are scored. SMTP
+# requests are scored like FTP ones; the message content sent after DATA spans several lines and is not
+# a request.
+PROTOCOLS = {
+    'ftp': (truth_fields, neutral, lambda data: True),
+    'smtp': (truth_fields, neutral, lambda data: b'\n' not in data[:-1]),
+    'rtsp': (truth_fields_rtsp, neutral_rtsp, lambda data: True),
+}
+TARGET_PROTOCOLS = {'exim': 'smtp', 'live555': 'rtsp'}
+
+
 def adjusted_rand(labels_true, labels_pred):
     n = len(labels_true)
     if n < 2:
@@ -94,16 +138,17 @@ def adjusted_rand(labels_true, labels_pred):
     return (index - expected) / (maximum - expected) if maximum != expected else 1.0
 
 
-def score_tool(messages, get_cuts=None, get_cluster=None, get_keyword=None):
+def score_tool(messages, get_cuts=None, get_cluster=None, get_keyword=None, protocol='ftp'):
     """Boundary P/R/F1 (if get_cuts), keyword accuracy, and ARI of message types (if get_cluster)."""
+    truth_fn, neutral_fn, _ = PROTOCOLS[protocol]
     tp = fp = fn = 0
     kw_ok = 0
     labels_true, labels_pred = [], []
     for data, info in messages.items():
-        kw, truth = truth_fields(data)
+        kw, truth = truth_fn(data)
         if get_cuts:
             cuts = get_cuts(info)
-            pred = set(cuts) - neutral(data)
+            pred = set(cuts) - neutral_fn(data)
             tp += len(pred & truth)
             fp += len(pred - truth)
             fn += len(truth - pred)
@@ -131,6 +176,8 @@ def format_inference(results_dir):
         if bpath.endswith('-netplier.json'):
             continue
         target = os.path.basename(bpath)[:-5]
+        protocol = TARGET_PROTOCOLS.get(target, 'ftp')
+        scored = PROTOCOLS[protocol][2]
         # Message structures come from the trace and do not depend on the symbolic engine.
         candidates = sorted(glob.glob(os.path.join(results_dir, 'runs', target, 'all-*', 'result.json')))
         if not candidates:
@@ -141,7 +188,7 @@ def format_inference(results_dir):
         for m in json.load(open(rpath))['messages']:
             data = bytes.fromhex(m['buffer'])
             syn.setdefault(data, m)
-        common = {bytes.fromhex(h): v for h, v in base.items() if bytes.fromhex(h) in syn}
+        common = {bytes.fromhex(h): v for h, v in base.items() if bytes.fromhex(h) in syn and scored(bytes.fromhex(h))}
 
         def syn_cuts(data):
             cuts, pos = [], 0
@@ -153,17 +200,18 @@ def format_inference(results_dir):
         tools = {
             'Synoptic': score_tool({d: d for d in common}, syn_cuts,
                                    get_cluster=lambda d, _i: bytes.fromhex(syn[d]['keyword']).upper(),
-                                   get_keyword=lambda d, _i: bytes.fromhex(syn[d]['keyword'])),
-            'NEMESYS': score_tool({d: v for d, v in common.items() if 'nemesys' in v}, lambda v: v['nemesys']),
+                                   get_keyword=lambda d, _i: bytes.fromhex(syn[d]['keyword']), protocol=protocol),
+            'NEMESYS': score_tool({d: v for d, v in common.items() if 'nemesys' in v}, lambda v: v['nemesys'],
+                                  protocol=protocol),
             'Netzob': score_tool({d: v for d, v in common.items() if 'netzob' in v}, lambda v: v['netzob'],
-                                 get_cluster=lambda _d, v: v['netzob_symbol']),
+                                 get_cluster=lambda _d, v: v['netzob_symbol'], protocol=protocol),
         }
         npath = os.path.join(results_dir, 'baselines', f'{target}-netplier.json')
         netplier = json.load(open(npath)) if os.path.exists(npath) else None
         if netplier and netplier['messages']:
             labels = {bytes.fromhex(h): v['netplier_label'] for h, v in netplier['messages'].items()}
             tools['NetPlier'] = score_tool({d: labels[d] for d in common if d in labels},
-                                           get_cluster=lambda _d, label: label)
+                                           get_cluster=lambda _d, label: label, protocol=protocol)
         for tool, s in tools.items():
             rows.append({'target': target, 'tool': tool, 'unique_requests': len(base),
                          'matched_in_trace': len(common), **s, 'error': ''})

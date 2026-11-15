@@ -21,6 +21,8 @@ Comparison functions whose constant operand is not a C string, so it ends at the
 The strn* variants compare C strings: their bound is often the length of the input, not of the constant.
 """
 BOUNDED_COMPARISON_FUNCTIONS = {'memcmp'}
+""" Trace actions of the network reads hooked by the program tracer that carry a buffer """
+NETWORK_READS = ['recv', 'recvfrom', 'read']
 
 class Model:
     def __init__(self, arch_mode=capstone.CS_MODE_64):
@@ -145,7 +147,7 @@ class Model:
                 comparations = []
                 for item in net_trace:
                     if item['level'] == 'taint':
-                        if item['action'] in ['recv', 'read']:
+                        if item['action'] in NETWORK_READS:
                             """ A read that returns 0 or an error (e.g., peer closed) carries no buffer """
                             if 'buffer-content' in item:
                                 buffer['buffer'] = bytes.fromhex(item['buffer-content'])
@@ -282,23 +284,37 @@ class Model:
         ret = []
 
         (index, fd, pid) = (None, None, None)
+        (handover, reads) = (False, False)
 
         """
-        A session runs from an accept call to the close call of the same file descriptor.
-        Servers that exit without closing the client socket end the session at process end.
+        A session runs from an accept call to the close call of the same file descriptor in the same
+        process. Servers that exit without closing the client socket end the session at process end.
+        Servers that fork a process per connection (e.g., Exim) fork before reading from the accepted
+        socket: the session then follows the child, and the parent's close of its copy of the socket
+        does not end it.
         """
         for (i, trace) in enumerate(data):
             if 'action' in trace:
-                if (fd is None) and (trace['action'] == 'accept'):
+                action = trace['action']
+                if (fd is None) and (action == 'accept'):
                     (index, fd, pid) = (i, trace['return'], trace.get('pid'))
+                    (handover, reads) = (False, False)
                 elif fd is not None:
-                    """ Duplicate file descriptor """
-                    if (trace['action'] == 'dup2') and (trace['file-descriptor'] == fd):
+                    if (action == 'process-forked') and (trace.get('pid') == pid) and not reads:
+                        handover = True
+                    elif (action == 'new-process-forked') and (trace.get('ppid') == pid) and not reads:
+                        (pid, handover) = (trace.get('pid'), False)
+                    elif handover or (trace.get('pid') != pid):
+                        continue
+                    elif action in NETWORK_READS:
+                        reads = True
+                    elif (action == 'dup2') and (trace['file-descriptor'] == fd):
+                        """ Duplicate file descriptor """
                         fd = trace['return']
-                    elif (trace['action'] == 'close') and (fd == trace['file-descriptor']):
+                    elif (action == 'close') and (fd == trace['file-descriptor']):
                         ret.append(data[index:i])
                         (index, fd, pid) = (None, None, None)
-                    elif (trace['action'] == 'process-end') and (trace.get('pid') == pid):
+                    elif action == 'process-end':
                         ret.append(data[index:i])
                         (index, fd, pid) = (None, None, None)
 
@@ -311,19 +327,33 @@ class Model:
         """
         Split traces based in recv/read calls
 
+        Reads from connections that the SUT opens itself (connect calls, e.g., DNS lookups or
+        ident queries made while serving the client) belong to another protocol: the traces from
+        such a read until the next one are left out.
+
         :param session: list of traces in a client session
         :returns: a new list of traces from a recv/read call until the next
         """
         ret = []
         last = 0
+        outgoing = set()
+        foreign = False
 
         for (i, item) in enumerate(session):
-            if ('action' in item) and (item['action'] in ['recv', 'read']):
-                ret.append(session[last:i])
+            action = item.get('action')
+            if action == 'connect':
+                outgoing.add((item.get('pid'), item['file-descriptor']))
+            elif action == 'close':
+                outgoing.discard((item.get('pid'), item['file-descriptor']))
+            elif action in NETWORK_READS:
+                if not foreign:
+                    ret.append(session[last:i])
                 last = i
+                foreign = (item.get('pid'), item['file-descriptor']) in outgoing
 
         """ Include remaining trace """
-        ret.append(session[last:])
+        if not foreign:
+            ret.append(session[last:])
 
         return ret
 
