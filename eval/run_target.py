@@ -55,8 +55,10 @@ TARGETS = {
     # The daemon forks a process for every connection.
     'exim': {'cwd': '/usr/exim', 'binary': '/usr/exim/bin/exim', 'protocol': 'smtp', 'exit_wait': 30,
              'args': ['-bdf', '-oX', '25', '-oP', '/var/lock/exim.pid'], 'port': 25, 'seeds': f'{PFB}/SMTP/Exim/in-smtp'},
+    # The ProFuzzBench patch fixes the RTSP session id, so a second SETUP on a server that still holds the
+    # session of an earlier connection never returns: replay restarts the server for every connection.
     'live555': {'cwd': f'{T}/live555/testProgs', 'binary': f'{T}/live555/testProgs/testOnDemandRTSPServer',
-                'protocol': 'rtsp', 'exit_wait': 30, 'args': ['8554'], 'port': 8554,
+                'protocol': 'rtsp', 'exit_wait': 30, 'args': ['8554'], 'port': 8554, 'replay_restart': True,
                 'seeds': f'{PFB}/RTSP/Live555/in-rtsp'},
 }
 

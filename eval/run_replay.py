@@ -87,7 +87,10 @@ class SMTPReplayer(replayer.Replayer):
 class RTSPReplayer(replayer.Replayer):
     """Analyst glue for RTSP. The status code follows the protocol version, and no request closes the
     session: instead of sending the last observed request to reset the session, the replayer reconnects.
-    The RTP streams started by PLAY are not received."""
+    A response is read up to the end of its Content-Length body, because a DESCRIBE response may arrive
+    after the replay delay. The RTP streams started by PLAY are not received."""
+
+    REPLY_TIMEOUT = 2
 
     def replay(self, fsm, symbolic_messages):
         self.reset_message = fsm.last_transition.message
@@ -98,6 +101,30 @@ class RTSPReplayer(replayer.Replayer):
             self._reconnect()
             return (b'', b'')
         return super()._send_recv_message(message)
+
+    def _recv(self, sock):
+        buffer = b''
+        sock.settimeout(self.REPLY_TIMEOUT)
+        try:
+            while b'\r\n\r\n' not in buffer:
+                chunk = sock.recv(replayer.BUF_SIZE)
+                if not chunk:
+                    return buffer
+                buffer += chunk
+            head, _, body = buffer.partition(b'\r\n\r\n')
+            match = re.search(rb'(?im)^content-length:\s*(\d+)', head)
+            size = int(match.group(1)) if match else 0
+            while len(body) < size:
+                chunk = sock.recv(replayer.BUF_SIZE)
+                if not chunk:
+                    break
+                body += chunk
+                buffer += chunk
+        except OSError:
+            pass
+        finally:
+            sock.setblocking(False)
+        return buffer
 
     def _send_post_analysis(self, message):
         pass
@@ -159,12 +186,14 @@ class Server:
         self.process = None
 
 
-def supervise(server):
-    """Make every control connection of the replayer find a listening server."""
+def supervise(server, restart):
+    """Make every control connection of the replayer find a listening server, restarted if requested."""
     original_create_socket = replayer.Replayer.create_socket
 
     def create_socket(self, host, port):
         if port == server.port:
+            if restart:
+                server.stop()
             server.ensure_listening()
         return original_create_socket(self, host, port)
 
@@ -194,7 +223,7 @@ def main():
         replayer.Replayer.resp_is_ok = fixed_acceptance
     replayer_class = REPLAYERS[cfg['protocol']]
     instrument(records, replayer_class)
-    supervise(server)
+    supervise(server, cfg.get('replay_restart', False))
     try:
         server.ensure_listening()
 
