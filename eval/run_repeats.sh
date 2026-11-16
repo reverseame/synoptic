@@ -7,7 +7,8 @@ set -u
 cd "$(dirname "$0")"
 EVAL=$PWD
 TARGETS=${TARGETS:-"proftpd-1.3.8 proftpd lightftp pureftpd bftpd exim live555"}
-for r in ${1:-2 3}; do
+REPETITIONS=${*:-2 3}
+for r in $REPETITIONS; do
   out=results/repeats/r$r
   mkdir -p "$out/logs" "$out/baselines"
   cp results/ground_truth.json "$out/"

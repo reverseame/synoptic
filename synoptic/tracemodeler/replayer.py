@@ -239,11 +239,16 @@ class Replayer:
         self.awaiting_greeting = not welcome
 
     def _send_recv_message(self, message):
+        """
+        The greeting may still be pending when the message is sent. The reply may also open a new
+        connection (e.g., after QUIT), whose greeting is then pending for the next message
+        """
+        greeting_pending = self.awaiting_greeting
+        self.awaiting_greeting = False
         self.send(message, self.socket)
         time.sleep(self.delay)
         resp = self.recv(self.socket)
-        if self.awaiting_greeting and resp:
-            self.awaiting_greeting = False
+        if greeting_pending and resp:
             late = GREETING.match(resp)
             if late:
                 """ The greeting arrived late: the reply to the message follows it """
@@ -252,6 +257,9 @@ class Replayer:
                 if not resp:
                     time.sleep(self.delay)
                     resp = self.recv(self.socket)
+        elif greeting_pending:
+            """ Nothing arrived: the greeting will precede the next reply """
+            self.awaiting_greeting = True
         resp_code = self._get_response_code(resp)
 
         return (resp, resp_code)
