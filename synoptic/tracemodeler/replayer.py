@@ -7,6 +7,9 @@ import synoptic.debug as debug
 
 BUF_SIZE = 4096
 
+""" Greeting of a new connection (e.g., FTP or SMTP), possibly multi-line """
+GREETING = re.compile(rb'(220-[^\n]*\n)*220[ \r\n][^\n]*\n?')
+
 class Replayer:
     def __init__(self, host, port, transport_layer, delay):
         self.host = host
@@ -17,6 +20,8 @@ class Replayer:
         self.sockets = [self.socket]
         self.last_keyword = None
         self.query_table = []
+        """ The greeting of the current connection has not been received yet """
+        self.awaiting_greeting = False
 
     def create_socket(self, host, port):
         sock = None
@@ -176,14 +181,14 @@ class Replayer:
             self.last_keyword = None
             time.sleep(self.delay)
             """ Consume welcome message """
-            self.recv(self.socket)
+            self._consume_greeting(self.recv(self.socket))
 
         return response
 
     def _learn_protocol(self, fsm):
         """ recv connection message """
         time.sleep(self.delay)
-        self.recv(self.socket)
+        self._consume_greeting(self.recv(self.socket))
 
         fsm.initialize()
 
@@ -227,12 +232,26 @@ class Replayer:
         self.last_keyword = None
         time.sleep(self.delay)
         """ Consume welcome message """
-        self.recv(self.socket)
+        self._consume_greeting(self.recv(self.socket))
+
+    def _consume_greeting(self, welcome):
+        """ A greeting that has not arrived within the delay will precede the next reply """
+        self.awaiting_greeting = not welcome
 
     def _send_recv_message(self, message):
         self.send(message, self.socket)
         time.sleep(self.delay)
         resp = self.recv(self.socket)
+        if self.awaiting_greeting and resp:
+            self.awaiting_greeting = False
+            late = GREETING.match(resp)
+            if late:
+                """ The greeting arrived late: the reply to the message follows it """
+                debug.info(f'Late greeting discarded\t: {repr(resp[:late.end()])}')
+                resp = resp[late.end():]
+                if not resp:
+                    time.sleep(self.delay)
+                    resp = self.recv(self.socket)
         resp_code = self._get_response_code(resp)
 
         return (resp, resp_code)
